@@ -5,6 +5,7 @@ This file should be updated when essential. (For example, new module being added
 ## references
 
 - `koog`(reference/koog) The powerful agent framework. Cloned from GitHub.
+- `SimpleMainKts`(reference/SimpleMainKts) Example of using kts scripts. Cloned from GitHub.
 
 ## Project Overview
 

@@ -1,3 +1,6 @@
 [submodule "reference/koog"]
 	path = reference/koog
 	url = https://github.com/JetBrains/koog.git
+[submodule "reference/SimpleMainKts"]
+	path = reference/SimpleMainKts
+	url = https://github.com/Stream29/SimpleMainKts.git
