@@ -2,6 +2,10 @@
 
 This file should be updated when essential. (For example, new module being added)
 
+## references
+
+- `koog`(reference/koog) The powerful agent framework. Cloned from GitHub.
+
 ## Project Overview
 
 This is a Kotlin JVM application using Gradle as the build system. The project follows a multi-module architecture with:
