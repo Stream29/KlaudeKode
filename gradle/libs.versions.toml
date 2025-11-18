@@ -7,6 +7,9 @@ kotlin = "2.2.20"
 kotlinxDatetime = "0.6.2"
 kotlinxSerializationJSON = "1.8.1"
 kotlinxCoroutines = "1.10.2"
+koog = "0.5.2"
+ktor = "3.0.0"
+ivy = "2.5.3"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -14,9 +17,26 @@ kotlinxDatetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.r
 kotlinxSerialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJSON" }
 kotlinxCoroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
 
+# Koog framework
+koogAgents = { module = "ai.koog:koog-agents", version.ref = "koog" }
+
+# Kotlin scripting
+kotlinScriptingJvmHost = { module = "org.jetbrains.kotlin:kotlin-scripting-jvm-host", version.ref = "kotlin" }
+kotlinMainKts = { module = "org.jetbrains.kotlin:kotlin-main-kts", version.ref = "kotlin" }
+apacheIvy = { module = "org.apache.ivy:ivy", version.ref = "ivy" }
+
+# Ktor client (required by Koog)
+ktorClientCio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+
+# Testing
+kotlinTest = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+kotlinxCoroutinesTest = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
+
 # Libraries can be bundled together for easier import
 [bundles]
 kotlinxEcosystem = ["kotlinxDatetime", "kotlinxSerialization", "kotlinxCoroutines"]
+kotlinScripting = ["kotlinScriptingJvmHost", "kotlinMainKts", "apacheIvy"]
+testing = ["kotlinTest", "kotlinxCoroutinesTest"]
 
 [plugins]
 kotlinPluginSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
