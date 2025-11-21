@@ -1,50 +1,30 @@
 package io.github.stream29.koogagent
 
-import kotlinx.coroutines.runBlocking
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Text
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.application
+import androidx.compose.ui.unit.dp
 
-fun main(args: Array<String>) = runBlocking {
-    println("🤖 Koog Code Agent")
-    println()
+fun main() = application {
+    val configResult = runCatching { ConfigLoader.load() }
 
-    if (args.isEmpty()) {
-        println("Usage: koog-code-agent <task>")
-        println()
-        println("Examples:")
-        println("  koog-code-agent \"Read App.kt and explain what it does\"")
-        println("  koog-code-agent \"Add a hello function to Utils.kt\"")
-        println("  koog-code-agent \"List all Kotlin files in this project\"")
-        println()
-        println("Environment:")
-        println("  ANTHROPIC_API_KEY must be set")
-        return@runBlocking
-    }
-
-    val apiKey = System.getenv("ANTHROPIC_API_KEY")
-        ?: error("❌ ANTHROPIC_API_KEY environment variable not set")
-
-    val task = args.joinToString(" ")
-
-    println("📋 Task: $task")
-    println("📂 Working directory: ${System.getProperty("user.dir")}")
-    println()
-
-    val agent = createCodingAgent(apiKey)
-
-    try {
-        println("🚀 Starting agent...")
-        println()
-
-        val result = agent.run(task)
-
-        println()
-        println("✅ Result:")
-        println(result)
-    } catch (e: Exception) {
-        println()
-        println("❌ Error:")
-        println(e.message)
-        if (System.getenv("DEBUG") != null) {
-            e.printStackTrace()
+    Window(onCloseRequest = ::exitApplication, title = "Koog Code Agent") {
+        if (configResult.isSuccess) {
+            val appState = remember { AppState(configResult.getOrThrow().llm.apiKey) }
+            MainScreen(appState)
+        } else {
+            MaterialTheme {
+                Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+                    Text("Error loading configuration:\n${configResult.exceptionOrNull()?.message}")
+                }
+            }
         }
     }
 }

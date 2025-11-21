@@ -10,12 +10,16 @@ kotlinxCoroutines = "1.10.2"
 koog = "0.5.2"
 ktor = "3.0.0"
 ivy = "2.5.3"
+kaml = "0.72.0"
+compose = "1.7.0"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+kaml = { module = "com.charleskorn.kaml:kaml", version.ref = "kaml" }
 kotlinxDatetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinxDatetime" }
 kotlinxSerialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJSON" }
 kotlinxCoroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+kotlinxCoroutinesSwing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinxCoroutines" }
 
 # Koog framework
 koogAgents = { module = "ai.koog:koog-agents", version.ref = "koog" }
@@ -40,3 +44,5 @@ testing = ["kotlinTest", "kotlinxCoroutinesTest"]
 
 [plugins]
 kotlinPluginSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlinPluginCompose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose" }

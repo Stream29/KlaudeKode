@@ -2,9 +2,9 @@ plugins {
     // Apply the shared build logic from a convention plugin.
     // The shared code is located in `buildSrc/src/main/kotlin/kotlin-jvm.gradle.kts`.
     id("buildsrc.convention.kotlin-jvm")
-
-    // Apply the Application plugin to add support for building an executable JVM application.
-    application
+    alias(libs.plugins.kotlinPluginSerialization)
+    alias(libs.plugins.kotlinPluginCompose)
+    alias(libs.plugins.composeMultiplatform)
 }
 
 dependencies {
@@ -16,12 +16,24 @@ dependencies {
     // Koog framework
     implementation(libs.koogAgents)
     implementation(libs.ktorClientCio)
+    implementation(libs.kaml)
 
     // Kotlinx ecosystem
     implementation(libs.bundles.kotlinxEcosystem)
+    implementation(libs.kotlinxCoroutinesSwing)
+    
+    // Compose
+    implementation(compose.desktop.currentOs)
 }
 
-application {
-    // Define the Fully Qualified Name for the application main class
-    mainClass = "io.github.stream29.koogagent.AppKt"
+compose.desktop {
+    application {
+        mainClass = "io.github.stream29.koogagent.AppKt"
+
+        nativeDistributions {
+            targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Dmg, org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi, org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb)
+            packageName = "KoogCodeAgent"
+            packageVersion = "1.0.0"
+        }
+    }
 }

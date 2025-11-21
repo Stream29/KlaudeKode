@@ -44,3 +44,7 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+### Local Config ###
+config.yml
+config.yaml

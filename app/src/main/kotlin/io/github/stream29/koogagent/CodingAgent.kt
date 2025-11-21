@@ -3,6 +3,7 @@ package io.github.stream29.koogagent
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.agents.core.agent.singleRunStrategy
 import ai.koog.agents.core.tools.ToolRegistry
+import ai.koog.agents.core.tools.reflect.tools
 import ai.koog.agents.ext.tool.file.EditFileTool
 import ai.koog.agents.ext.tool.file.ListDirectoryTool
 import ai.koog.agents.ext.tool.file.ReadFileTool
@@ -17,7 +18,11 @@ import ai.koog.rag.base.files.JVMFileSystemProvider
  * Uses built-in file tools from Koog (ReadFileTool, EditFileTool, ListDirectoryTool)
  * and Anthropic's Claude Sonnet 4.5 model.
  */
-fun createCodingAgent(apiKey: String): AIAgent<String, String> {
+fun createCodingAgent(
+    apiKey: String, 
+    appState: AppState,
+    logger: (String) -> Unit = { println(it) }
+): AIAgent<String, String> {
     return AIAgent<String, String>(
         promptExecutor = simpleAnthropicExecutor(apiKey),
         llmModel = AnthropicModels.Sonnet_4_5,
@@ -27,6 +32,9 @@ fun createCodingAgent(apiKey: String): AIAgent<String, String> {
             tool(ListDirectoryTool(JVMFileSystemProvider.ReadOnly))
             tool(ReadFileTool(JVMFileSystemProvider.ReadOnly))
             tool(EditFileTool(JVMFileSystemProvider.ReadWrite))
+            
+            // Communication tools
+            tools(CommunicationTools(appState))
         },
 
         systemPrompt = """
@@ -36,13 +44,15 @@ fun createCodingAgent(apiKey: String): AIAgent<String, String> {
             - Read files and understand code structure
             - Edit files with precise modifications
             - List directory contents
+            - Communicate with the user (ask questions, provide updates)
             - Work with multiple programming languages
 
             Guidelines:
             - Always read files before editing them
             - Make focused, minimal changes
             - Explain your changes clearly
-            - Ask for clarification if the task is ambiguous
+            - Ask for clarification if the task is ambiguous using the waitForUserInput tool
+            - Use sayToUser to provide intermediate updates if a task takes long
 
             Be precise, efficient, and helpful in your programming assistance.
         """.trimIndent(),
@@ -54,8 +64,8 @@ fun createCodingAgent(apiKey: String): AIAgent<String, String> {
         // Log tool calls for visibility
         handleEvents {
             onToolCallStarting { ctx ->
-                println("🔧 Calling tool: ${ctx.tool.name}")
-                println("   Args: ${ctx.toolArgs.toString().take(100)}")
+                logger("🔧 Calling tool: ${ctx.tool.name}")
+                logger("   Args: ${ctx.toolArgs.toString().take(100)}")
             }
         }
     }
