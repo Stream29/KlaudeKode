@@ -8,8 +8,8 @@ plugins {
 }
 
 dependencies {
-    implementation(project(":scripting-tool"))
-    implementation(project(":virtual-thread-dispatcher"))
+    implementation(projects.scriptingTool)
+    implementation(projects.virtualThreadDispatcher)
     implementation(libs.bundles.koog)
     implementation(libs.bundles.compose)
     implementation(libs.bundles.serialization)
