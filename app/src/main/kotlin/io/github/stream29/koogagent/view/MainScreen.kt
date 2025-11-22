@@ -1,4 +1,4 @@
-package io.github.stream29.koogagent
+package io.github.stream29.koogagent.view
 
 import androidx.compose.desktop.ui.tooling.preview.Preview
 import androidx.compose.foundation.layout.*
@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import io.github.stream29.koogagent.AppState
 
 @Composable
 @Preview

@@ -1,7 +1,7 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+
 plugins {
-    // Apply the shared build logic from a convention plugin.
-    // The shared code is located in `buildSrc/src/main/kotlin/kotlin-jvm.gradle.kts`.
-    id("buildsrc.convention.kotlin-jvm")
+    id("kotlin-jvm")
     alias(libs.plugins.kotlinPluginSerialization)
     alias(libs.plugins.kotlinPluginCompose)
     alias(libs.plugins.composeMultiplatform)
@@ -9,21 +9,11 @@ plugins {
 
 dependencies {
     // Project dependencies
-    implementation(project(":utils"))
-    implementation(project(":tools"))
-    implementation(project(":core"))
-
-    // Koog framework
-    implementation(libs.koogAgents)
-    implementation(libs.ktorClientCio)
-    implementation(libs.kaml)
-
-    // Kotlinx ecosystem
-    implementation(libs.bundles.kotlinxEcosystem)
-    implementation(libs.kotlinxCoroutinesSwing)
-    
-    // Compose
+    implementation(project(":scripting-tool"))
+    implementation(libs.bundles.koog)
+    implementation(libs.bundles.compose)
     implementation(compose.desktop.currentOs)
+    testImplementation(libs.bundles.testing)
 }
 
 compose.desktop {
@@ -31,7 +21,12 @@ compose.desktop {
         mainClass = "io.github.stream29.koogagent.AppKt"
 
         nativeDistributions {
-            targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Dmg, org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi, org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb)
+            targetFormats(
+                TargetFormat.Dmg,
+                TargetFormat.Msi,
+                TargetFormat.Deb,
+                TargetFormat.Exe
+            )
             packageName = "KoogCodeAgent"
             packageVersion = "1.0.0"
         }

@@ -3,43 +3,60 @@
 # https://docs.gradle.org/current/userguide/platforms.html#sub::toml-dependencies-format
 
 [versions]
-kotlin = "2.2.20"
-kotlinxDatetime = "0.6.2"
-kotlinxSerializationJSON = "1.8.1"
+kotlin = "2.2.21"
+kotlinxSerialization = "1.9.0"
 kotlinxCoroutines = "1.10.2"
-koog = "0.5.2"
-ktor = "3.0.0"
+koog = "0.5.3"
+ktor = "3.3.2"
 ivy = "2.5.3"
-kaml = "0.72.0"
-compose = "1.7.0"
+kaml = "0.104.0"
+compose = "1.9.3"
+androidx-lifecycle = "2.9.4"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+
+kotlinxSerializationJson = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kaml = { module = "com.charleskorn.kaml:kaml", version.ref = "kaml" }
-kotlinxDatetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinxDatetime" }
-kotlinxSerialization = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJSON" }
-kotlinxCoroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+
+kotlinxCoroutinesCore = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
 kotlinxCoroutinesSwing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinxCoroutines" }
+
+androidxViewmodel = { module = "androidx.lifecycle:lifecycle-viewmodel", version.ref = "androidx-lifecycle" }
+androidxViewmodelCompose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
 
 # Koog framework
 koogAgents = { module = "ai.koog:koog-agents", version.ref = "koog" }
+ktorClientCio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
 
 # Kotlin scripting
 kotlinScriptingJvmHost = { module = "org.jetbrains.kotlin:kotlin-scripting-jvm-host", version.ref = "kotlin" }
 kotlinMainKts = { module = "org.jetbrains.kotlin:kotlin-main-kts", version.ref = "kotlin" }
 apacheIvy = { module = "org.apache.ivy:ivy", version.ref = "ivy" }
 
-# Ktor client (required by Koog)
-ktorClientCio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
-
 # Testing
 kotlinTest = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 kotlinxCoroutinesTest = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
 
-# Libraries can be bundled together for easier import
 [bundles]
-kotlinxEcosystem = ["kotlinxDatetime", "kotlinxSerialization", "kotlinxCoroutines"]
-kotlinScripting = ["kotlinScriptingJvmHost", "kotlinMainKts", "apacheIvy"]
+koog = [
+    "koogAgents",
+    "ktorClientCio"
+]
+kotlinScripting = [
+    "kotlinScriptingJvmHost",
+    "kotlinMainKts",
+    "apacheIvy"
+]
+compose = [
+    "androidxViewmodel",
+    "androidxViewmodelCompose",
+    "kotlinxCoroutinesSwing"
+]
+serialization = [
+    "kaml",
+    "kotlinxSerializationJson"
+]
 testing = ["kotlinTest", "kotlinxCoroutinesTest"]
 
 [plugins]
