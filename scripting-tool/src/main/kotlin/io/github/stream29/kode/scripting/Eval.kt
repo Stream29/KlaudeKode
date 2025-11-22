@@ -1,9 +1,10 @@
-package io.github.stream29.klaudekode.kts
+package io.github.stream29.kode.scripting
 
-import kotlinx.coroutines.disposeOnCancellation
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.Serializable
 import org.jetbrains.kotlin.mainKts.MainKtsScript
+import java.io.ByteArrayOutputStream
+import java.io.PrintStream
 import kotlin.coroutines.resume
 import kotlin.script.experimental.api.ResultWithDiagnostics
 import kotlin.script.experimental.api.constructorArgs
@@ -33,8 +34,8 @@ public suspend fun eval(script: String): EvalResult = suspendCancellableCoroutin
 
 internal fun evalInternal(script: String): EvalResult {
     val originalOut = System.out
-    val outputStream = java.io.ByteArrayOutputStream()
-    val printStream = java.io.PrintStream(outputStream, true, Charsets.UTF_8)
+    val outputStream = ByteArrayOutputStream()
+    val printStream = PrintStream(outputStream, true, Charsets.UTF_8)
 
     try {
         System.setOut(printStream)

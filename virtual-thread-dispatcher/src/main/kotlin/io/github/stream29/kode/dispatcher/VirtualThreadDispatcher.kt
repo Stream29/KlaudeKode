@@ -1,4 +1,4 @@
-package io.github.stream29.klaudekode.kts
+package io.github.stream29.kode.dispatcher
 
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers

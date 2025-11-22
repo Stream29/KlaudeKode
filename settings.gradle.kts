@@ -24,4 +24,4 @@ include(":app")
 include(":scripting-tool")
 include(":virtual-thread-dispatcher")
 
-rootProject.name = "KlaudeKode"
+rootProject.name = "Kode"

@@ -1,4 +1,4 @@
-package io.github.stream29.klaudekode.kts
+package io.github.stream29.kode.scripting
 
 import kotlin.script.experimental.jvmhost.BasicJvmScriptingHost
 

@@ -1,9 +1,9 @@
-package io.github.stream29.koogagent
+package io.github.stream29.kode.app
 
 import ai.koog.agents.core.tools.annotations.LLMDescription
 import ai.koog.agents.core.tools.annotations.Tool
 import ai.koog.agents.core.tools.reflect.ToolSet
-import io.github.stream29.koogagent.viewmodel.MainViewModel
+import io.github.stream29.kode.app.viewmodel.MainViewModel
 
 @Suppress("unused")
 @LLMDescription("Tools to communicate with user")

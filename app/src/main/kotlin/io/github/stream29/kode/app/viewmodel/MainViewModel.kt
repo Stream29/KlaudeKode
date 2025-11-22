@@ -1,15 +1,14 @@
-package io.github.stream29.koogagent.viewmodel
+package io.github.stream29.kode.app.viewmodel
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.github.stream29.koogagent.createCodingAgent
-import io.github.stream29.koogagent.file.Config
-import io.github.stream29.koogagent.file.LlmConfig
+import io.github.stream29.kode.app.createCodingAgent
+import io.github.stream29.kode.app.file.Config
+import io.github.stream29.kode.app.file.LlmConfig
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
