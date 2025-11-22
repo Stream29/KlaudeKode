@@ -11,6 +11,7 @@ import ai.koog.agents.features.eventHandler.feature.handleEvents
 import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
 import ai.koog.prompt.executor.llms.all.simpleAnthropicExecutor
 import ai.koog.rag.base.files.JVMFileSystemProvider
+import io.github.stream29.koogagent.viewmodel.MainViewModel
 
 /**
  * Create a coding agent using Koog framework.
@@ -18,9 +19,9 @@ import ai.koog.rag.base.files.JVMFileSystemProvider
  * Uses built-in file tools from Koog (ReadFileTool, EditFileTool, ListDirectoryTool)
  * and Anthropic's Claude Sonnet 4.5 model.
  */
-fun createCodingAgent(
+public fun createCodingAgent(
     apiKey: String, 
-    appState: AppState,
+    appState: MainViewModel,
     logger: (String) -> Unit = { println(it) }
 ): AIAgent<String, String> {
     return AIAgent<String, String>(

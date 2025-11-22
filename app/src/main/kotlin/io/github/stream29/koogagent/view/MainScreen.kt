@@ -11,11 +11,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import io.github.stream29.koogagent.AppState
+import io.github.stream29.koogagent.viewmodel.MainViewModel
 
 @Composable
 @Preview
-fun MainScreen(state: AppState) {
+public fun MainScreen(state: MainViewModel) {
     val scope = rememberCoroutineScope()
 
     MaterialTheme {
@@ -44,7 +44,7 @@ fun MainScreen(state: AppState) {
                         if (state.isWaitingForInput) {
                             state.submitInput()
                         } else {
-                            state.runTask(scope) 
+                            state.runTask()
                         }
                     },
                     enabled = canClick,
