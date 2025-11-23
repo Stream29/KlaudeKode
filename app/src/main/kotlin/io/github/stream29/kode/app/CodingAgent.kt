@@ -2,6 +2,7 @@ package io.github.stream29.kode.app
 
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.agents.core.agent.singleRunStrategy
+import ai.koog.agents.core.dsl.builder.strategy
 import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.agents.core.tools.reflect.tools
 import ai.koog.agents.ext.tool.file.EditFileTool
@@ -10,6 +11,7 @@ import ai.koog.agents.ext.tool.file.ReadFileTool
 import ai.koog.agents.features.eventHandler.feature.handleEvents
 import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
 import ai.koog.prompt.executor.llms.all.simpleAnthropicExecutor
+import ai.koog.prompt.params.LLMParams
 import ai.koog.rag.base.files.JVMFileSystemProvider
 import io.github.stream29.kode.app.viewmodel.MainViewModel
 
@@ -58,8 +60,19 @@ public fun createCodingAgent(
             Be precise, efficient, and helpful in your programming assistance.
         """.trimIndent(),
 
-        strategy = singleRunStrategy(),
-        maxIterations = 50,
+        strategy = strategy("coding_agent_strategy") {
+            val forceTool by node<String, String> { input ->
+                llm.writeSession {
+                    prompt = prompt.withUpdatedParams {
+                        toolChoice = LLMParams.ToolChoice.Required
+                    }
+                }
+                input
+            }
+            val parallelStrategySubgraph = singleRunStrategy()
+            nodeStart then forceTool then parallelStrategySubgraph then nodeFinish
+        },
+        maxIterations = 5000,
         temperature = 0.3 // Low temperature for consistent code generation
     ) {
         // Log tool calls for visibility
