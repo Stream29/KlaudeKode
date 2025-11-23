@@ -9,11 +9,14 @@ import androidx.compose.material.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.stream29.kode.app.viewmodel.MainViewModel
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 @Preview
 public fun MainScreen(state: MainViewModel) {
@@ -33,7 +36,21 @@ public fun MainScreen(state: MainViewModel) {
                         label = {
                             Text(if (state.isWaitingForInput) "Enter response..." else "Enter task")
                         },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).onKeyEvent { keyEvent ->
+                            if (keyEvent.type == KeyEventType.KeyDown && 
+                                keyEvent.isCtrlPressed && 
+                                keyEvent.key == Key.Enter) {
+                                // Trigger run or submit based on current state
+                                if (state.isWaitingForInput) {
+                                    state.submitInput()
+                                } else {
+                                    state.runTask()
+                                }
+                                true // Consume the event
+                            } else {
+                                false // Don't consume other events
+                            }
+                        },
                         enabled = !state.isRunning || state.isWaitingForInput,
                         singleLine = true
                     )
