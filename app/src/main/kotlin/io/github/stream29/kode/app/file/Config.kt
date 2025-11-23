@@ -22,7 +22,7 @@ public sealed interface LlmConfig {
     @SerialName("Anthropic")
     public data class Anthropic(
         public val apiKey: String,
-    )
+    ): LlmConfig
 }
 
 
