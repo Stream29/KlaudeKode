@@ -6,7 +6,7 @@
 kotlin = "2.2.21"
 kotlinxSerialization = "1.9.0"
 kotlinxCoroutines = "1.10.2"
-koog = "0.5.3"
+koog = "0.5.0"
 ktor = "3.3.2"
 ivy = "2.5.3"
 kaml = "0.104.0"
