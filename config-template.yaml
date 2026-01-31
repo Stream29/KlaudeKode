@@ -1,0 +1,11 @@
+# Kode Configuration Template
+# Copy this file to ~/.kode/config.yaml and fill in your API keys
+
+llm:
+  - type: Anthropic
+    api_key: your-anthropic-api-key-here
+
+# Example with multiple providers:
+# llm:
+#   - type: Anthropic
+#     api_key: sk-ant-api03-...

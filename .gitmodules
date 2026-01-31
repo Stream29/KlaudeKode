@@ -4,3 +4,6 @@
 [submodule "reference/SimpleMainKts"]
 	path = reference/SimpleMainKts
 	url = https://github.com/Stream29/SimpleMainKts.git
+[submodule "reference/kimi-cli"]
+	path = reference/kimi-cli
+	url = https://github.com/MoonshotAI/kimi-cli.git

@@ -6,12 +6,14 @@
 kotlin = "2.2.21"
 kotlinxSerialization = "1.9.0"
 kotlinxCoroutines = "1.10.2"
-koog = "0.5.0"
+kotlinxDatetime = "0.7.1-0.6.x-compat"
+koog = "0.6.1"
 ktor = "3.3.2"
 ivy = "2.5.3"
 kaml = "0.104.0"
 compose = "1.9.3"
 androidx-lifecycle = "2.9.4"
+jsoup = "1.17.2"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -21,12 +23,16 @@ kaml = { module = "com.charleskorn.kaml:kaml", version.ref = "kaml" }
 
 kotlinxCoroutinesCore = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
 kotlinxCoroutinesSwing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinxCoroutines" }
+kotlinxDatetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinxDatetime" }
 
 androidxViewmodel = { module = "androidx.lifecycle:lifecycle-viewmodel", version.ref = "androidx-lifecycle" }
 androidxViewmodelCompose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
 
 # Koog framework
 koogAgents = { module = "ai.koog:koog-agents", version.ref = "koog" }
+koogOpenAiClient = { module = "ai.koog:prompt-executor-openai-client", version.ref = "koog" }
+koogGoogleClient = { module = "ai.koog:prompt-executor-google-client", version.ref = "koog" }
+koogDeepseekClient = { module = "ai.koog:prompt-executor-deepseek-client", version.ref = "koog" }
 ktorClientCio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
 
 # Kotlin scripting
@@ -38,9 +44,15 @@ apacheIvy = { module = "org.apache.ivy:ivy", version.ref = "ivy" }
 kotlinTest = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 kotlinxCoroutinesTest = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
 
+# HTML parsing for web fetch
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+
 [bundles]
 koog = [
     "koogAgents",
+    "koogOpenAiClient",
+    "koogGoogleClient",
+    "koogDeepseekClient",
     "ktorClientCio"
 ]
 kotlinScripting = [
