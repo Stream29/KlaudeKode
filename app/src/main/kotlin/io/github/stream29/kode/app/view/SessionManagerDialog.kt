@@ -1,13 +1,20 @@
+@file:Suppress("DEPRECATION")
+
 package io.github.stream29.kode.app.view
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.CallSplit
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -41,46 +48,12 @@ public fun SessionManagerDialog(
             )
         },
         text = {
-            Column(modifier = Modifier.fillMaxWidth().height(450.dp)) {
-                if (viewModel.sessionSummaries.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Inbox,
-                                contentDescription = null,
-                                modifier = Modifier.size(48.dp),
-                                tint = MaterialTheme.colorScheme.outline
-                            )
-                            Text(
-                                "No sessions yet",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.outline
-                            )
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(viewModel.sessionSummaries) { session ->
-                            SessionCard(
-                                session = session,
-                                isCurrent = session.id == viewModel.currentSessionId,
-                                onSwitch = { viewModel.switchToSession(session.id) },
-                                onFork = { viewModel.forkSession(session.id) },
-                                onDelete = { viewModel.deleteSession(session.id) },
-                                onArchive = { viewModel.archiveSession(session.id) }
-                            )
-                        }
-                    }
-                }
-            }
+            SessionManagerContent(
+                viewModel = viewModel,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(450.dp)
+            )
         },
         confirmButton = {
             FilledTonalButton(
@@ -104,14 +77,132 @@ public fun SessionManagerDialog(
 }
 
 @Composable
+public fun SessionManagerContent(
+    viewModel: MainViewModel,
+    modifier: Modifier
+) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = viewModel.sessionSearchQuery,
+                onValueChange = { viewModel.updateSessionSearchQuery(it) },
+                label = { Text("Search") },
+                modifier = Modifier.weight(1f),
+                singleLine = true
+            )
+            FilledTonalButton(
+                onClick = { viewModel.importSession() }
+            ) {
+                Icon(
+                    imageVector = Icons.Default.UploadFile,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Import")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = viewModel.sessionTagFilter,
+                onValueChange = { viewModel.updateSessionTagFilter(it) },
+                label = { Text("Tags (comma separated)") },
+                modifier = Modifier.weight(1f),
+                singleLine = true
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = viewModel.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ACTIVE,
+                    onClick = { viewModel.updateSessionStatusFilter(io.github.stream29.kode.session.core.storage.SessionStatusFilter.ACTIVE) },
+                    label = { Text("Active") }
+                )
+                FilterChip(
+                    selected = viewModel.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ARCHIVED,
+                    onClick = { viewModel.updateSessionStatusFilter(io.github.stream29.kode.session.core.storage.SessionStatusFilter.ARCHIVED) },
+                    label = { Text("Archived") }
+                )
+                FilterChip(
+                    selected = viewModel.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ALL,
+                    onClick = { viewModel.updateSessionStatusFilter(io.github.stream29.kode.session.core.storage.SessionStatusFilter.ALL) },
+                    label = { Text("All") }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (viewModel.sessionSummaries.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Inbox,
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp),
+                        tint = MaterialTheme.colorScheme.outline
+                    )
+                    Text(
+                        "No sessions yet",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(viewModel.sessionSummaries) { session ->
+                    SessionCard(
+                        session = session,
+                        isCurrent = session.id == viewModel.currentSessionId,
+                        onSwitch = { viewModel.switchToSession(session.id) },
+                        onFork = { viewModel.forkSession(session.id) },
+                        onExport = { viewModel.exportSession(session.id) },
+                        onAddTags = { tags -> viewModel.addSessionTags(session.id, tags) },
+                        onRemoveTag = { tag -> viewModel.removeSessionTag(session.id, tag) },
+                        onRestore = { viewModel.restoreSession(session.id) },
+                        onDelete = { viewModel.deleteSession(session.id) },
+                        onArchive = { viewModel.archiveSession(session.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SessionCard(
     session: SessionSummary,
     isCurrent: Boolean,
     onSwitch: () -> Unit,
     onFork: () -> Unit,
+    onExport: () -> Unit,
+    onAddTags: (List<String>) -> Unit,
+    onRemoveTag: (String) -> Unit,
+    onRestore: () -> Unit,
     onDelete: () -> Unit,
     onArchive: () -> Unit
 ) {
+    var tagInput by remember { mutableStateOf("") }
     val statusColor = when (session.status) {
         SessionStatus.ACTIVE -> MaterialTheme.colorScheme.primary
         SessionStatus.ARCHIVED -> MaterialTheme.colorScheme.tertiary
@@ -124,8 +215,7 @@ private fun SessionCard(
         SessionStatus.DELETED -> Icons.Default.Delete
     }
     
-    val dateFormat = session.updatedAt.toLocalDateTime(TimeZone.currentSystemDefault())
-    val dateStr = "${dateFormat.date} ${dateFormat.hour.toString().padStart(2, '0')}:${dateFormat.minute.toString().padStart(2, '0')}"
+    val dateStr = formatSessionTime(session)
     
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -198,6 +288,49 @@ private fun SessionCard(
             )
             
             Spacer(modifier = Modifier.height(12.dp))
+
+            if (session.tags.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    session.tags.forEach { tag ->
+                        AssistChip(
+                            onClick = { onRemoveTag(tag) },
+                            label = { Text(tag) }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = tagInput,
+                    onValueChange = { tagInput = it },
+                    label = { Text("Add tag") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true
+                )
+                FilledTonalButton(
+                    onClick = {
+                        val tags = tagInput.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                        if (tags.isNotEmpty()) {
+                            onAddTags(tags)
+                            tagInput = ""
+                        }
+                    }
+                ) {
+                    Text("Add")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
             
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -221,13 +354,35 @@ private fun SessionCard(
                     modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.CallSplit,
+                        imageVector = Icons.AutoMirrored.Filled.CallSplit,
                         contentDescription = "Fork",
                         modifier = Modifier.size(20.dp)
                     )
                 }
-                
-                if (session.status != SessionStatus.ARCHIVED) {
+
+                FilledTonalIconButton(
+                    onClick = onExport,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "Export",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                if (session.status == SessionStatus.ARCHIVED) {
+                    FilledTonalIconButton(
+                        onClick = onRestore,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Unarchive,
+                            contentDescription = "Restore",
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                } else {
                     FilledTonalIconButton(
                         onClick = onArchive,
                         modifier = Modifier.size(40.dp)
@@ -257,4 +412,9 @@ private fun SessionCard(
             }
         }
     }
+}
+
+private fun formatSessionTime(session: SessionSummary): String {
+    val dateFormat = session.updatedAt.toLocalDateTime(TimeZone.currentSystemDefault())
+    return "${dateFormat.date} ${dateFormat.hour.toString().padStart(2, '0')}:${dateFormat.minute.toString().padStart(2, '0')}"
 }

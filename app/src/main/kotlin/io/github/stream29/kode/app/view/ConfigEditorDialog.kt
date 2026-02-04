@@ -59,7 +59,23 @@ public fun ConfigEditorDialog(
                         )
                     },
                     placeholder = {
-                        Text("llm:\n  - type: Anthropic\n    api_key: your-key-here")
+                        Text(
+                            """auths:
+  - type: Anthropic
+    id: anthropic-main
+    api_key: your-api-key-here
+    base_url: null
+
+models:
+  - id: claude-sonnet
+    auth_id: anthropic-main
+    model: claude-sonnet-4-5-20250929
+    display_name: Claude Sonnet 4.5
+
+defaults:
+  model_id: claude-sonnet
+  thinking: false""".trimIndent()
+                        )
                     }
                 )
                 
@@ -104,7 +120,15 @@ public fun ConfigEditorDialog(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "llm:\n  - type: Anthropic\n    api_key: sk-...",
+                            text = """auths:
+  - type: Anthropic
+    id: anthropic-main
+    api_key: sk-...
+
+models:
+  - id: claude-sonnet
+    auth_id: anthropic-main
+    model: claude-sonnet-4-5-20250929""".trimIndent(),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace

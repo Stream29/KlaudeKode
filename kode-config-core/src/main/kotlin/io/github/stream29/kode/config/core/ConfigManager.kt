@@ -32,11 +32,17 @@ public class ConfigManager(
      */
     public suspend fun load(): AppConfig {
         return try {
-            provider.load() 
+            val loaded = provider.load()
                 ?: source?.read()?.let { parse(it) }
-                ?: AppConfig(auths = emptyList(), models = emptyList())
+                ?: AppConfig()
+            val normalized = normalize(loaded)
+            if (normalized != loaded) {
+                provider.save(normalized)
+                source?.write(serialize(normalized))
+            }
+            normalized
         } catch (e: Exception) {
-            AppConfig(auths = emptyList(), models = emptyList())
+            AppConfig()
         }
     }
 
@@ -80,5 +86,15 @@ public class ConfigManager(
      */
     public fun serialize(config: AppConfig): String {
         return yaml.encodeToString(config)
+    }
+
+    private fun normalize(config: AppConfig): AppConfig {
+        var updated = config
+        if (updated.defaults.modelId == null && updated.models.isNotEmpty()) {
+            updated = updated.copy(
+                defaults = updated.defaults.copy(modelId = updated.models.first().id)
+            )
+        }
+        return updated
     }
 }

@@ -3,6 +3,10 @@ package io.github.stream29.kode.session.core
 import io.github.stream29.kode.session.core.model.*
 import io.github.stream29.kode.session.core.storage.SessionStorage
 import kotlinx.datetime.Clock
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.File
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -309,6 +313,22 @@ public class SessionManager(
         storage.saveSession(archived)
         return archived
     }
+
+    /**
+     * Restore an archived session to active status.
+     */
+    public suspend fun restoreSession(sessionId: String): ConversationSession {
+        val session = storage.getSession(sessionId)
+            ?: throw IllegalArgumentException("Session not found: $sessionId")
+
+        val restored = session.copy(
+            status = SessionStatus.ACTIVE,
+            updatedAt = clock.now()
+        )
+
+        storage.saveSession(restored)
+        return restored
+    }
     
     /**
      * Delete a session.
@@ -322,6 +342,47 @@ public class SessionManager(
      */
     public suspend fun listSessions(filter: io.github.stream29.kode.session.core.storage.SessionFilter?): List<SessionSummary> {
         return storage.listSessions(filter)
+    }
+
+    /**
+     * Export a session to a JSON file.
+     */
+    public suspend fun exportSession(sessionId: String, targetFile: File) {
+        val session = storage.getSession(sessionId)
+            ?: throw IllegalArgumentException("Session not found: $sessionId")
+        val json = Json {
+            prettyPrint = true
+            encodeDefaults = true
+        }
+        targetFile.parentFile?.mkdirs()
+        targetFile.writeText(json.encodeToString(session))
+    }
+
+    /**
+     * Import a session from a JSON file. Creates a new session ID.
+     */
+    public suspend fun importSession(sourceFile: File, newTitle: String?): ConversationSession {
+        if (!sourceFile.exists()) {
+            throw IllegalArgumentException("Import file not found: ${sourceFile.absolutePath}")
+        }
+        val json = Json {
+            ignoreUnknownKeys = true
+        }
+        val imported = json.decodeFromString<ConversationSession>(sourceFile.readText())
+        val now = clock.now()
+        val session = imported.copy(
+            id = generateId(),
+            title = newTitle ?: imported.title,
+            createdAt = now,
+            updatedAt = now,
+            status = SessionStatus.ACTIVE,
+            parentSessionId = null,
+            forkedFromMessageId = null,
+            version = 1L,
+            childSessionIds = emptyList()
+        )
+        storage.saveSession(session)
+        return session
     }
     
     /**

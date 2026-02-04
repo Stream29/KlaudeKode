@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -45,34 +46,15 @@ public fun SettingsDialog(
             )
         },
         text = {
-            Column(
+            SettingsContent(
+                viewModel = viewModel,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(500.dp)
-            ) {
-                TabRow(selectedTabIndex = selectedTab) {
-                    tabs.forEachIndexed { index, title ->
-                        Tab(
-                            selected = selectedTab == index,
-                            onClick = { selectedTab = index },
-                            text = { Text(title) }
-                        )
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(top = 16.dp)
-                ) {
-                    when (selectedTab) {
-                        0 -> ModelsTab(viewModel)
-                        1 -> AuthTab(viewModel)
-                        2 -> PreferencesTab(viewModel)
-                    }
-                }
-            }
+                    .height(500.dp),
+                selectedTab = selectedTab,
+                onTabSelected = { selectedTab = it },
+                tabs = tabs
+            )
         },
         confirmButton = {
             Button(onClick = onDismiss) {
@@ -80,6 +62,40 @@ public fun SettingsDialog(
             }
         }
     )
+}
+
+@Composable
+public fun SettingsContent(
+    viewModel: MainViewModel,
+    modifier: Modifier,
+    selectedTab: Int,
+    onTabSelected: (Int) -> Unit,
+    tabs: List<String>
+) {
+    Column(modifier = modifier) {
+        PrimaryTabRow(selectedTabIndex = selectedTab) {
+            tabs.forEachIndexed { index, title ->
+                Tab(
+                    selected = selectedTab == index,
+                    onClick = { onTabSelected(index) },
+                    text = { Text(title) }
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(top = 16.dp)
+        ) {
+            when (selectedTab) {
+                0 -> ModelsTab(viewModel)
+                1 -> AuthTab(viewModel)
+                2 -> PreferencesTab(viewModel)
+            }
+        }
+    }
 }
 
 
@@ -356,7 +372,7 @@ private fun ModelDialog(
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .menuAnchor()
+                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                         )
 
                         ExposedDropdownMenu(
@@ -571,7 +587,7 @@ private fun AuthCard(
                     Icon(
                         imageVector = when (auth.provider) {
                             "Anthropic" -> Icons.Default.Psychology
-                            "OpenAI" -> Icons.Default.Chat
+                            "OpenAI" -> Icons.AutoMirrored.Filled.Chat
                             "Moonshot" -> Icons.Default.Nightlight
                             "Gemini" -> Icons.Default.Star
                             "DeepSeek" -> Icons.Default.Search
@@ -712,7 +728,7 @@ private fun AuthDialog(
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = providerExpanded) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .menuAnchor()
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                     )
 
                     ExposedDropdownMenu(
@@ -843,6 +859,8 @@ private fun AuthDialog(
 
 @Composable
 private fun PreferencesTab(viewModel: MainViewModel) {
+    var approvalActionInput by remember { mutableStateOf("") }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -859,6 +877,373 @@ private fun PreferencesTab(viewModel: MainViewModel) {
             Spacer(modifier = Modifier.height(12.dp))
 
             ModelSelectionSection(viewModel)
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Runtime Defaults",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            DefaultModelSelectionSection(viewModel)
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "Thinking Mode",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        "Use deliberate reasoning by default",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = viewModel.defaultThinking,
+                    onCheckedChange = { viewModel.defaultThinking = it }
+                )
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Loop Control",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            LoopControlField(
+                label = "Max steps per turn",
+                value = viewModel.maxStepsPerTurn,
+                onValueChange = { viewModel.maxStepsPerTurn = it }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            LoopControlField(
+                label = "Max retries per step",
+                value = viewModel.maxRetriesPerStep,
+                onValueChange = { viewModel.maxRetriesPerStep = it }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            LoopControlField(
+                label = "Max Ralph iterations",
+                value = viewModel.maxRalphIterations,
+                onValueChange = { viewModel.maxRalphIterations = it }
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            LoopControlField(
+                label = "Reserved context size",
+                value = viewModel.reservedContextSize,
+                onValueChange = { viewModel.reservedContextSize = it }
+            )
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Workspace",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = viewModel.workDir,
+                onValueChange = { viewModel.workDir = it },
+                label = { Text("Working directory") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Skills & Agent",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = viewModel.skillsDir,
+                onValueChange = { viewModel.skillsDir = it },
+                label = { Text("Skills directory") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = viewModel.agentBuiltin,
+                onValueChange = { viewModel.agentBuiltin = it },
+                label = { Text("Agent builtin") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = viewModel.agentFile,
+                onValueChange = { viewModel.agentFile = it },
+                label = { Text("Agent file path") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Logging",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = viewModel.logLevel,
+                onValueChange = { viewModel.logLevel = it },
+                label = { Text("Log level") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = viewModel.logFile,
+                onValueChange = { viewModel.logFile = it },
+                label = { Text("Log file") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Appearance",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            ThemeSelectionSection(viewModel)
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Approvals",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Default YOLO",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                "Auto-approve tool calls by default",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = viewModel.approvalDefaultYolo,
+                            onCheckedChange = {
+                                viewModel.approvalDefaultYolo = it
+                                viewModel.yoloEnabled = it
+                            }
+                        )
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Auto-approve actions",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        if (viewModel.approvalAutoApproveActions.isEmpty()) {
+                            Text(
+                                "No auto-approve actions configured",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                viewModel.approvalAutoApproveActions.forEach { action ->
+                                    AssistChip(
+                                        onClick = { viewModel.removeApprovalAction(action) },
+                                        label = { Text(action) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = approvalActionInput,
+                            onValueChange = { approvalActionInput = it },
+                            label = { Text("Add action") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        FilledTonalButton(
+                            onClick = {
+                                viewModel.addApprovalAction(approvalActionInput)
+                                approvalActionInput = ""
+                            }
+                        ) {
+                            Text("Add")
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "Services",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Web Search",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    OutlinedTextField(
+                        value = viewModel.webSearchProvider,
+                        onValueChange = { viewModel.webSearchProvider = it },
+                        label = { Text("Provider") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = viewModel.webSearchApiKey,
+                        onValueChange = { viewModel.webSearchApiKey = it },
+                        label = { Text("API Key") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = viewModel.webSearchBaseUrl,
+                        onValueChange = { viewModel.webSearchBaseUrl = it },
+                        label = { Text("Base URL") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = viewModel.webSearchHeaders,
+                        onValueChange = { viewModel.webSearchHeaders = it },
+                        label = { Text("Headers (Key:Value per line)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 4
+                    )
+                    OutlinedTextField(
+                        value = viewModel.webSearchEnv,
+                        onValueChange = { viewModel.webSearchEnv = it },
+                        label = { Text("Env (KEY=VALUE per line)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 4
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Web Fetch",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    OutlinedTextField(
+                        value = viewModel.webFetchProvider,
+                        onValueChange = { viewModel.webFetchProvider = it },
+                        label = { Text("Provider") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = viewModel.webFetchApiKey,
+                        onValueChange = { viewModel.webFetchApiKey = it },
+                        label = { Text("API Key") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = viewModel.webFetchBaseUrl,
+                        onValueChange = { viewModel.webFetchBaseUrl = it },
+                        label = { Text("Base URL") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = viewModel.webFetchHeaders,
+                        onValueChange = { viewModel.webFetchHeaders = it },
+                        label = { Text("Headers (Key:Value per line)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 4
+                    )
+                    OutlinedTextField(
+                        value = viewModel.webFetchEnv,
+                        onValueChange = { viewModel.webFetchEnv = it },
+                        label = { Text("Env (KEY=VALUE per line)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 4
+                    )
+                }
+            }
         }
 
         item {
@@ -1011,6 +1396,144 @@ private fun PreferencesTab(viewModel: MainViewModel) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error
             )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            FilledTonalButton(
+                onClick = { viewModel.savePreferences() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Save,
+                    contentDescription = null
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Save Preferences")
+            }
+        }
+    }
+}
+
+@Composable
+private fun LoopControlField(
+    label: String,
+    value: Int,
+    onValueChange: (Int) -> Unit
+) {
+    var textValue by remember { mutableStateOf(value.toString()) }
+    OutlinedTextField(
+        value = textValue,
+        onValueChange = { input ->
+            textValue = input
+            val parsed = input.toIntOrNull()
+            if (parsed != null) {
+                onValueChange(parsed)
+            }
+        },
+        label = { Text(label) },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DefaultModelSelectionSection(viewModel: MainViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+    val models = viewModel.models
+    val auths = viewModel.auths
+    val defaultId = viewModel.defaultModelId
+    val defaultModel = models.find { it.id == defaultId }
+
+    fun getModelDisplayName(model: LlmModelConfig): String {
+        val auth = auths.find { it.id == model.authId }
+        val provider = auth?.provider ?: "Unknown"
+        val name = model.displayName ?: model.model
+        return "$provider - $name"
+    }
+
+    if (models.isEmpty()) {
+        Text(
+            "No models configured. Go to the Models tab to add one.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error
+        )
+    } else {
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it }
+        ) {
+            OutlinedTextField(
+                value = defaultModel?.let { getModelDisplayName(it) } ?: "Select default model",
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Default model") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+            )
+
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                models.forEach { model ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(getModelDisplayName(model))
+                                Text(
+                                    "ID: ${model.id}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        onClick = {
+                            viewModel.setDefaultModel(model.id)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ThemeSelectionSection(viewModel: MainViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+    val options = listOf("dark", "light")
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it }
+    ) {
+        OutlinedTextField(
+            value = viewModel.uiTheme,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("Theme") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = {
+                        viewModel.uiTheme = option
+                        expanded = false
+                    }
+                )
+            }
         }
     }
 }
@@ -1050,7 +1573,7 @@ private fun ModelSelectionSection(viewModel: MainViewModel) {
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .menuAnchor()
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
             )
 
             ExposedDropdownMenu(

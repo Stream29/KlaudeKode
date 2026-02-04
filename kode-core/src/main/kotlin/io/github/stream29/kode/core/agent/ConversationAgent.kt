@@ -6,10 +6,15 @@ import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.RequestMetaInfo
 import io.github.stream29.kode.core.session.KoogSessionBridge
+import io.github.stream29.kode.core.hooks.HookManager
+import io.github.stream29.kode.core.hooks.ToolCallHookResult
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.ui.core.ApprovalHandler
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
+import io.github.stream29.kode.ui.core.ToolApprovalDecision
+import io.github.stream29.kode.ui.core.ToolApprovalRequest
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -20,6 +25,8 @@ public class ConversationAgent(
     private val sessionManager: SessionManager,
     private val sessionBridge: KoogSessionBridge,
     private val messageHandler: MessageHandler,
+    private val hookManager: HookManager,
+    private val approvalHandler: ApprovalHandler?,
     private val eventListener: AgentEventListener?,
     private val logger: (String) -> Unit
 ) {
@@ -34,13 +41,34 @@ public class ConversationAgent(
         val session = sessionManager.getSession(sessionId)
             ?: throw IllegalArgumentException("Session not found: $sessionId")
 
-        messageHandler.addMessageToUser(userInput)
-        sessionManager.addUserMessage(sessionId, userInput)
+        val processedInput = hookManager.applyUserPromptHooks(sessionId, userInput)
+        sessionManager.addUserMessage(sessionId, processedInput)
 
         val messages = sessionBridge.prepareMessagesForAgent(sessionId)
         val systemPrompt = session.configuration.systemPrompt ?: DEFAULT_SYSTEM_PROMPT
 
-        val finalResponse = executeWithTools(sessionId, systemPrompt, messages, userInput, model)
+        val finalResponse = executeWithTools(sessionId, systemPrompt, messages, processedInput, model)
+
+        sessionManager.addAssistantMessage(sessionId, finalResponse, null)
+        sessionBridge.checkpoint(sessionId, "After execution")
+
+        return finalResponse
+    }
+
+    public suspend fun continueSession(sessionId: String, model: LLModel): String {
+        val session = sessionManager.getSession(sessionId)
+            ?: throw IllegalArgumentException("Session not found: $sessionId")
+
+        val messages = sessionBridge.prepareMessagesForAgent(sessionId)
+        val systemPrompt = session.configuration.systemPrompt ?: DEFAULT_SYSTEM_PROMPT
+
+        val finalResponse = executeWithTools(
+            sessionId = sessionId,
+            systemPrompt = systemPrompt,
+            historyMessages = messages,
+            currentInput = "",
+            model = model
+        )
 
         sessionManager.addAssistantMessage(sessionId, finalResponse, null)
         sessionBridge.checkpoint(sessionId, "After execution")
@@ -75,7 +103,9 @@ public class ConversationAgent(
             when (response) {
                 is Message.Assistant -> {
                     if (!containsToolCall(response.content)) {
-                        return response.content
+                        val processed = hookManager.applyAssistantResponseHooks(sessionId, response.content)
+                        emitAssistantMessageChunks(processed)
+                        return processed
                     }
                     allMessages.add(response)
                 }
@@ -97,14 +127,41 @@ public class ConversationAgent(
     ): Message.Tool.Result {
         val toolName = toolCall.tool
         val toolArgs = toolCall.content
+        val preHook = hookManager.applyToolCallBeforeHooks(sessionId, toolName, toolArgs)
+        if (!preHook.allowed) {
+            val reason = preHook.reason ?: "Tool call blocked by hook"
+            val blockedArgs = preHook.toolArgs
+            sessionBridge.saveToolCall(
+                sessionId = sessionId,
+                toolName = toolName,
+                toolCallId = toolCall.id ?: "",
+                arguments = json.parseToJsonElement(blockedArgs)
+            )
+            sessionBridge.saveToolResult(
+                sessionId = sessionId,
+                toolCallId = toolCall.id ?: "",
+                toolName = toolName,
+                result = json.parseToJsonElement(buildJsonString(reason)),
+                isError = true,
+                errorMessage = reason
+            )
+            return Message.Tool.Result(
+                id = toolCall.id,
+                tool = toolName,
+                content = reason,
+                metaInfo = RequestMetaInfo.create(Clock.System)
+            )
+        }
+
+        val finalArgs = preHook.toolArgs
 
         logger("🔧 Calling tool: $toolName")
-        logger("   Args: ${toolArgs.take(100)}")
+        logger("   Args: ${finalArgs.take(100)}")
 
         eventListener?.onEvent(
             AgentEvent.ToolCallStarting(
                 toolName = toolName,
-                arguments = toolArgs
+                arguments = finalArgs
             )
         )
 
@@ -112,30 +169,50 @@ public class ConversationAgent(
             sessionId = sessionId,
             toolName = toolName,
             toolCallId = toolCall.id ?: "",
-            arguments = json.parseToJsonElement(toolArgs)
+            arguments = json.parseToJsonElement(finalArgs)
         )
 
-        val result = try {
-            val tool = toolRegistry.tools.find { it.name == toolName }
-            if (tool == null) {
-                "Error: Tool '$toolName' not found"
-            } else {
-                val argsJson = json.parseToJsonElement(toolArgs).jsonObject
-                @Suppress("UNCHECKED_CAST")
-                val decodedArgs = (tool as ai.koog.agents.core.tools.Tool<Any?, Any?>).decodeArgs(argsJson)
-                @Suppress("UNCHECKED_CAST")
-                val toolResult = tool.execute(decodedArgs)
-                toolResult.toString()
+        val decision = approvalHandler?.requestApproval(
+            ToolApprovalRequest(
+                id = toolCall.id ?: "",
+                toolName = toolName,
+                arguments = finalArgs,
+                description = "Tool call: $toolName"
+            )
+        ) ?: ToolApprovalDecision.Approve
+
+        val result = if (decision == ToolApprovalDecision.Reject) {
+            "Tool call rejected by user: $toolName"
+        } else {
+            try {
+                val tool = toolRegistry.tools.find { it.name == toolName }
+                if (tool == null) {
+                    "Error: Tool '$toolName' not found"
+                } else {
+                    val argsJson = json.parseToJsonElement(finalArgs).jsonObject
+                    @Suppress("UNCHECKED_CAST")
+                    val decodedArgs = (tool as ai.koog.agents.core.tools.Tool<Any?, Any?>).decodeArgs(argsJson)
+                    @Suppress("UNCHECKED_CAST")
+                    val toolResult = tool.execute(decodedArgs)
+                    toolResult.toString()
+                }
+            } catch (e: Exception) {
+                "Error executing tool $toolName: ${e.message}"
             }
-        } catch (e: Exception) {
-            "Error executing tool $toolName: ${e.message}"
         }
+
+        val processedResult = hookManager.applyToolCallAfterHooks(
+            sessionId = sessionId,
+            toolName = toolName,
+            toolArgs = finalArgs,
+            result = result
+        )
 
         sessionBridge.saveToolResult(
             sessionId = sessionId,
             toolCallId = toolCall.id ?: "",
             toolName = toolName,
-            result = json.parseToJsonElement(buildJsonString(result)),
+            result = json.parseToJsonElement(buildJsonString(processedResult)),
             isError = false,
             errorMessage = null
         )
@@ -143,20 +220,39 @@ public class ConversationAgent(
         eventListener?.onEvent(
             AgentEvent.ToolCallCompleted(
                 toolName = toolName,
-                result = result
+                result = processedResult
             )
         )
 
         return Message.Tool.Result(
             id = toolCall.id,
             tool = toolName,
-            content = result,
+            content = processedResult,
             metaInfo = RequestMetaInfo.create(Clock.System)
         )
     }
 
     private fun containsToolCall(content: String): Boolean {
         return content.contains("function") || content.contains("tool_call")
+    }
+
+    private fun emitAssistantMessageChunks(content: String) {
+        val chunkSize = 60
+        if (content.isBlank()) {
+            eventListener?.onEvent(AgentEvent.AssistantMessageChunk(content = "", isFinal = true))
+            return
+        }
+
+        val chunks = content.chunked(chunkSize)
+        chunks.forEachIndexed { index, chunk ->
+            val isFinal = index == chunks.lastIndex
+            eventListener?.onEvent(
+                AgentEvent.AssistantMessageChunk(
+                    content = chunk,
+                    isFinal = isFinal
+                )
+            )
+        }
     }
 
     public companion object {

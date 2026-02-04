@@ -18,6 +18,7 @@ import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.tools.CommunicationTools
 import io.github.stream29.kode.tools.FileSearchTools
 import io.github.stream29.kode.tools.ShellTool
+import io.github.stream29.kode.tools.TaskTool
 import io.github.stream29.kode.tools.ThinkTool
 import io.github.stream29.kode.tools.TodoTool
 import io.github.stream29.kode.tools.WebTools
@@ -89,18 +90,42 @@ internal object ToolRegistryFactory {
     fun create(
         workingDir: File,
         messageHandler: MessageHandler,
-        logger: (String) -> Unit
+        logger: (String) -> Unit,
+        disabledTools: Set<String>,
+        taskAgentFactory: io.github.stream29.kode.tools.AgentFactory?
     ): ToolRegistry {
         return ToolRegistry {
-            tool(ListDirectoryTool(JVMFileSystemProvider.ReadOnly))
-            tool(ReadFileTool(JVMFileSystemProvider.ReadOnly))
-            tool(EditFileTool(JVMFileSystemProvider.ReadWrite))
-            tools(CommunicationTools(messageHandler))
-            tools(ShellTool(messageHandler, workingDir, logger))
-            tools(WebTools(messageHandler, logger))
-            tools(TodoTool(messageHandler, logger))
-            tools(FileSearchTools(messageHandler, workingDir, logger))
-            tools(ThinkTool(messageHandler, logger))
+            val disableFile = disabledTools.contains("file")
+            val disableFileEdit = disableFile || disabledTools.contains("file-edit")
+
+            if (!disableFile) {
+                tool(ListDirectoryTool(JVMFileSystemProvider.ReadOnly))
+                tool(ReadFileTool(JVMFileSystemProvider.ReadOnly))
+            }
+            if (!disableFileEdit) {
+                tool(EditFileTool(JVMFileSystemProvider.ReadWrite))
+            }
+            if (!disabledTools.contains("communication")) {
+                tools(CommunicationTools(messageHandler))
+            }
+            if (!disabledTools.contains("shell")) {
+                tools(ShellTool(messageHandler, workingDir, logger))
+            }
+            if (!disabledTools.contains("web")) {
+                tools(WebTools(messageHandler, logger))
+            }
+            if (!disabledTools.contains("todo")) {
+                tools(TodoTool(messageHandler, logger))
+            }
+            if (!disabledTools.contains("search")) {
+                tools(FileSearchTools(messageHandler, workingDir, logger))
+            }
+            if (!disabledTools.contains("think")) {
+                tools(ThinkTool(messageHandler, logger))
+            }
+            if (!disabledTools.contains("task") && taskAgentFactory != null) {
+                tools(TaskTool(messageHandler, taskAgentFactory, logger))
+            }
         }
     }
 }

@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package io.github.stream29.kode.app.view.components
 
 import androidx.compose.animation.*
@@ -18,6 +20,8 @@ import io.github.stream29.kode.app.model.MessageItem
 import io.github.stream29.kode.session.core.model.MessageRole
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,12 +112,9 @@ public fun MessageBubble(
                 }
                 
                 // Message content
-                Text(
-                    text = message.content,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = contentColor,
-                    fontFamily = if (message.role == MessageRole.TOOL_RESULT) 
-                        FontFamily.Monospace else null
+                MessageContent(
+                    message = message,
+                    contentColor = contentColor
                 )
                 
                 // Timestamp and actions
@@ -137,7 +138,9 @@ public fun MessageBubble(
                     ) {
                         if (onForkFromHere != null) {
                         TooltipBox(
-                            positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
+                            positionProvider = TooltipDefaults.rememberTooltipPositionProvider(
+                                TooltipAnchorPosition.Above
+                            ),
                             tooltip = {
                                 PlainTooltip {
                                     Text("Fork from this message")
@@ -160,7 +163,9 @@ public fun MessageBubble(
                         }
                         
                         TooltipBox(
-                            positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
+                            positionProvider = TooltipDefaults.rememberTooltipPositionProvider(
+                                TooltipAnchorPosition.Above
+                            ),
                             tooltip = {
                                 PlainTooltip {
                                     Text("Copy message")
@@ -169,7 +174,7 @@ public fun MessageBubble(
                             state = rememberTooltipState()
                         ) {
                             IconButton(
-                                onClick = { /* Copy to clipboard */ },
+                                onClick = { copyToClipboard(message.content) },
                                 modifier = Modifier.size(24.dp)
                             ) {
                                 Icon(
@@ -182,6 +187,72 @@ public fun MessageBubble(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+private fun copyToClipboard(text: String) {
+    val clipboard = Toolkit.getDefaultToolkit().systemClipboard
+    val selection = StringSelection(text)
+    clipboard.setContents(selection, selection)
+}
+
+@Composable
+private fun MessageContent(
+    message: MessageItem,
+    contentColor: androidx.compose.ui.graphics.Color
+) {
+    val text = message.content
+    if (text.contains("```") && message.role == MessageRole.ASSISTANT) {
+        MarkdownCodeBlocks(
+            content = text,
+            contentColor = contentColor
+        )
+        return
+    }
+
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = contentColor,
+        fontFamily = if (message.role == MessageRole.TOOL_RESULT) {
+            FontFamily.Monospace
+        } else {
+            null
+        }
+    )
+}
+
+@Composable
+private fun MarkdownCodeBlocks(
+    content: String,
+    contentColor: androidx.compose.ui.graphics.Color
+) {
+    val parts = content.split("```")
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        parts.forEachIndexed { index, part ->
+            val isCode = index % 2 == 1
+            if (isCode) {
+                ElevatedCard(
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Text(
+                        text = part.trim(),
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else if (part.isNotBlank()) {
+                Text(
+                    text = part.trim(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = contentColor
+                )
             }
         }
     }

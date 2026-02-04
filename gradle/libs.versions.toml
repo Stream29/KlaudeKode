@@ -30,6 +30,8 @@ androidxViewmodelCompose = { module = "androidx.lifecycle:lifecycle-viewmodel-co
 
 # Koog framework
 koogAgents = { module = "ai.koog:koog-agents", version.ref = "koog" }
+koogAgentsFeaturesAcp = { module = "ai.koog:agents-features-acp", version.ref = "koog" }
+koogAgentsMcp = { module = "ai.koog:agents-mcp", version.ref = "koog" }
 koogOpenAiClient = { module = "ai.koog:prompt-executor-openai-client", version.ref = "koog" }
 koogGoogleClient = { module = "ai.koog:prompt-executor-google-client", version.ref = "koog" }
 koogDeepseekClient = { module = "ai.koog:prompt-executor-deepseek-client", version.ref = "koog" }
@@ -50,6 +52,8 @@ jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 [bundles]
 koog = [
     "koogAgents",
+    "koogAgentsFeaturesAcp",
+    "koogAgentsMcp",
     "koogOpenAiClient",
     "koogGoogleClient",
     "koogDeepseekClient",

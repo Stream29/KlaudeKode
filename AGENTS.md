@@ -15,6 +15,8 @@ This file should be updated when essential. (For example, new module being added
 - `koog`(reference/koog) The powerful agent framework. Cloned from GitHub.
 - `SimpleMainKts`(reference/SimpleMainKts) Example of using kts scripts. Cloned from GitHub.
 - `kimi-cli`(reference/kimi-cli) Moonshot AI's CLI tool for Kimi. Cloned from GitHub.
+- `opencode`(reference/opencode) OpenCode base repo. Cloned from GitHub.
+- `oh-my-opencode`(reference/oh-my-opencode) OhMyOpenCode agents/framework. Cloned from GitHub.
 
 ## Coding Standards
 

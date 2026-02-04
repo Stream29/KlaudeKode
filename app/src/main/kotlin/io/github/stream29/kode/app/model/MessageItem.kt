@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package io.github.stream29.kode.app.model
 
 import io.github.stream29.kode.session.core.model.MessageRole

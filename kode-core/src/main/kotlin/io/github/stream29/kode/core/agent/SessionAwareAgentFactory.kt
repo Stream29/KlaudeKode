@@ -9,8 +9,10 @@ import io.github.stream29.kode.config.api.LlmModelConfig
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.storage.FileSessionStorage
+import io.github.stream29.kode.ui.core.ApprovalHandler
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
+import io.github.stream29.kode.core.hooks.HookManager
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -19,8 +21,12 @@ public class SessionAwareAgentFactory(
     private val auths: List<LlmAuthConfig>,
     private val models: List<LlmModelConfig>,
     private val messageHandler: MessageHandler,
+    private val approvalHandler: ApprovalHandler?,
+    private val disabledTools: Set<String>,
+    private val mcpToolRegistry: ToolRegistry?,
     private val workingDir: File,
     private val eventListener: AgentEventListener?,
+    private val hookManager: HookManager,
     private val logger: (String) -> Unit
 ) {
     public val sessionManager: SessionManager by lazy {
@@ -38,12 +44,23 @@ public class SessionAwareAgentFactory(
         )
     }
     
-    private val promptExecutor: MultiLLMPromptExecutor by lazy {
+    public val promptExecutor: MultiLLMPromptExecutor by lazy {
         MultiLLMExecutorFactory.create(auths)
     }
     
-    private val toolRegistry: ToolRegistry by lazy {
-        ToolRegistryFactory.create(workingDir, messageHandler, logger)
+    public val toolRegistry: ToolRegistry by lazy {
+        val baseRegistry = ToolRegistryFactory.create(
+            workingDir = workingDir,
+            messageHandler = messageHandler,
+            logger = logger,
+            disabledTools = disabledTools,
+            taskAgentFactory = createTaskAgentFactory()
+        )
+        if (mcpToolRegistry == null) {
+            baseRegistry
+        } else {
+            baseRegistry + mcpToolRegistry
+        }
     }
     
     private val conversationAgent: ConversationAgent by lazy {
@@ -53,6 +70,8 @@ public class SessionAwareAgentFactory(
             sessionManager = sessionManager,
             sessionBridge = sessionBridge,
             messageHandler = messageHandler,
+            hookManager = hookManager,
+            approvalHandler = approvalHandler,
             eventListener = eventListener,
             logger = logger
         )
@@ -89,11 +108,37 @@ public class SessionAwareAgentFactory(
 
     public suspend fun continueSession(sessionId: String, modelId: String): String {
         val model = ModelFactory.createModel(modelId, models, auths)
-        return conversationAgent.chat(sessionId, "Continue from previous conversation", model)
+        return conversationAgent.continueSession(sessionId, model)
     }
     
     public fun getModelById(modelId: String): LlmModelConfig? {
         return models.find { it.id == modelId }
+    }
+
+    public fun createLLModel(modelId: String): LLModel {
+        return ModelFactory.createModel(modelId, models, auths)
+    }
+
+    private fun createTaskAgentFactory(): io.github.stream29.kode.tools.AgentFactory? {
+        if (models.isEmpty()) {
+            return null
+        }
+
+        return object : io.github.stream29.kode.tools.AgentFactory {
+            override fun createAgent(): io.github.stream29.kode.tools.SimpleAgent {
+                return object : io.github.stream29.kode.tools.SimpleAgent {
+                    override suspend fun run(task: String): String {
+                        val modelId = models.first().id
+                        val sessionId = createSession(
+                            title = "Task ${System.currentTimeMillis()}",
+                            systemPrompt = null,
+                            modelId = modelId
+                        )
+                        return runWithSession(sessionId, task, modelId)
+                    }
+                }
+            }
+        }
     }
 
     public companion object {
