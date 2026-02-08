@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.graphics.vector.ImageVector
 
 public enum class AppPage(
@@ -18,7 +19,8 @@ public enum class AppPage(
 ) {
     Chat(title = "Chat", icon = Icons.AutoMirrored.Filled.Chat),
     Sessions(title = "Sessions", icon = Icons.Default.FolderOpen),
-    Settings(title = "Settings", icon = Icons.Default.Settings),
+    Models(title = "Models", icon = Icons.Default.Settings),
+    Settings(title = "Settings", icon = Icons.Default.Tune),
     Tools(title = "Tools", icon = Icons.Default.Build),
     Mcp(title = "MCP", icon = Icons.Default.Link),
     Acp(title = "ACP", icon = Icons.Default.DeviceHub),

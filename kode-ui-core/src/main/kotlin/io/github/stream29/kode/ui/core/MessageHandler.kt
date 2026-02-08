@@ -20,6 +20,27 @@ public interface MessageHandler {
      * Suspends until the user provides input.
      */
     public suspend fun requestInput(): String
+
+    /**
+     * Add a message for a specific session.
+     */
+    public fun addMessageToUser(message: String, sessionId: String) {
+        addMessageToUser(message)
+    }
+
+    /**
+     * Log a message for a specific session.
+     */
+    public fun log(message: String, sessionId: String) {
+        log(message)
+    }
+
+    /**
+     * Request input for a specific session.
+     */
+    public suspend fun requestInput(sessionId: String): String {
+        return requestInput()
+    }
 }
 
 /**

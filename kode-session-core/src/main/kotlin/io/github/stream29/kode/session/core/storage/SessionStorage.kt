@@ -3,6 +3,7 @@ package io.github.stream29.kode.session.core.storage
 import io.github.stream29.kode.session.core.model.ConversationSession
 import io.github.stream29.kode.session.core.model.SessionCheckpoint
 import io.github.stream29.kode.session.core.model.SessionSummary
+import kotlin.time.Instant
 
 /**
  * Storage interface for conversation sessions.
@@ -70,8 +71,8 @@ public data class SessionFilter(
     val tags: List<String>? = null,
     val searchQuery: String? = null,
     val parentSessionId: String? = null,
-    val createdAfter: kotlinx.datetime.Instant? = null,
-    val createdBefore: kotlinx.datetime.Instant? = null,
+    val createdAfter: Instant? = null,
+    val createdBefore: Instant? = null,
     val sortBy: SortBy = SortBy.UPDATED_AT,
     val sortOrder: SortOrder = SortOrder.DESCENDING,
     val limit: Int? = null,

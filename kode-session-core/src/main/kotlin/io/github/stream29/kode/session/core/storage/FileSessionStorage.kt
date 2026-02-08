@@ -1,217 +1,299 @@
 package io.github.stream29.kode.session.core.storage
 
-import com.charleskorn.kaml.Yaml
-import com.charleskorn.kaml.YamlConfiguration
-import io.github.stream29.kode.config.FileLocations
+import app.softwork.serialization.csv.CSVFormat
+import io.github.stream29.kode.config.fs.FileSystemLocations
 import io.github.stream29.kode.dispatcher.VirtualThread
+import io.github.stream29.kode.session.core.SessionRepository
 import io.github.stream29.kode.session.core.model.ConversationSession
+import io.github.stream29.kode.session.core.model.Session
 import io.github.stream29.kode.session.core.model.SessionCheckpoint
+import io.github.stream29.kode.session.core.model.SessionDataSnapshot
+import io.github.stream29.kode.session.core.model.SessionMetadata
+import io.github.stream29.kode.session.core.model.SessionMetadataCsvRow
+import io.github.stream29.kode.session.core.model.SessionState
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
+import io.github.stream29.kode.session.core.model.toCsvRow
+import io.github.stream29.kode.session.core.model.toMetadata
+import io.github.stream29.kode.session.core.model.toSnapshot
+import io.github.stream29.kode.session.core.model.toConversationSession
+import io.github.stream29.kode.session.core.model.toSessionRuntime
+import io.github.stream29.kode.session.core.model.toRuntime
+import kotlinx.collections.immutable.PersistentList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.datetime.Clock
-import kotlinx.serialization.encodeToString
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 
-/**
- * File-based implementation of SessionStorage.
- * Stores sessions as JSON files in a directory structure.
- */
+@OptIn(ExperimentalSerializationApi::class)
 public class FileSessionStorage(
-    private val baseDir: File = File(FileLocations.dataDir, "sessions"),
+    dataDir: File = FileSystemLocations.dataDir,
     private val json: Json = Json {
         prettyPrint = true
         ignoreUnknownKeys = true
         encodeDefaults = true
-    }
-) : SessionStorage {
+    },
+) : SessionStorage, SessionRepository {
 
-    private val yaml = Yaml(
-        configuration = YamlConfiguration(
-            encodeDefaults = false
-        )
-    )
-    
+    private val sessionDirRoot: File = File(dataDir, "sessions")
+    private val metadataCsvFile: File = File(dataDir, "session-meta.csv")
+    private val rwMutex: Mutex = Mutex()
+
     init {
-        baseDir.mkdirs()
-        File(baseDir, "checkpoints").mkdirs()
+        dataDir.mkdirs()
+        sessionDirRoot.mkdirs()
     }
 
-    override suspend fun saveSession(session: ConversationSession): Unit = withContext(Dispatchers.VirtualThread) {
-        val sessionFile = getSessionFile(session.id)
-        val jsonString = json.encodeToString(session)
-        sessionFile.writeText(jsonString)
-    }
-
-    override suspend fun getSession(sessionId: String): ConversationSession? = withContext(Dispatchers.VirtualThread) {
-        val sessionFile = getSessionFile(sessionId)
-        if (!sessionFile.exists()) {
-            return@withContext null
+    override suspend fun listSessions(): List<SessionMetadata> {
+        return withContext(Dispatchers.VirtualThread) {
+            rwMutex.withLock {
+                readMetadataRows().map { it.toMetadata() }
+            }
         }
-        try {
-            json.decodeFromString<ConversationSession>(sessionFile.readText())
-        } catch (e: Exception) {
+    }
+
+    override suspend fun loadSession(id: String): Session {
+        return withContext(Dispatchers.VirtualThread) {
+            rwMutex.withLock {
+                val metadataMap = readMetadataRows().associateBy { it.id }
+                val metadataRow = metadataMap[id]
+                    ?: throw IllegalArgumentException("Session not found: $id")
+                val metadata = metadataRow.toMetadata()
+                val sessionDataFile = getSessionDataFile(id)
+
+                val loadedRuntime = if (sessionDataFile.isFile) {
+                    val snapshot = json.decodeFromString(SessionDataSnapshot.serializer(), sessionDataFile.readText())
+                    snapshot.toRuntime(metadata)
+                } else {
+                    buildEmptyRuntime(metadata)
+                }
+
+                val normalizedMetadata = if (loadedRuntime.metadata.value.state == SessionState.Running) {
+                    loadedRuntime.metadata.value.copy(state = SessionState.Suspended)
+                } else {
+                    loadedRuntime.metadata.value
+                }
+
+                loadedRuntime.metadata.value = metadata.copy(
+                    state = normalizedMetadata.state,
+                )
+                loadedRuntime
+            }
+        }
+    }
+
+    override suspend fun persistSession(id: String, session: Session) {
+        withContext(Dispatchers.VirtualThread) {
+            rwMutex.withLock {
+                val metadata = session.metadata.value.copy(
+                    messageCount = session.agent.value.messages.value.size,
+                )
+                session.metadata.value = metadata
+                upsertMetadata(metadata)
+
+                val sessionFolder = getSessionDirectory(id)
+                sessionFolder.mkdirs()
+                val sessionDataFile = getSessionDataFile(id)
+                val snapshot = session.toSnapshot()
+                sessionDataFile.writeText(
+                    text = json.encodeToString(SessionDataSnapshot.serializer(), snapshot),
+                )
+            }
+        }
+    }
+
+    override suspend fun removeSession(id: String) {
+        withContext(Dispatchers.VirtualThread) {
+            rwMutex.withLock {
+                val filtered = readMetadataRows().filterNot { row -> row.id == id }
+                writeMetadataRows(filtered)
+                getSessionDirectory(id).deleteRecursively()
+            }
+        }
+    }
+
+    override suspend fun saveSession(session: ConversationSession) {
+        persistSession(session.id, session.toSessionRuntime())
+    }
+
+    override suspend fun getSession(sessionId: String): ConversationSession? {
+        return try {
+            loadSession(sessionId).toConversationSession()
+        } catch (_: IllegalArgumentException) {
             null
         }
     }
 
-    override suspend fun listSessions(filter: SessionFilter?): List<SessionSummary> = withContext(Dispatchers.VirtualThread) {
-        val sessionFiles = baseDir.listFiles { file ->
-            file.isFile && file.extension == "json"
-        } ?: emptyArray()
-        
-        val sessions = sessionFiles.mapNotNull { file ->
-            try {
-                json.decodeFromString<ConversationSession>(file.readText())
-            } catch (e: Exception) {
-                null
-            }
+    override suspend fun listSessions(filter: SessionFilter?): List<SessionSummary> {
+        val metadataList = listSessions()
+        return querySessionSummaries(metadataList, filter)
+    }
+
+    override suspend fun deleteSession(sessionId: String, hardDelete: Boolean) {
+        if (hardDelete) {
+            removeSession(sessionId)
+            return
         }
-        
-        val filtered = sessions.filter { session ->
-            if (filter == null) return@filter true
-            
-            // Status filter
-            if (filter.status != null) {
-                when (filter.status) {
-                    SessionStatusFilter.ACTIVE -> if (session.status != SessionStatus.ACTIVE) return@filter false
-                    SessionStatusFilter.ARCHIVED -> if (session.status != SessionStatus.ARCHIVED) return@filter false
-                    SessionStatusFilter.ALL -> {}
+
+        val session = getSession(sessionId) ?: return
+        saveSession(session.copy(status = SessionStatus.DELETED))
+    }
+
+    override suspend fun saveCheckpoint(checkpoint: SessionCheckpoint) {
+        val runtime = loadSession(checkpoint.sessionId)
+        runtime.checkpoints.value = runtime.checkpoints.value.add(checkpoint)
+        persistSession(checkpoint.sessionId, runtime)
+    }
+
+    override suspend fun getCheckpoints(sessionId: String): List<SessionCheckpoint> {
+        return runCatching {
+            loadSession(sessionId).checkpoints.value
+        }.getOrDefault(emptyList())
+    }
+
+    override suspend fun getLatestCheckpoint(sessionId: String): SessionCheckpoint? {
+        return getCheckpoints(sessionId).maxByOrNull { checkpoint -> checkpoint.version }
+    }
+
+    override suspend fun getCheckpoint(sessionId: String, checkpointId: String): SessionCheckpoint? {
+        return getCheckpoints(sessionId).firstOrNull { checkpoint -> checkpoint.checkpointId == checkpointId }
+    }
+
+    override suspend fun deleteCheckpoint(sessionId: String, checkpointId: String) {
+        val runtime = loadSession(sessionId)
+        runtime.checkpoints.value = runtime.checkpoints.value
+            .filterNot { checkpoint -> checkpoint.checkpointId == checkpointId }
+            .toPersistentList()
+        persistSession(sessionId, runtime)
+    }
+
+    override suspend fun deleteAllCheckpoints(sessionId: String) {
+        val runtime = loadSession(sessionId)
+        runtime.checkpoints.value = persistentListOf()
+        persistSession(sessionId, runtime)
+    }
+
+    private fun buildEmptyRuntime(metadata: SessionMetadata): Session {
+        val emptySession = ConversationSession(
+            id = metadata.id,
+            title = metadata.title,
+            createdAt = metadata.createdAt,
+            updatedAt = metadata.updatedAt,
+            messages = emptyList(),
+            status = metadata.status,
+            parentSessionId = metadata.parentSessionId,
+            forkedFromMessageId = metadata.forkedFromMessageId,
+            version = metadata.version,
+            configuration = io.github.stream29.kode.session.core.model.SessionConfig(
+                preferredModel = null,
+                systemPrompt = null,
+                workDir = null,
+                maxIterations = null,
+                temperature = null,
+                customValues = null,
+            ),
+            tags = metadata.tags,
+            childSessionIds = metadata.childSessionIds,
+            runtimeState = SessionState.Suspended,
+        )
+        return emptySession.toSessionRuntime()
+    }
+
+    private fun readMetadataRows(): List<SessionMetadataCsvRow> {
+        if (!metadataCsvFile.exists()) {
+            return emptyList()
+        }
+        val content = metadataCsvFile.readText().trim()
+        if (content.isBlank()) {
+            return emptyList()
+        }
+        return runCatching {
+            CSVFormat.decodeFromString(
+                deserializer = ListSerializer(SessionMetadataCsvRow.serializer()),
+                string = content,
+            )
+        }.getOrElse {
+            runCatching {
+                CSVFormat.decodeFromString(
+                    deserializer = ListSerializer(LegacySessionMetadataCsvRow.serializer()),
+                    string = content,
+                ).map { legacy ->
+                    SessionMetadataCsvRow(
+                        id = legacy.id,
+                        title = legacy.title,
+                        createdAtIso = legacy.createdAtIso,
+                        updatedAtIso = legacy.updatedAtIso,
+                        messageCount = 0,
+                        state = legacy.state,
+                        status = legacy.status,
+                        parentSessionId = legacy.parentSessionId,
+                        forkedFromMessageId = legacy.forkedFromMessageId,
+                        version = legacy.version,
+                        tags = legacy.tags,
+                        childSessionIds = legacy.childSessionIds,
+                    )
                 }
+            }.getOrElse {
+                emptyList()
             }
-            
-            // Tags filter
-            if (filter.tags != null && filter.tags.isNotEmpty()) {
-                if (!session.tags.containsAll(filter.tags)) return@filter false
-            }
-            
-            // Search query
-            if (filter.searchQuery != null) {
-                val query = filter.searchQuery.lowercase()
-                if (!session.title.lowercase().contains(query)) {
-                    val hasMatchInMessages = session.messages.any {
-                        it.content.lowercase().contains(query)
-                    }
-                    if (!hasMatchInMessages) return@filter false
-                }
-            }
-            
-            // Parent session filter
-            if (filter.parentSessionId != null) {
-                if (session.parentSessionId != filter.parentSessionId) return@filter false
-            }
-            
-            // Date filters
-            if (filter.createdAfter != null) {
-                if (session.createdAt < filter.createdAfter) return@filter false
-            }
-            if (filter.createdBefore != null) {
-                if (session.createdAt > filter.createdBefore) return@filter false
-            }
-            
-            true
         }
-        
-        // Sort
-        val sorted = when (filter?.sortBy) {
-            SortBy.CREATED_AT -> filtered.sortedBy { it.createdAt }
-            SortBy.TITLE -> filtered.sortedBy { it.title }
-            else -> filtered.sortedBy { it.updatedAt }
-        }.let {
-            if (filter?.sortOrder == SortOrder.ASCENDING) it else it.reversed()
-        }
-        
-        // Apply limit and offset
-        val paginated = sorted.drop(filter?.offset ?: 0).take(filter?.limit ?: Int.MAX_VALUE)
-        
-        paginated.map { session ->
-            SessionSummary(
-                id = session.id,
-                title = session.title,
-                createdAt = session.createdAt,
-                updatedAt = session.updatedAt,
-                messageCount = session.messages.size,
-                status = session.status,
-                hasForks = session.childSessionIds.isNotEmpty(),
-                tags = session.tags
+    }
+
+    private fun writeMetadataRows(rows: List<SessionMetadataCsvRow>) {
+        metadataCsvFile.parentFile?.mkdirs()
+        val serialized = if (rows.isEmpty()) {
+            ""
+        } else {
+            CSVFormat.encodeToString(
+                serializer = ListSerializer(SessionMetadataCsvRow.serializer()),
+                value = rows,
             )
         }
+        metadataCsvFile.writeText(serialized)
     }
 
-    override suspend fun deleteSession(sessionId: String, hardDelete: Boolean): Unit = withContext(Dispatchers.VirtualThread) {
-        if (hardDelete) {
-            getSessionFile(sessionId).delete()
-            deleteAllCheckpoints(sessionId)
+    private fun upsertMetadata(metadata: SessionMetadata) {
+        val rows = readMetadataRows().toMutableList()
+        val index = rows.indexOfFirst { row -> row.id == metadata.id }
+        val row = metadata.toCsvRow()
+        if (index >= 0) {
+            rows[index] = row
         } else {
-            val session = getSessionId(sessionId)
-            if (session != null) {
-                saveSession(session.copy(status = SessionStatus.DELETED))
-            }
+            rows += row
         }
+        writeMetadataRows(rows)
     }
 
-    override suspend fun saveCheckpoint(checkpoint: SessionCheckpoint): Unit = withContext(Dispatchers.VirtualThread) {
-        val checkpointDir = getCheckpointDir(checkpoint.sessionId)
-        checkpointDir.mkdirs()
-        val checkpointFile = File(checkpointDir, "${checkpoint.checkpointId}.json")
-        checkpointFile.writeText(json.encodeToString(checkpoint))
-        
-        // Also save as "latest" for quick access
-        val latestFile = File(checkpointDir, "latest.json")
-        latestFile.writeText(json.encodeToString(checkpoint))
+    private fun getSessionDirectory(sessionId: String): File {
+        return File(sessionDirRoot, sessionId)
     }
 
-    override suspend fun getCheckpoints(sessionId: String): List<SessionCheckpoint> = withContext(Dispatchers.VirtualThread) {
-        val checkpointDir = getCheckpointDir(sessionId)
-        if (!checkpointDir.exists()) return@withContext emptyList()
-        
-        checkpointDir.listFiles { file ->
-            file.isFile && file.extension == "json" && file.name != "latest.json"
-        }?.mapNotNull { file ->
-            try {
-                json.decodeFromString<SessionCheckpoint>(file.readText())
-            } catch (e: Exception) {
-                null
-            }
-        }?.sortedBy { it.version } ?: emptyList()
+    private fun getSessionDataFile(sessionId: String): File {
+        return File(getSessionDirectory(sessionId), "session.json")
     }
 
-    override suspend fun getLatestCheckpoint(sessionId: String): SessionCheckpoint? = withContext(Dispatchers.VirtualThread) {
-        val checkpointDir = getCheckpointDir(sessionId)
-        val latestFile = File(checkpointDir, "latest.json")
-        if (!latestFile.exists()) {
-            return@withContext null
-        }
-        try {
-            json.decodeFromString<SessionCheckpoint>(latestFile.readText())
-        } catch (e: Exception) {
-            null
-        }
+    private fun <E> List<E>.toPersistentList(): PersistentList<E> {
+        return persistentListOf<E>().addAll(this)
     }
 
-    override suspend fun getCheckpoint(sessionId: String, checkpointId: String): SessionCheckpoint? = withContext(Dispatchers.VirtualThread) {
-        val checkpointFile = File(getCheckpointDir(sessionId), "$checkpointId.json")
-        if (!checkpointFile.exists()) return@withContext null
-        try {
-            json.decodeFromString<SessionCheckpoint>(checkpointFile.readText())
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    override suspend fun deleteCheckpoint(sessionId: String, checkpointId: String): Unit = withContext(Dispatchers.VirtualThread) {
-        File(getCheckpointDir(sessionId), "$checkpointId.json").delete()
-    }
-
-    override suspend fun deleteAllCheckpoints(sessionId: String): Unit = withContext(Dispatchers.VirtualThread) {
-        getCheckpointDir(sessionId).deleteRecursively()
-    }
-
-    private fun getSessionFile(sessionId: String): File = File(baseDir, "$sessionId.json")
-    
-    private fun getCheckpointDir(sessionId: String): File = File(baseDir, "checkpoints/$sessionId")
-    
-    private suspend fun getSessionId(sessionId: String): ConversationSession? = getSession(sessionId)
+    @Serializable
+    private data class LegacySessionMetadataCsvRow(
+        val id: String,
+        val title: String,
+        val createdAtIso: String,
+        val updatedAtIso: String,
+        val state: SessionState,
+        val status: SessionStatus,
+        val parentSessionId: String,
+        val forkedFromMessageId: String,
+        val version: Long,
+        val tags: String,
+        val childSessionIds: String,
+    )
 }

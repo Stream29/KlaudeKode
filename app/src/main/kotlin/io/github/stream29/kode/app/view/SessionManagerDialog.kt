@@ -19,6 +19,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.stream29.kode.app.viewmodel.AppUiState
 import io.github.stream29.kode.app.viewmodel.MainViewModel
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
@@ -31,6 +33,8 @@ public fun SessionManagerDialog(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
+    val ui by viewModel.appUiState.collectAsStateWithLifecycle()
+
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = {
@@ -50,6 +54,7 @@ public fun SessionManagerDialog(
         text = {
             SessionManagerContent(
                 viewModel = viewModel,
+                ui = ui,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(450.dp)
@@ -79,6 +84,7 @@ public fun SessionManagerDialog(
 @Composable
 public fun SessionManagerContent(
     viewModel: MainViewModel,
+    ui: AppUiState,
     modifier: Modifier
 ) {
     Column(modifier = modifier) {
@@ -88,7 +94,7 @@ public fun SessionManagerContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedTextField(
-                value = viewModel.sessionSearchQuery,
+                value = ui.sessionSearchQuery,
                 onValueChange = { viewModel.updateSessionSearchQuery(it) },
                 label = { Text("Search") },
                 modifier = Modifier.weight(1f),
@@ -109,13 +115,37 @@ public fun SessionManagerContent(
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        OutlinedTextField(
+            value = ui.session.currentSessionWorkDir,
+            onValueChange = {},
+            label = { Text("Session directory") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            readOnly = true
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        FilledTonalButton(
+            onClick = { viewModel.openSessionDirDialog() },
+            enabled = ui.session.currentSessionId != null
+        ) {
+            Icon(
+                imageVector = Icons.Default.Edit,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Edit")
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedTextField(
-                value = viewModel.sessionTagFilter,
+                value = ui.sessionTagFilter,
                 onValueChange = { viewModel.updateSessionTagFilter(it) },
                 label = { Text("Tags (comma separated)") },
                 modifier = Modifier.weight(1f),
@@ -125,17 +155,17 @@ public fun SessionManagerContent(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
-                    selected = viewModel.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ACTIVE,
+                    selected = ui.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ACTIVE,
                     onClick = { viewModel.updateSessionStatusFilter(io.github.stream29.kode.session.core.storage.SessionStatusFilter.ACTIVE) },
                     label = { Text("Active") }
                 )
                 FilterChip(
-                    selected = viewModel.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ARCHIVED,
+                    selected = ui.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ARCHIVED,
                     onClick = { viewModel.updateSessionStatusFilter(io.github.stream29.kode.session.core.storage.SessionStatusFilter.ARCHIVED) },
                     label = { Text("Archived") }
                 )
                 FilterChip(
-                    selected = viewModel.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ALL,
+                    selected = ui.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ALL,
                     onClick = { viewModel.updateSessionStatusFilter(io.github.stream29.kode.session.core.storage.SessionStatusFilter.ALL) },
                     label = { Text("All") }
                 )
@@ -144,7 +174,7 @@ public fun SessionManagerContent(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        if (viewModel.sessionSummaries.isEmpty()) {
+        if (ui.sessionSummaries.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -170,10 +200,10 @@ public fun SessionManagerContent(
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(viewModel.sessionSummaries) { session ->
+                items(ui.sessionSummaries) { session ->
                     SessionCard(
                         session = session,
-                        isCurrent = session.id == viewModel.currentSessionId,
+                        isCurrent = session.id == ui.session.currentSessionId,
                         onSwitch = { viewModel.switchToSession(session.id) },
                         onFork = { viewModel.forkSession(session.id) },
                         onExport = { viewModel.exportSession(session.id) },

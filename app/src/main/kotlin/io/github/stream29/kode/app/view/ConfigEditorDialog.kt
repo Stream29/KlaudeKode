@@ -5,9 +5,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.stream29.kode.app.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -16,6 +18,8 @@ public fun ConfigEditorDialog(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
+    val ui by viewModel.appUiState.collectAsStateWithLifecycle()
+
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = {
@@ -42,7 +46,7 @@ public fun ConfigEditorDialog(
                 )
                 
                 OutlinedTextField(
-                    value = viewModel.configText,
+                    value = ui.configText,
                     onValueChange = { viewModel.configText = it },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -79,7 +83,7 @@ defaults:
                     }
                 )
                 
-                viewModel.configError?.let { error ->
+                ui.configError?.let { error ->
                     Spacer(modifier = Modifier.height(12.dp))
                     ElevatedCard(
                         colors = CardDefaults.elevatedCardColors(

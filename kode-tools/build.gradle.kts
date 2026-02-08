@@ -5,6 +5,8 @@ plugins {
 
 dependencies {
     implementation(projects.kodeConfig)
+    implementation(projects.kodeSessionCore)
+    implementation(projects.scriptingTool)
     implementation(projects.kodeUiCore)
     implementation(projects.virtualThreadDispatcher)
     

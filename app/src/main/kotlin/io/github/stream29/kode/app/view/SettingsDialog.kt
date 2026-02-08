@@ -14,6 +14,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.stream29.kode.app.viewmodel.AppUiState
 import io.github.stream29.kode.app.viewmodel.MainViewModel
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
@@ -25,6 +27,7 @@ public fun SettingsDialog(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
+    val ui by viewModel.appUiState.collectAsStateWithLifecycle()
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("Models", "Auth Providers", "Preferences")
 
@@ -40,7 +43,7 @@ public fun SettingsDialog(
         },
         title = {
             Text(
-                "Settings",
+                "Models",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -48,6 +51,7 @@ public fun SettingsDialog(
         text = {
             SettingsContent(
                 viewModel = viewModel,
+                ui = ui,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(500.dp),
@@ -67,6 +71,7 @@ public fun SettingsDialog(
 @Composable
 public fun SettingsContent(
     viewModel: MainViewModel,
+    ui: AppUiState,
     modifier: Modifier,
     selectedTab: Int,
     onTabSelected: (Int) -> Unit,
@@ -90,9 +95,9 @@ public fun SettingsContent(
                 .padding(top = 16.dp)
         ) {
             when (selectedTab) {
-                0 -> ModelsTab(viewModel)
-                1 -> AuthTab(viewModel)
-                2 -> PreferencesTab(viewModel)
+                0 -> ModelsTab(viewModel, ui)
+                1 -> AuthTab(viewModel, ui)
+                2 -> PreferencesTab(viewModel, ui)
             }
         }
     }
@@ -101,11 +106,11 @@ public fun SettingsContent(
 
 
 @Composable
-private fun ModelsTab(viewModel: MainViewModel) {
+public fun ModelsTab(viewModel: MainViewModel, ui: AppUiState) {
     var showAddDialog by remember { mutableStateOf(false) }
     var editingModel by remember { mutableStateOf<LlmModelConfig?>(null) }
-    val models = viewModel.models
-    val auths = viewModel.auths
+    val models = ui.models
+    val auths = ui.auths
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -168,7 +173,7 @@ private fun ModelsTab(viewModel: MainViewModel) {
                     ModelCard(
                         model = model,
                         auth = auths.find { it.id == model.authId },
-                        isActive = model.id == viewModel.activeModelId,
+                        isActive = model.id == ui.activeModelId,
                         onActivate = { viewModel.switchModel(model.id) },
                         onEdit = { editingModel = model },
                         onDelete = { viewModel.deleteModel(model.id) }
@@ -180,6 +185,8 @@ private fun ModelsTab(viewModel: MainViewModel) {
 
     if (showAddDialog) {
         ModelDialog(
+            viewModel = viewModel,
+            _ui = ui,
             auths = auths,
             onDismiss = { showAddDialog = false },
             onConfirm = { model ->
@@ -191,6 +198,8 @@ private fun ModelsTab(viewModel: MainViewModel) {
 
     editingModel?.let { model ->
         ModelDialog(
+            viewModel = viewModel,
+            _ui = ui,
             model = model,
             auths = auths,
             onDismiss = { editingModel = null },
@@ -306,6 +315,8 @@ private fun ModelCard(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModelDialog(
+    viewModel: MainViewModel,
+    _ui: AppUiState,
     model: LlmModelConfig? = null,
     auths: List<LlmAuthConfig>,
     onDismiss: () -> Unit,
@@ -318,6 +329,9 @@ private fun ModelDialog(
     var idError by remember { mutableStateOf<String?>(null) }
 
     val isEditing = model != null
+
+
+    val suggestedId = viewModel.generateDefaultModelId(modelName, selectedAuthId)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -333,10 +347,16 @@ private fun ModelDialog(
                         id = it
                         idError = null
                     },
-                    label = { Text("ID *") },
+                    label = { Text("ID") },
                     enabled = !isEditing,
                     isError = idError != null,
-                    supportingText = idError?.let { { Text(it) } },
+                    placeholder = {
+                        if (suggestedId.isNotBlank()) {
+                            Text(suggestedId)
+                        } else {
+                            Text("Auto-generated")
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -396,8 +416,12 @@ private fun ModelDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (id.isBlank()) {
-                        idError = "ID is required"
+                    var resolvedId = id
+                    if (resolvedId.isBlank()) {
+                        resolvedId = viewModel.generateDefaultModelId(modelName, selectedAuthId)
+                    }
+                    if (resolvedId.isBlank()) {
+                        idError = "Unable to generate ID"
                         return@TextButton
                     }
                     if (modelName.isBlank()) {
@@ -409,14 +433,14 @@ private fun ModelDialog(
 
                     onConfirm(
                         LlmModelConfig(
-                            id = id,
+                            id = resolvedId,
                             displayName = displayName.takeIf { it.isNotBlank() },
                             model = modelName,
                             authId = selectedAuthId
                         )
                     )
                 },
-                enabled = id.isNotBlank() && modelName.isNotBlank() && selectedAuthId.isNotBlank()
+                enabled = modelName.isNotBlank() && selectedAuthId.isNotBlank()
             ) {
                 Text(if (isEditing) "Save" else "Add")
             }
@@ -432,12 +456,12 @@ private fun ModelDialog(
 
 
 @Composable
-private fun AuthTab(viewModel: MainViewModel) {
+public fun AuthTab(viewModel: MainViewModel, ui: AppUiState) {
     var showAddDialog by remember { mutableStateOf(false) }
     var editingAuth by remember { mutableStateOf<LlmAuthConfig?>(null) }
     var deletingAuth by remember { mutableStateOf<LlmAuthConfig?>(null) }
-    val auths = viewModel.auths
-    val models = viewModel.models
+    val auths = ui.auths
+    val models = ui.models
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -490,6 +514,8 @@ private fun AuthTab(viewModel: MainViewModel) {
 
     if (showAddDialog) {
         AuthDialog(
+            viewModel = viewModel,
+            _ui = ui,
             onDismiss = { showAddDialog = false },
             onConfirm = { auth ->
                 viewModel.addAuth(auth)
@@ -500,6 +526,8 @@ private fun AuthTab(viewModel: MainViewModel) {
 
     editingAuth?.let { auth ->
         AuthDialog(
+            viewModel = viewModel,
+            _ui = ui,
             auth = auth,
             onDismiss = { editingAuth = null },
             onConfirm = { updated ->
@@ -675,6 +703,8 @@ private fun AuthCard(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AuthDialog(
+    viewModel: MainViewModel,
+    _ui: AppUiState,
     auth: LlmAuthConfig? = null,
     onDismiss: () -> Unit,
     onConfirm: (LlmAuthConfig) -> Unit
@@ -705,6 +735,8 @@ private fun AuthDialog(
     val isEditing = auth != null
     val providers = listOf("Anthropic", "OpenAI", "Moonshot", "Gemini", "DeepSeek", "OpenAICompatible")
     val needsBaseUrl = selectedProvider == "OpenAICompatible"
+    val suggestedId = viewModel.generateDefaultAuthId(selectedProvider, customName)
+
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -763,10 +795,16 @@ private fun AuthDialog(
                         id = it
                         idError = null
                     },
-                    label = { Text("ID *") },
+                    label = { Text("ID") },
                     enabled = !isEditing,
                     isError = idError != null,
-                    supportingText = idError?.let { { Text(it) } } ?: { Text("Unique identifier for this auth") },
+                    placeholder = {
+                        if (suggestedId.isNotBlank()) {
+                            Text(suggestedId)
+                        } else {
+                            Text("Auto-generated")
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -790,8 +828,12 @@ private fun AuthDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    if (id.isBlank()) {
-                        idError = "ID is required"
+                    var resolvedId = id
+                    if (resolvedId.isBlank()) {
+                        resolvedId = viewModel.generateDefaultAuthId(selectedProvider, customName)
+                    }
+                    if (resolvedId.isBlank()) {
+                        idError = "Unable to generate ID"
                         return@TextButton
                     }
                     if (apiKey.isBlank()) {
@@ -803,45 +845,45 @@ private fun AuthDialog(
 
                     val config = when (selectedProvider) {
                         "Anthropic" -> LlmAuthConfig.Anthropic(
-                            id = id,
+                            id = resolvedId,
                             apiKey = apiKey,
                             baseUrl = baseUrl.takeIf { it.isNotBlank() }
                         )
                         "OpenAI" -> LlmAuthConfig.OpenAI(
-                            id = id,
+                            id = resolvedId,
                             apiKey = apiKey,
                             baseUrl = baseUrl.takeIf { it.isNotBlank() }
                         )
                         "Moonshot" -> LlmAuthConfig.Moonshot(
-                            id = id,
+                            id = resolvedId,
                             apiKey = apiKey,
                             baseUrl = baseUrl.takeIf { it.isNotBlank() }
                         )
                         "Gemini" -> LlmAuthConfig.Gemini(
-                            id = id,
+                            id = resolvedId,
                             apiKey = apiKey,
                             baseUrl = baseUrl.takeIf { it.isNotBlank() }
                         )
                         "DeepSeek" -> LlmAuthConfig.DeepSeek(
-                            id = id,
+                            id = resolvedId,
                             apiKey = apiKey,
                             baseUrl = baseUrl.takeIf { it.isNotBlank() }
                         )
                         "OpenAICompatible" -> LlmAuthConfig.OpenAICompatible(
-                            id = id,
+                            id = resolvedId,
                             apiKey = apiKey,
                             baseUrl = baseUrl,
                             name = customName
                         )
                         else -> LlmAuthConfig.Anthropic(
-                            id = id,
+                            id = resolvedId,
                             apiKey = apiKey,
                             baseUrl = baseUrl.takeIf { it.isNotBlank() }
                         )
                     }
                     onConfirm(config)
                 },
-                enabled = id.isNotBlank() && apiKey.isNotBlank() && (!needsBaseUrl || baseUrl.isNotBlank()) &&
+                enabled = apiKey.isNotBlank() && (!needsBaseUrl || baseUrl.isNotBlank()) &&
                         (!needsBaseUrl || customName.isNotBlank())
             ) {
                 Text(if (isEditing) "Save" else "Add")
@@ -858,9 +900,7 @@ private fun AuthDialog(
 
 
 @Composable
-private fun PreferencesTab(viewModel: MainViewModel) {
-    var approvalActionInput by remember { mutableStateOf("") }
-
+public fun PreferencesTab(viewModel: MainViewModel, ui: AppUiState) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -876,7 +916,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            ModelSelectionSection(viewModel)
+            ModelSelectionSection(viewModel, ui)
         }
 
         item {
@@ -888,7 +928,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(12.dp))
-            DefaultModelSelectionSection(viewModel)
+            DefaultModelSelectionSection(viewModel, ui)
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -909,7 +949,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
                     )
                 }
                 Switch(
-                    checked = viewModel.defaultThinking,
+                    checked = ui.defaultThinking,
                     onCheckedChange = { viewModel.defaultThinking = it }
                 )
             }
@@ -918,38 +958,56 @@ private fun PreferencesTab(viewModel: MainViewModel) {
         item {
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                "Loop Control",
+                "Generation",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary
             )
+
             Spacer(modifier = Modifier.height(12.dp))
 
-            LoopControlField(
-                label = "Max steps per turn",
-                value = viewModel.maxStepsPerTurn,
-                onValueChange = { viewModel.maxStepsPerTurn = it }
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            LoopControlField(
-                label = "Max retries per step",
-                value = viewModel.maxRetriesPerStep,
-                onValueChange = { viewModel.maxRetriesPerStep = it }
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            LoopControlField(
-                label = "Max Ralph iterations",
-                value = viewModel.maxRalphIterations,
-                onValueChange = { viewModel.maxRalphIterations = it }
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            LoopControlField(
-                label = "Reserved context size",
-                value = viewModel.reservedContextSize,
-                onValueChange = { viewModel.reservedContextSize = it }
-            )
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Temperature",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        String.format("%.1f", ui.temperature),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+                Slider(
+                    value = ui.temperature,
+                    onValueChange = { viewModel.temperature = it },
+                    valueRange = 0f..1f,
+                    steps = 9
+                )
+                Text(
+                    "Lower = more focused, Higher = more creative",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
+        
+    }
+}
+
+@Composable
+public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
+    var approvalActionInput by remember { mutableStateOf("") }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
         item {
             Spacer(modifier = Modifier.height(16.dp))
             Text(
@@ -961,9 +1019,9 @@ private fun PreferencesTab(viewModel: MainViewModel) {
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedTextField(
-                value = viewModel.workDir,
-                onValueChange = { viewModel.workDir = it },
-                label = { Text("Working directory") },
+                value = ui.defaultSessionDir,
+                onValueChange = { viewModel.defaultSessionDir = it },
+                label = { Text("Default session directory") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -980,7 +1038,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedTextField(
-                value = viewModel.skillsDir,
+                value = ui.skillsDir,
                 onValueChange = { viewModel.skillsDir = it },
                 label = { Text("Skills directory") },
                 modifier = Modifier.fillMaxWidth(),
@@ -990,7 +1048,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
             Spacer(modifier = Modifier.height(8.dp))
 
             OutlinedTextField(
-                value = viewModel.agentBuiltin,
+                value = ui.agentBuiltin,
                 onValueChange = { viewModel.agentBuiltin = it },
                 label = { Text("Agent builtin") },
                 modifier = Modifier.fillMaxWidth(),
@@ -1000,7 +1058,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
             Spacer(modifier = Modifier.height(8.dp))
 
             OutlinedTextField(
-                value = viewModel.agentFile,
+                value = ui.agentFile,
                 onValueChange = { viewModel.agentFile = it },
                 label = { Text("Agent file path") },
                 modifier = Modifier.fillMaxWidth(),
@@ -1019,7 +1077,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedTextField(
-                value = viewModel.logLevel,
+                value = ui.logLevel,
                 onValueChange = { viewModel.logLevel = it },
                 label = { Text("Log level") },
                 modifier = Modifier.fillMaxWidth(),
@@ -1029,7 +1087,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
             Spacer(modifier = Modifier.height(8.dp))
 
             OutlinedTextField(
-                value = viewModel.logFile,
+                value = ui.logFile,
                 onValueChange = { viewModel.logFile = it },
                 label = { Text("Log file") },
                 modifier = Modifier.fillMaxWidth(),
@@ -1046,7 +1104,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(12.dp))
-            ThemeSelectionSection(viewModel)
+            ThemeSelectionSection(viewModel, ui)
         }
 
         item {
@@ -1081,7 +1139,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
                             )
                         }
                         Switch(
-                            checked = viewModel.approvalDefaultYolo,
+                            checked = ui.approvalDefaultYolo,
                             onCheckedChange = {
                                 viewModel.approvalDefaultYolo = it
                                 viewModel.yoloEnabled = it
@@ -1094,7 +1152,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
                             "Auto-approve actions",
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        if (viewModel.approvalAutoApproveActions.isEmpty()) {
+                        if (ui.approvalAutoApproveActions.isEmpty()) {
                             Text(
                                 "No auto-approve actions configured",
                                 style = MaterialTheme.typography.bodySmall,
@@ -1102,7 +1160,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
                             )
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                viewModel.approvalAutoApproveActions.forEach { action ->
+                                ui.approvalAutoApproveActions.forEach { action ->
                                     AssistChip(
                                         onClick = { viewModel.removeApprovalAction(action) },
                                         label = { Text(action) }
@@ -1158,35 +1216,35 @@ private fun PreferencesTab(viewModel: MainViewModel) {
                         fontWeight = FontWeight.Medium
                     )
                     OutlinedTextField(
-                        value = viewModel.webSearchProvider,
+                        value = ui.webSearchProvider,
                         onValueChange = { viewModel.webSearchProvider = it },
                         label = { Text("Provider") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
                     OutlinedTextField(
-                        value = viewModel.webSearchApiKey,
+                        value = ui.webSearchApiKey,
                         onValueChange = { viewModel.webSearchApiKey = it },
                         label = { Text("API Key") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
                     OutlinedTextField(
-                        value = viewModel.webSearchBaseUrl,
+                        value = ui.webSearchBaseUrl,
                         onValueChange = { viewModel.webSearchBaseUrl = it },
                         label = { Text("Base URL") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
                     OutlinedTextField(
-                        value = viewModel.webSearchHeaders,
+                        value = ui.webSearchHeaders,
                         onValueChange = { viewModel.webSearchHeaders = it },
                         label = { Text("Headers (Key:Value per line)") },
                         modifier = Modifier.fillMaxWidth(),
                         maxLines = 4
                     )
                     OutlinedTextField(
-                        value = viewModel.webSearchEnv,
+                        value = ui.webSearchEnv,
                         onValueChange = { viewModel.webSearchEnv = it },
                         label = { Text("Env (KEY=VALUE per line)") },
                         modifier = Modifier.fillMaxWidth(),
@@ -1208,35 +1266,35 @@ private fun PreferencesTab(viewModel: MainViewModel) {
                         fontWeight = FontWeight.Medium
                     )
                     OutlinedTextField(
-                        value = viewModel.webFetchProvider,
+                        value = ui.webFetchProvider,
                         onValueChange = { viewModel.webFetchProvider = it },
                         label = { Text("Provider") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
                     OutlinedTextField(
-                        value = viewModel.webFetchApiKey,
+                        value = ui.webFetchApiKey,
                         onValueChange = { viewModel.webFetchApiKey = it },
                         label = { Text("API Key") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
                     OutlinedTextField(
-                        value = viewModel.webFetchBaseUrl,
+                        value = ui.webFetchBaseUrl,
                         onValueChange = { viewModel.webFetchBaseUrl = it },
                         label = { Text("Base URL") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
                     OutlinedTextField(
-                        value = viewModel.webFetchHeaders,
+                        value = ui.webFetchHeaders,
                         onValueChange = { viewModel.webFetchHeaders = it },
                         label = { Text("Headers (Key:Value per line)") },
                         modifier = Modifier.fillMaxWidth(),
                         maxLines = 4
                     )
                     OutlinedTextField(
-                        value = viewModel.webFetchEnv,
+                        value = ui.webFetchEnv,
                         onValueChange = { viewModel.webFetchEnv = it },
                         label = { Text("Env (KEY=VALUE per line)") },
                         modifier = Modifier.fillMaxWidth(),
@@ -1247,11 +1305,7 @@ private fun PreferencesTab(viewModel: MainViewModel) {
         }
 
         item {
-            HorizontalDivider()
-        }
-
-        item {
-            
+            Spacer(modifier = Modifier.height(16.dp))
             Text(
                 "Preferences",
                 style = MaterialTheme.typography.titleMedium,
@@ -1278,39 +1332,8 @@ private fun PreferencesTab(viewModel: MainViewModel) {
                     )
                 }
                 Switch(
-                    checked = viewModel.autoSaveSessions,
+                    checked = ui.autoSaveSessions,
                     onCheckedChange = { viewModel.autoSaveSessions = it }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Temperature",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Text(
-                        String.format("%.1f", viewModel.temperature),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-                Slider(
-                    value = viewModel.temperature,
-                    onValueChange = { viewModel.temperature = it },
-                    valueRange = 0f..1f,
-                    steps = 9
-                )
-                Text(
-                    "Lower = more focused, Higher = more creative",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -1320,7 +1343,6 @@ private fun PreferencesTab(viewModel: MainViewModel) {
         }
 
         item {
-            
             Text(
                 "Advanced",
                 style = MaterialTheme.typography.titleMedium,
@@ -1399,50 +1421,18 @@ private fun PreferencesTab(viewModel: MainViewModel) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            FilledTonalButton(
-                onClick = { viewModel.savePreferences() },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Save,
-                    contentDescription = null
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Save Preferences")
-            }
+            
         }
     }
 }
 
-@Composable
-private fun LoopControlField(
-    label: String,
-    value: Int,
-    onValueChange: (Int) -> Unit
-) {
-    var textValue by remember { mutableStateOf(value.toString()) }
-    OutlinedTextField(
-        value = textValue,
-        onValueChange = { input ->
-            textValue = input
-            val parsed = input.toIntOrNull()
-            if (parsed != null) {
-                onValueChange(parsed)
-            }
-        },
-        label = { Text(label) },
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true
-    )
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DefaultModelSelectionSection(viewModel: MainViewModel) {
+private fun DefaultModelSelectionSection(viewModel: MainViewModel, ui: AppUiState) {
     var expanded by remember { mutableStateOf(false) }
-    val models = viewModel.models
-    val auths = viewModel.auths
-    val defaultId = viewModel.defaultModelId
+    val models = ui.models
+    val auths = ui.auths
+    val defaultId = ui.defaultModelId
     val defaultModel = models.find { it.id == defaultId }
 
     fun getModelDisplayName(model: LlmModelConfig): String {
@@ -1503,7 +1493,7 @@ private fun DefaultModelSelectionSection(viewModel: MainViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ThemeSelectionSection(viewModel: MainViewModel) {
+private fun ThemeSelectionSection(viewModel: MainViewModel, ui: AppUiState) {
     var expanded by remember { mutableStateOf(false) }
     val options = listOf("dark", "light")
 
@@ -1512,7 +1502,7 @@ private fun ThemeSelectionSection(viewModel: MainViewModel) {
         onExpandedChange = { expanded = it }
     ) {
         OutlinedTextField(
-            value = viewModel.uiTheme,
+            value = ui.uiTheme,
             onValueChange = {},
             readOnly = true,
             label = { Text("Theme") },
@@ -1540,11 +1530,11 @@ private fun ThemeSelectionSection(viewModel: MainViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModelSelectionSection(viewModel: MainViewModel) {
+private fun ModelSelectionSection(viewModel: MainViewModel, ui: AppUiState) {
     var expanded by remember { mutableStateOf(false) }
-    val models = viewModel.models
-    val auths = viewModel.auths
-    val activeId = viewModel.activeModelId
+    val models = ui.models
+    val auths = ui.auths
+    val activeId = ui.activeModelId
     val activeModel = models.find { it.id == activeId }
 
     fun getModelDisplayName(model: LlmModelConfig): String {

@@ -48,14 +48,6 @@ public sealed interface AgentEvent {
     ) : AgentEvent
 
     /**
-     * Assistant message streaming chunk.
-     */
-    public data class AssistantMessageChunk(
-        val content: String,
-        val isFinal: Boolean
-    ) : AgentEvent
-
-    /**
      * Agent encountered an error.
      */
     public data class Error(
@@ -69,4 +61,8 @@ public sealed interface AgentEvent {
  */
 public interface AgentEventListener {
     public fun onEvent(event: AgentEvent)
+
+    public fun onEvent(event: AgentEvent, sessionId: String) {
+        onEvent(event)
+    }
 }

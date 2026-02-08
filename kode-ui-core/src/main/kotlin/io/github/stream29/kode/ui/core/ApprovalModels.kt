@@ -15,4 +15,11 @@ public enum class ToolApprovalDecision {
 
 public interface ApprovalHandler {
     public suspend fun requestApproval(request: ToolApprovalRequest): ToolApprovalDecision
+
+    public suspend fun requestApproval(
+        request: ToolApprovalRequest,
+        sessionId: String
+    ): ToolApprovalDecision {
+        return requestApproval(request)
+    }
 }

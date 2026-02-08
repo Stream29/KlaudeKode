@@ -15,8 +15,10 @@ import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.rag.base.files.JVMFileSystemProvider
 import io.github.stream29.kode.config.api.LlmAuthConfig
+import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.tools.CommunicationTools
 import io.github.stream29.kode.tools.FileSearchTools
+import io.github.stream29.kode.tools.KotlinScriptTool
 import io.github.stream29.kode.tools.ShellTool
 import io.github.stream29.kode.tools.TaskTool
 import io.github.stream29.kode.tools.ThinkTool
@@ -92,7 +94,10 @@ internal object ToolRegistryFactory {
         messageHandler: MessageHandler,
         logger: (String) -> Unit,
         disabledTools: Set<String>,
-        taskAgentFactory: io.github.stream29.kode.tools.AgentFactory?
+        taskAgentFactory: io.github.stream29.kode.tools.AgentFactory?,
+        ownerSessionId: String?,
+        ownerAgentId: String?,
+        sessionManager: SessionManager?,
     ): ToolRegistry {
         return ToolRegistry {
             val disableFile = disabledTools.contains("file")
@@ -110,6 +115,7 @@ internal object ToolRegistryFactory {
             }
             if (!disabledTools.contains("shell")) {
                 tools(ShellTool(messageHandler, workingDir, logger))
+                tools(KotlinScriptTool(messageHandler, logger))
             }
             if (!disabledTools.contains("web")) {
                 tools(WebTools(messageHandler, logger))
@@ -124,7 +130,16 @@ internal object ToolRegistryFactory {
                 tools(ThinkTool(messageHandler, logger))
             }
             if (!disabledTools.contains("task") && taskAgentFactory != null) {
-                tools(TaskTool(messageHandler, taskAgentFactory, logger))
+                tools(
+                    TaskTool(
+                        messageHandler = messageHandler,
+                        agentFactory = taskAgentFactory,
+                        logger = logger,
+                        sessionManager = sessionManager,
+                        ownerSessionId = ownerSessionId,
+                        ownerAgentId = ownerAgentId,
+                    )
+                )
             }
         }
     }

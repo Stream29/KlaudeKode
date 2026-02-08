@@ -2,7 +2,6 @@
 
 package io.github.stream29.kode.app.view.components
 
-import androidx.compose.animation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -12,12 +11,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import io.github.stream29.kode.app.model.MessageItem
+import io.github.stream29.kode.app.model.extractToolName
+import io.github.stream29.kode.app.model.isUiError
+import io.github.stream29.kode.app.model.isUiToolCallLike
 import io.github.stream29.kode.session.core.model.MessageRole
+import io.github.stream29.kode.session.core.model.SessionMessage
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import java.awt.Toolkit
@@ -26,17 +27,18 @@ import java.awt.datatransfer.StringSelection
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 public fun MessageBubble(
-    message: MessageItem,
+    message: SessionMessage,
     isCurrentUser: Boolean = false,
     onForkFromHere: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val isUser = message.role == MessageRole.USER
     val isAssistant = message.role == MessageRole.ASSISTANT
-    val isTool = message.isToolCall
+    val isTool = message.isUiToolCallLike()
+    val toolName = message.extractToolName()
     
     val backgroundColor = when {
-        message.isError -> MaterialTheme.colorScheme.errorContainer
+        message.isUiError() -> MaterialTheme.colorScheme.errorContainer
         isUser -> MaterialTheme.colorScheme.primaryContainer
         isAssistant -> MaterialTheme.colorScheme.secondaryContainer
         isTool -> MaterialTheme.colorScheme.tertiaryContainer
@@ -44,14 +46,12 @@ public fun MessageBubble(
     }
     
     val contentColor = when {
-        message.isError -> MaterialTheme.colorScheme.onErrorContainer
+        message.isUiError() -> MaterialTheme.colorScheme.onErrorContainer
         isUser -> MaterialTheme.colorScheme.onPrimaryContainer
         isAssistant -> MaterialTheme.colorScheme.onSecondaryContainer
         isTool -> MaterialTheme.colorScheme.onTertiaryContainer
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    
-    val alignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart
     
     Column(
         modifier = modifier.fillMaxWidth(),
@@ -90,7 +90,7 @@ public fun MessageBubble(
                 modifier = Modifier.padding(16.dp)
             ) {
                 // Tool name if applicable
-                if (isTool && message.toolName != null) {
+                if (isTool && toolName != null) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -103,7 +103,7 @@ public fun MessageBubble(
                             tint = contentColor
                         )
                         Text(
-                            text = message.toolName,
+                            text = toolName,
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Medium,
                             color = contentColor
@@ -200,7 +200,7 @@ private fun copyToClipboard(text: String) {
 
 @Composable
 private fun MessageContent(
-    message: MessageItem,
+    message: SessionMessage,
     contentColor: androidx.compose.ui.graphics.Color
 ) {
     val text = message.content

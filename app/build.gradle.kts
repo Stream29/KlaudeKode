@@ -24,6 +24,8 @@ dependencies {
     implementation(libs.bundles.compose)
     implementation(libs.bundles.serialization)
     implementation(libs.kotlinxDatetime)
+    implementation(libs.koinCore)
+    implementation(libs.koinCompose)
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)
