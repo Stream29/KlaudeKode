@@ -30,8 +30,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.stream29.kode.app.model.extractToolCallArgumentsText
+import io.github.stream29.kode.app.model.extractToolCallPrimaryTextArg
 import io.github.stream29.kode.app.model.extractToolName
+import io.github.stream29.kode.app.model.extractToolResultText
 import io.github.stream29.kode.app.model.isAssistantToolPlan
+import io.github.stream29.kode.app.model.isAwaitUserInputToolCall
+import io.github.stream29.kode.app.model.isAwaitUserInputToolResult
+import io.github.stream29.kode.app.model.isSayToUserToolCall
+import io.github.stream29.kode.app.model.isSayToUserToolResult
 import io.github.stream29.kode.app.model.isUiError
 import io.github.stream29.kode.app.model.isUiToolCallLike
 import io.github.stream29.kode.app.view.components.MessageBubble
@@ -1658,17 +1665,60 @@ private fun getModelDisplayName(
     return "$provider - $name"
 }
 
+private data class MessageListItem(
+    val message: SessionMessage,
+    val sourceIndex: Int,
+)
+
+private fun buildMessageListItems(messages: List<SessionMessage>): List<MessageListItem> {
+    return messages.mapIndexedNotNull { index, message ->
+        when {
+            message.isSayToUserToolResult() -> null
+            message.isSayToUserToolCall() || message.isAwaitUserInputToolCall() -> {
+                val projectedContent = message.extractToolCallPrimaryTextArg()
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: message.content
+                MessageListItem(
+                    message = message.copy(
+                        role = MessageRole.ASSISTANT,
+                        content = projectedContent,
+                    ),
+                    sourceIndex = index,
+                )
+            }
+            message.isAwaitUserInputToolResult() -> {
+                val projectedContent = message.extractToolResultText()
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: message.content
+                MessageListItem(
+                    message = message.copy(
+                        role = MessageRole.USER,
+                        content = projectedContent,
+                    ),
+                    sourceIndex = index,
+                )
+            }
+            else -> MessageListItem(message = message, sourceIndex = index)
+        }
+    }
+}
+
 @Composable
 private fun MessageList(
     messages: List<SessionMessage>,
     onForkFromMessage: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val items = remember(messages) {
+        buildMessageListItems(messages)
+    }
     val listState = rememberLazyListState()
     
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+    LaunchedEffect(items.size) {
+        if (items.isNotEmpty()) {
+            listState.animateScrollToItem(items.size - 1)
         }
     }
     
@@ -1676,7 +1726,7 @@ private fun MessageList(
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large
     ) {
-        if (messages.isEmpty()) {
+        if (items.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -1694,7 +1744,9 @@ private fun MessageList(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
+                itemsIndexed(items, key = { _, item -> item.message.id }) { _, item ->
+                    val message = item.message
+                    val sourceMessage = messages.getOrNull(item.sourceIndex)
                     val defaultExpanded = remember(
                         message.id,
                         message.role,
@@ -1718,7 +1770,11 @@ private fun MessageList(
                         else -> MessageBubble(
                             message = message,
                             isCurrentUser = message.role == MessageRole.USER,
-                            onForkFromHere = { onForkFromMessage(index) }
+                            onForkFromHere = if (sourceMessage?.role == MessageRole.SYSTEM) {
+                                null
+                            } else {
+                                { onForkFromMessage(item.sourceIndex) }
+                            }
                         )
                     }
 
@@ -1765,7 +1821,7 @@ private fun CollapsedMessageRow(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = collapsedMessagePreview(message.content),
+                    text = collapsedMessagePreview(message),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -1811,7 +1867,12 @@ private fun collapsedMessageTitle(message: SessionMessage): String {
     }
 }
 
-private fun collapsedMessagePreview(content: String): String {
+private fun collapsedMessagePreview(message: SessionMessage): String {
+    val content = when (message.role) {
+        MessageRole.TOOL_CALL -> message.extractToolCallArgumentsText() ?: message.content
+        MessageRole.TOOL_RESULT -> message.extractToolResultText() ?: message.content
+        else -> message.content
+    }
     val normalized = content.replace(Regex("\\s+"), " ").trim()
     if (normalized.isBlank()) {
         return "(empty)"

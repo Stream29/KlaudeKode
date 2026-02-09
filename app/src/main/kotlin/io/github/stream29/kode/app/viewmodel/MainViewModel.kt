@@ -1506,7 +1506,9 @@ logging:
     }
 
     override fun addMessageToUser(message: String, sessionId: String) {
-        addSystemMessage(message, sessionId)
+        viewModelScope.launch(Dispatchers.Main) {
+            addSystemMessage(message, sessionId)
+        }
     }
 
     override fun log(message: String) {

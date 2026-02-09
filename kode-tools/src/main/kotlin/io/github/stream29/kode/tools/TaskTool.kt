@@ -6,7 +6,6 @@ import ai.koog.agents.core.tools.reflect.ToolSet
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.ui.core.MessageHandler
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
@@ -14,12 +13,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.coroutines.coroutineContext
 
 @Suppress("unused")
 @LLMDescription(
@@ -35,13 +35,7 @@ public class TaskTool public constructor(
     private val ownerAgentId: String? = null,
 ) : ToolSet {
 
-    @Tool
-    @LLMDescription(
-        "Create a new sub-agent (task) to perform work in parallel. " +
-            "The sub-agent will run independently and can be monitored or awaited. " +
-            "Use this to delegate specific tasks to specialized workers."
-    )
-    public suspend fun createTask(
+    private fun createTask(
         @LLMDescription("A clear, specific task description for the sub-agent")
         task: String,
         @LLMDescription("Optional name/identifier for this task (for your reference)")
@@ -86,18 +80,39 @@ public class TaskTool public constructor(
         )
     }
 
-    @Tool
-    @LLMDescription(
-        "Create a subagent for delegated work. " +
-            "mode can be 'fork' (inherit context) or 'spawn' (fresh context). " +
-            "Returns a stable agentId for poll/await/kill operations."
-    )
-    public suspend fun createAgent(
-        @LLMDescription("Subagent mode: fork or spawn")
-        mode: String,
+    @Tool(customName = "fork_subagent")
+    @LLMDescription("Fork a subagent that inherits parent context for delegated parallel work.")
+    public suspend fun forkSubagent(
         @LLMDescription("Atomic task description for the subagent")
         taskDescription: String,
         @LLMDescription("Expected result format and completion criteria")
+        expectedResult: String,
+    ): AgentCreationResult {
+        return createAgent(
+            mode = "fork",
+            taskDescription = taskDescription,
+            expectedResult = expectedResult,
+        )
+    }
+
+    @Tool(customName = "spawn_subagent")
+    @LLMDescription("Spawn a fresh subagent without inheriting parent context.")
+    public suspend fun spawnSubagent(
+        @LLMDescription("Atomic task description for the subagent")
+        taskDescription: String,
+        @LLMDescription("Expected result format and completion criteria")
+        expectedResult: String,
+    ): AgentCreationResult {
+        return createAgent(
+            mode = "spawn",
+            taskDescription = taskDescription,
+            expectedResult = expectedResult,
+        )
+    }
+
+    private suspend fun createAgent(
+        mode: String,
+        taskDescription: String,
         expectedResult: String,
     ): AgentCreationResult {
         val manager = sessionManager
@@ -138,10 +153,10 @@ public class TaskTool public constructor(
         logger("🚀 Creating subagent $agentId ($normalizedMode)")
         messageHandler.addMessageToUser("🚀 Starting sub-agent: $agentId")
 
-        val parentContext = coroutineContext
+        val parentContext = currentCoroutineContext()
         val taskScope = CoroutineScope(parentContext + Dispatchers.IO)
         val deferred = taskScope.async {
-            val currentJob = requireNotNull(coroutineContext[Job]) { "Subagent requires job context" }
+            val currentJob = requireNotNull(currentCoroutineContext()[Job]) { "Subagent requires job context" }
             manager.registerSubAgentJob(sessionId, agentId, currentJob)
             try {
                 val result = agentFactory.runSubAgent(
@@ -196,23 +211,22 @@ public class TaskTool public constructor(
         @LLMDescription("Target agent ID")
         agentId: String,
     ): AgentPollResult {
-        val taskId = GLOBAL_AGENT_TASK_IDS[agentId]
-            ?: return AgentPollResult(
-                success = false,
-                status = "missing",
+        val lookup = lookupAgentTask(agentId)
+        if (lookup == null) {
+            return missingAgentPollResult(
                 agentId = agentId,
-                result = null,
-                message = "Unknown agentId: $agentId",
+                reason = AgentTaskMissingReason.Unknown,
             )
+        }
+        if (lookup.taskInfo == null) {
+            return missingAgentPollResult(
+                agentId = agentId,
+                reason = AgentTaskMissingReason.Cleaned,
+            )
+        }
 
-        val taskInfo = GLOBAL_TASKS[taskId]
-            ?: return AgentPollResult(
-                success = false,
-                status = "missing",
-                agentId = agentId,
-                result = null,
-                message = "Agent already cleaned: $agentId",
-            )
+        val taskId = lookup.taskId
+        val taskInfo = lookup.taskInfo
 
         val sessionId = taskInfo.sessionId
         val manager = sessionManager
@@ -283,23 +297,22 @@ public class TaskTool public constructor(
         @LLMDescription("Timeout in seconds")
         timeout: Int = 300,
     ): AgentPollResult {
-        val taskId = GLOBAL_AGENT_TASK_IDS[agentId]
-            ?: return AgentPollResult(
-                success = false,
-                status = "missing",
+        val lookup = lookupAgentTask(agentId)
+        if (lookup == null) {
+            return missingAgentPollResult(
                 agentId = agentId,
-                result = null,
-                message = "Unknown agentId: $agentId",
+                reason = AgentTaskMissingReason.Unknown,
             )
+        }
+        if (lookup.taskInfo == null) {
+            return missingAgentPollResult(
+                agentId = agentId,
+                reason = AgentTaskMissingReason.Cleaned,
+            )
+        }
 
-        val taskInfo = GLOBAL_TASKS[taskId]
-            ?: return AgentPollResult(
-                success = false,
-                status = "missing",
-                agentId = agentId,
-                result = null,
-                message = "Agent already cleaned: $agentId",
-            )
+        val taskId = lookup.taskId
+        val taskInfo = lookup.taskInfo
 
         val sessionId = taskInfo.sessionId
         val manager = sessionManager
@@ -466,12 +479,27 @@ public class TaskTool public constructor(
         return result
     }
 
-    @Tool
-    @LLMDescription(
-        "Wait for a task to complete and return its result. " +
-            "This blocks until the sub-agent finishes its work."
-    )
-    public suspend fun awaitTask(
+    private fun lookupAgentTask(agentId: String): AgentTaskLookup? {
+        val taskId = GLOBAL_AGENT_TASK_IDS[agentId] ?: return null
+        val taskInfo = GLOBAL_TASKS[taskId]
+        return AgentTaskLookup(taskId = taskId, taskInfo = taskInfo)
+    }
+
+    private fun missingAgentPollResult(agentId: String, reason: AgentTaskMissingReason): AgentPollResult {
+        val message = when (reason) {
+            AgentTaskMissingReason.Unknown -> "Unknown agentId: $agentId"
+            AgentTaskMissingReason.Cleaned -> "Agent already cleaned: $agentId"
+        }
+        return AgentPollResult(
+            success = false,
+            status = "missing",
+            agentId = agentId,
+            result = null,
+            message = message,
+        )
+    }
+
+    private suspend fun awaitTask(
         @LLMDescription("The ID of the task to wait for")
         taskId: Long,
         @LLMDescription("Timeout in seconds (default 300 = 5 minutes)")
@@ -510,7 +538,7 @@ public class TaskTool public constructor(
                 taskId = taskId,
                 status = TaskStatus.TIMEOUT,
                 result = null,
-                message = "Task timed out after ${timeout} seconds",
+                message = "Task timed out after $timeout seconds",
             )
         } catch (e: Exception) {
             logger("❌ Task #$taskId failed: ${e.message}")
@@ -524,12 +552,7 @@ public class TaskTool public constructor(
         }
     }
 
-    @Tool
-    @LLMDescription(
-        "Create multiple tasks and wait for all to complete. " +
-            "Use this to parallelize work across multiple sub-agents."
-    )
-    public suspend fun createAndAwaitTasks(
+    private suspend fun createAndAwaitTasks(
         @LLMDescription("List of task descriptions, one per task")
         tasks: List<String>,
         @LLMDescription("Timeout in seconds for all tasks (default 600 = 10 minutes)")
@@ -551,11 +574,11 @@ public class TaskTool public constructor(
         }
 
         return try {
-            val results = withTimeout(timeout * 1000L) {
-                taskIds.map { taskId ->
-                    async { awaitTask(taskId, timeout) }
-                }.map { deferred -> deferred.await() }
-            }
+                val results = withTimeout(timeout * 1000L) {
+                    taskIds.map { taskId ->
+                        async { awaitTask(taskId, timeout) }
+                    }.awaitAll()
+                }
 
             val successCount = results.count { it.success }
             val message = "Completed ${results.size} tasks: $successCount successful, ${results.size - successCount} failed"
@@ -572,17 +595,12 @@ public class TaskTool public constructor(
             BatchTaskResult(
                 success = false,
                 results = emptyList(),
-                message = "Batch tasks timed out after ${timeout} seconds",
+                message = "Batch tasks timed out after $timeout seconds",
             )
         }
     }
 
-    @Tool
-    @LLMDescription(
-        "Get the status of a task without waiting for it to complete. " +
-            "Use this to check if a sub-agent is still running or has finished."
-    )
-    public fun getTaskStatus(
+    private fun getTaskStatus(
         @LLMDescription("The ID of the task to check")
         taskId: Long,
     ): TaskStatusResult {
@@ -609,12 +627,7 @@ public class TaskTool public constructor(
         )
     }
 
-    @Tool
-    @LLMDescription(
-        "Cancel a running task. " +
-            "Use this to stop a sub-agent that is no longer needed."
-    )
-    public fun cancelTask(
+    private fun cancelTask(
         @LLMDescription("The ID of the task to cancel")
         taskId: Long,
     ): TaskOperationResult {
@@ -643,9 +656,7 @@ public class TaskTool public constructor(
         )
     }
 
-    @Tool
-    @LLMDescription("List all tasks and their current status")
-    public fun listTasks(): TaskListResult {
+    private fun listTasks(): TaskListResult {
         val taskList = GLOBAL_TASKS.values.map { task ->
             TaskStatusResult(
                 taskId = task.id,
@@ -712,11 +723,21 @@ private data class TaskResult(
     val output: String?,
     val error: String?,
 ) {
-    public companion object {
-        public fun success(output: String): TaskResult = TaskResult(success = true, output = output, error = null)
+    companion object {
+        fun success(output: String): TaskResult = TaskResult(success = true, output = output, error = null)
 
-        public fun failure(error: String): TaskResult = TaskResult(success = false, output = null, error = error)
+        fun failure(error: String): TaskResult = TaskResult(success = false, output = null, error = error)
     }
+}
+
+private data class AgentTaskLookup(
+    val taskId: Long,
+    val taskInfo: TaskInfo?,
+)
+
+private enum class AgentTaskMissingReason {
+    Unknown,
+    Cleaned,
 }
 
 @Serializable

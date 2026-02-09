@@ -465,9 +465,9 @@ public class ConversationAgent(
 
     private fun resolveToolName(toolName: String): String {
         return when (toolName) {
-            "create_agent" -> "createAgent"
-            "create_task" -> "createTask"
-            "create_and_await_tasks" -> "createAndAwaitTasks"
+            "fork_subagent" -> "forkSubagent"
+            "spawn_subagent" -> "spawnSubagent"
+            "create_agent" -> "forkSubagent"
             "poll_agent_result" -> "pollAgentResult"
             "await_agent_result" -> "awaitAgentResult"
             "kill_agent" -> "killAgent"
@@ -480,7 +480,7 @@ public class ConversationAgent(
 
     private fun isCreateAgentTool(toolName: String): Boolean {
         val normalized = resolveToolName(toolName)
-        return normalized == "createAgent" || normalized == "createTask" || normalized == "createAndAwaitTasks"
+        return normalized == "forkSubagent" || normalized == "spawnSubagent"
     }
 
     private fun isReturnAgentResultTool(toolName: String): Boolean {
