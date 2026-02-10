@@ -1,5 +1,3 @@
-@file:Suppress("DEPRECATION")
-
 package io.github.stream29.kode.app.viewmodel
 
 import androidx.lifecycle.ViewModel
@@ -24,6 +22,7 @@ import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemLocations
 import io.github.stream29.kode.core.agent.SessionAwareAgentFactory
 import io.github.stream29.kode.core.agent.SessionAwareAgentFactoryProvider
+import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.model.SessionMessage
 import io.github.stream29.kode.session.core.model.SessionSummary
@@ -44,7 +43,7 @@ import com.agentclientprotocol.agent.AgentSession
 import com.agentclientprotocol.agent.AgentSupport
 import com.agentclientprotocol.client.ClientInfo
 import com.agentclientprotocol.common.Event
-import com.agentclientprotocol.common.SessionParameters
+import com.agentclientprotocol.common.SessionCreationParameters
 import com.agentclientprotocol.model.AgentCapabilities
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.LATEST_PROTOCOL_VERSION
@@ -82,23 +81,24 @@ public class MainViewModel(
     private val sessionManager: SessionManager,
     private val agentFactoryProvider: SessionAwareAgentFactoryProvider,
     private val webToolsProvider: WebToolsProvider,
+    private val hookManager: HookManager,
 ) : ViewModel(), MessageHandler, AgentState, AgentEventListener, ApprovalHandler {
     private var autoSaveEnabled: Boolean = false
 
-    private val defaultAgentProfiles: List<AgentProfile> = listOf(
-        AgentProfile(
+    private val defaultAgentPresets: List<AgentPreset> = listOf(
+        AgentPreset(
             name = "build",
             description = "Full access agent for development",
             disabledTools = emptySet(),
             defaultYolo = false,
         ),
-        AgentProfile(
+        AgentPreset(
             name = "plan",
             description = "Read-only planning agent",
             disabledTools = setOf("shell", "task", "file-edit"),
             defaultYolo = false,
         ),
-        AgentProfile(
+        AgentPreset(
             name = "explore",
             description = "Exploration agent (search-heavy)",
             disabledTools = setOf("shell", "task", "file-edit"),
@@ -110,7 +110,7 @@ public class MainViewModel(
     public val sessionUiState: StateFlow<SessionUiState> = _sessionUiState.asStateFlow()
 
     private val _appUiState: MutableStateFlow<AppUiState> = MutableStateFlow(
-        AppUiState(agentProfiles = defaultAgentProfiles)
+        AppUiState(agentPresets = defaultAgentPresets)
     )
     public val appUiState: StateFlow<AppUiState> = _appUiState.asStateFlow()
 
@@ -169,11 +169,18 @@ public class MainViewModel(
     public var currentSessionId: String?
         get() = _sessionUiState.value.currentSessionId
         set(value) {
+            val previousSessionId = _sessionUiState.value.currentSessionId
             updateSessionUiState { current ->
                 applySessionRunState(
                     base = current.copy(currentSessionId = value),
                     sessionId = value,
                 )
+            }
+            if (previousSessionId != null && previousSessionId != value) {
+                hookManager.unbindSessionPreset(previousSessionId)
+            }
+            if (value != null) {
+                bindPresetForSession(sessionId = value)
             }
         }
 
@@ -311,13 +318,13 @@ public class MainViewModel(
         get() = _appUiState.value.skillsDir
         set(value) = updateAppUiState { it.copy(skillsDir = value) }
 
-    public var agentBuiltin: String
-        get() = _appUiState.value.agentBuiltin
-        set(value) = updateAppUiState { it.copy(agentBuiltin = value) }
+    public var presetBuiltin: String
+        get() = _appUiState.value.presetBuiltin
+        set(value) = updateAppUiState { it.copy(presetBuiltin = value) }
 
-    public var agentFile: String
-        get() = _appUiState.value.agentFile
-        set(value) = updateAppUiState { it.copy(agentFile = value) }
+    public var presetFile: String
+        get() = _appUiState.value.presetFile
+        set(value) = updateAppUiState { it.copy(presetFile = value) }
 
     public var logLevel: String
         get() = _appUiState.value.logLevel
@@ -391,23 +398,23 @@ public class MainViewModel(
         get() = _appUiState.value.webFetchEnv
         set(value) = updateAppUiState { it.copy(webFetchEnv = value) }
 
-    public var agentSpecPath: String
-        get() = _appUiState.value.agentSpecPath
-        set(value) = updateAppUiState { it.copy(agentSpecPath = value) }
+    public var presetSpecPath: String
+        get() = _appUiState.value.presetSpecPath
+        set(value) = updateAppUiState { it.copy(presetSpecPath = value) }
 
-    public var agentSpecPreview: String
-        get() = _appUiState.value.agentSpecPreview
-        set(value) = updateAppUiState { it.copy(agentSpecPreview = value) }
+    public var presetSpecPreview: String
+        get() = _appUiState.value.presetSpecPreview
+        set(value) = updateAppUiState { it.copy(presetSpecPreview = value) }
 
     public var skillsPreview: List<String>
         get() = _appUiState.value.skillsPreview
         set(value) = updateAppUiState { it.copy(skillsPreview = value) }
 
-    public var activeAgentProfileName: String
-        get() = _appUiState.value.activeAgentProfileName
-        set(value) = updateAppUiState { it.copy(activeAgentProfileName = value) }
-    public val agentProfiles: List<AgentProfile>
-        get() = _appUiState.value.agentProfiles
+    public var activePresetName: String
+        get() = _appUiState.value.activePresetName
+        set(value) = updateAppUiState { it.copy(activePresetName = value) }
+    public val agentPresets: List<AgentPreset>
+        get() = _appUiState.value.agentPresets
     public var acpHost: String
         get() = _appUiState.value.acpHost
         set(value) = updateAppUiState { it.copy(acpHost = value) }
@@ -560,6 +567,7 @@ public class MainViewModel(
     
     init {
         eventListener = this
+        registerPresetHooks()
         viewModelScope.launch {
             initializeAgentFactory()
             startAutoSaveObservers()
@@ -601,6 +609,7 @@ public class MainViewModel(
         )
     }
     
+    @Suppress("DEPRECATION")
     private fun loadConfigToState(config: AppConfig) {
         auths = config.auths
         models = config.models
@@ -618,8 +627,8 @@ public class MainViewModel(
         maxRalphIterations = config.loopControl.maxRalphIterations
         reservedContextSize = config.loopControl.reservedContextSize
         skillsDir = config.skills.dir ?: ""
-        agentBuiltin = config.agent.builtin ?: ""
-        agentFile = config.agent.file ?: ""
+        presetBuiltin = config.preset.builtin ?: config.agent.builtin ?: ""
+        presetFile = config.preset.file ?: config.agent.file ?: ""
         logLevel = config.logging.level
         logFile = config.logging.file ?: ""
         disabledTools = config.tools.disabled.toSet()
@@ -641,7 +650,7 @@ public class MainViewModel(
         yoloEnabled = approvalDefaultYolo
         autoApproveActions.clear()
         autoApproveActions.addAll(approvalAutoApproveActions)
-        applyAgentProfileFromConfig()
+        applyAgentPresetFromConfig()
         val webSearch = config.services.webSearch
         webSearchProvider = webSearch?.provider ?: "none"
         webSearchApiKey = webSearch?.apiKey ?: ""
@@ -656,7 +665,7 @@ public class MainViewModel(
         webFetchHeaders = mapToLines(webFetch?.customHeaders, separator = ":")
         webFetchEnv = mapToLines(webFetch?.env, separator = "=")
 
-        refreshAgentAndSkillsPreview()
+        refreshPresetAndSkillsPreview()
     }
     
     @OptIn(kotlinx.coroutines.FlowPreview::class)
@@ -1333,7 +1342,7 @@ mcp:
 skills:
   dir: "~/.kode/skills"
 
-agent:
+preset:
   builtin: default
   file: null
 
@@ -1659,9 +1668,9 @@ logging:
                 skills = current.skills.copy(
                     dir = skillsDir.takeIf { it.isNotBlank() }
                 ),
-                agent = current.agent.copy(
-                    builtin = agentBuiltin.takeIf { it.isNotBlank() },
-                    file = agentFile.takeIf { it.isNotBlank() }
+                preset = current.preset.copy(
+                    builtin = presetBuiltin.takeIf { it.isNotBlank() },
+                    file = presetFile.takeIf { it.isNotBlank() }
                 ),
                 logging = current.logging.copy(
                     level = logLevel,
@@ -1701,42 +1710,70 @@ logging:
         }
     }
 
-    public fun selectAgentProfile(profileName: String, persist: Boolean) {
-        val profile = agentProfiles.firstOrNull { it.name == profileName }
-        if (profile == null) {
-            activeAgentProfileName = profileName
-            agentBuiltin = profileName
+    public fun selectPreset(presetName: String, persist: Boolean) {
+        val preset = agentPresets.firstOrNull { it.name == presetName }
+        if (preset == null) {
+            activePresetName = presetName
+            presetBuiltin = presetName
+            currentSessionId?.let { sessionId ->
+                bindPresetForSession(sessionId = sessionId)
+            }
             if (persist) {
                 savePreferences()
             }
             return
         }
-        applyAgentProfile(profile)
+        applyPreset(preset)
         if (persist) {
             savePreferences()
         }
     }
 
-    private fun applyAgentProfile(profile: AgentProfile) {
-        activeAgentProfileName = profile.name
-        agentBuiltin = profile.name
-        disabledTools = profile.disabledTools
-        approvalDefaultYolo = profile.defaultYolo
-        yoloEnabled = profile.defaultYolo
+    private fun applyPreset(preset: AgentPreset) {
+        activePresetName = preset.name
+        presetBuiltin = preset.name
+        disabledTools = preset.disabledTools
+        approvalDefaultYolo = preset.defaultYolo
+        yoloEnabled = preset.defaultYolo
+        currentSessionId?.let { sessionId ->
+            bindPresetForSession(sessionId = sessionId)
+        }
     }
 
-    private fun applyAgentProfileFromConfig() {
-        val profileName = agentBuiltin.trim()
-        if (profileName.isBlank()) {
-            activeAgentProfileName = "build"
+    private fun applyAgentPresetFromConfig() {
+        val presetName = presetBuiltin.trim()
+        if (presetName.isBlank()) {
+            activePresetName = "build"
+            currentSessionId?.let { sessionId ->
+                bindPresetForSession(sessionId = sessionId)
+            }
             return
         }
-        val profile = agentProfiles.firstOrNull { it.name == profileName }
-        if (profile != null) {
-            applyAgentProfile(profile)
+        val preset = agentPresets.firstOrNull { it.name == presetName }
+        if (preset != null) {
+            applyPreset(preset)
         } else {
-            activeAgentProfileName = profileName
+            activePresetName = presetName
+            currentSessionId?.let { sessionId ->
+                bindPresetForSession(sessionId = sessionId)
+            }
         }
+    }
+
+    private fun registerPresetHooks() {
+        agentPresets.forEach { preset ->
+            hookManager.registerPresetHooks(presetName = preset.name)
+        }
+    }
+
+    private fun bindPresetForSession(sessionId: String) {
+        val presetName = activePresetName.trim().ifBlank {
+            presetBuiltin.trim().ifBlank { "build" }
+        }
+        hookManager.bindSessionPreset(
+            sessionId = sessionId,
+            presetName = presetName,
+        )
     }
 
     public fun saveMcpSettings() {
@@ -2281,8 +2318,8 @@ logging:
             defaultThinking = defaultThinking,
             defaultSessionDir = defaultSessionDir,
             skillsDir = skillsDir,
-            agentBuiltin = agentBuiltin,
-            agentFile = agentFile,
+            presetBuiltin = presetBuiltin,
+            presetFile = presetFile,
             logLevel = logLevel,
             logFile = logFile,
             uiTheme = uiTheme,
@@ -2303,8 +2340,8 @@ logging:
     }
 
     private fun buildSystemPrompt(): String {
-        val agentSpec = readAgentSpec()
-        val basePrompt = agentSpec?.trim().takeUnless { it.isNullOrBlank() }
+        val presetSpec = readPresetSpec()
+        val basePrompt = presetSpec?.trim().takeUnless { it.isNullOrBlank() }
             ?: SessionAwareAgentFactory.SYSTEM_PROMPT
         val skillsSummary = buildSkillsSummary()
         return if (skillsSummary.isBlank()) {
@@ -2314,12 +2351,12 @@ logging:
         }
     }
 
-    private fun readAgentSpec(): String? {
-        val explicit = agentFile.trim()
+    private fun readPresetSpec(): String? {
+        val explicit = presetFile.trim()
         if (explicit.isNotBlank()) {
             val file = File(expandHome(explicit))
             if (file.isFile) {
-                agentSpecPath = file.absolutePath
+                presetSpecPath = file.absolutePath
                 return file.readText()
             }
         }
@@ -2327,17 +2364,17 @@ logging:
         val workDir = resolveSessionWorkingDir(currentSessionWorkDir)
         val projectAgents = File(workDir, "AGENTS.md")
         if (projectAgents.isFile) {
-            agentSpecPath = projectAgents.absolutePath
+            presetSpecPath = projectAgents.absolutePath
             return projectAgents.readText()
         }
 
         val userAgents = File(FileSystemLocations.dataDir, "AGENTS.md")
         if (userAgents.isFile) {
-            agentSpecPath = userAgents.absolutePath
+            presetSpecPath = userAgents.absolutePath
             return userAgents.readText()
         }
 
-        agentSpecPath = ""
+        presetSpecPath = ""
         return null
     }
 
@@ -2389,9 +2426,9 @@ logging:
         return skillMap.values.sortedBy { it.name.lowercase() }
     }
 
-    public fun refreshAgentAndSkillsPreview() {
-        val agentSpec = readAgentSpec()
-        agentSpecPreview = agentSpec?.trim().orEmpty()
+    public fun refreshPresetAndSkillsPreview() {
+        val presetSpec = readPresetSpec()
+        presetSpecPreview = presetSpec?.trim().orEmpty()
         skillsPreview = discoverSkills().map { skill ->
             if (skill.description.isBlank()) {
                 skill.name
@@ -2650,7 +2687,7 @@ logging:
             )
         }
 
-        override suspend fun createSession(sessionParameters: SessionParameters): AgentSession {
+        override suspend fun createSession(sessionParameters: SessionCreationParameters): AgentSession {
             return KodeAcpAgentSession(
                 sessionId = SessionId(java.util.UUID.randomUUID().toString()),
                 promptExecutor = promptExecutor,
@@ -2664,7 +2701,7 @@ logging:
 
         override suspend fun loadSession(
             sessionId: SessionId,
-            sessionParameters: SessionParameters
+            sessionParameters: SessionCreationParameters
         ): AgentSession {
             throw UnsupportedOperationException("ACP loadSession is not supported")
         }
@@ -2858,7 +2895,7 @@ logging:
     }
 }
 
-public data class AgentProfile(
+public data class AgentPreset(
     val name: String,
     val description: String,
     val disabledTools: Set<String>,
@@ -2902,8 +2939,8 @@ public data class AppUiState(
     val maxRalphIterations: Int = 0,
     val reservedContextSize: Int = 50000,
     val skillsDir: String = "",
-    val agentBuiltin: String = "",
-    val agentFile: String = "",
+    val presetBuiltin: String = "",
+    val presetFile: String = "",
     val logLevel: String = "info",
     val logFile: String = "",
     val uiTheme: String = "dark",
@@ -2922,11 +2959,11 @@ public data class AppUiState(
     val webFetchBaseUrl: String = "",
     val webFetchHeaders: String = "",
     val webFetchEnv: String = "",
-    val agentSpecPath: String = "",
-    val agentSpecPreview: String = "",
+    val presetSpecPath: String = "",
+    val presetSpecPreview: String = "",
     val skillsPreview: List<String> = emptyList(),
-    val activeAgentProfileName: String = "build",
-    val agentProfiles: List<AgentProfile> = emptyList(),
+    val activePresetName: String = "build",
+    val agentPresets: List<AgentPreset> = emptyList(),
     val acpHost: String = "127.0.0.1",
     val acpPort: Int = 5494,
     val acpRunning: Boolean = false,
@@ -2972,8 +3009,8 @@ private data class PreferencesSnapshot(
     val defaultThinking: Boolean,
     val defaultSessionDir: String,
     val skillsDir: String,
-    val agentBuiltin: String,
-    val agentFile: String,
+    val presetBuiltin: String,
+    val presetFile: String,
     val logLevel: String,
     val logFile: String,
     val uiTheme: String,

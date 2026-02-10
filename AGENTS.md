@@ -21,6 +21,9 @@ This file should be updated when essential. (For example, new module being added
 - `oh-my-opencode`(reference/oh-my-opencode) OhMyOpenCode agents/framework. Cloned from GitHub.
 - `kotlinx-serialization-csv`(reference/kotlinx-serialization-csv) CSV serialization for Kotlinx Serialization. Cloned from GitHub.
 - `kotlinx.collections.immutable`(reference/kotlinx.collections.immutable) Immutable collections for Kotlin. Cloned from GitHub.
+- `Kori`(reference/Kori) AI-powered Markdown notepad with Mermaid support. Cloned from GitHub.
+- `compose-markdown`(reference/compose-markdown) Compose Markdown rendering library. Cloned from GitHub.
+- `multiplatform-markdown-renderer`(reference/multiplatform-markdown-renderer) Multiplatform Markdown renderer for Compose. Cloned from GitHub.
 
 ## Coding Standards
 
@@ -40,6 +43,10 @@ This file should be updated when essential. (For example, new module being added
 - Use 4 spaces for indentation (configured in `.editorconfig` if present)
 - Maximum line length: 120 characters
 - Use trailing commas in multi-line declarations
+
+### Suppress Scope
+- Avoid file-level `@file:Suppress` whenever possible.
+- Prefer the narrowest suppression scope (statement/property/function/class) to keep warnings visible elsewhere.
 
 ### Compose State Management
 
@@ -72,6 +79,11 @@ plugin-name = { id = "plugin.id", version.ref = "version-ref" }
 ```
 
 ## Common Tasks
+
+### Test Harness Module
+- `agent-api-test` is the dedicated module for manual API behavior verification.
+- Main entry: `io.github.stream29.kode.agentapitest.AgentApiTestMainKt`.
+- Prefer running it from IDEA run configuration for quick behavior checks.
 
 ### Adding a New Module
 1. Create module directory

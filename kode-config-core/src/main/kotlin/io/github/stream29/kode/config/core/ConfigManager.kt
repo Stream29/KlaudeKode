@@ -88,11 +88,23 @@ public class ConfigManager(
         return yaml.encodeToString(config)
     }
 
+    @Suppress("DEPRECATION")
     private fun normalize(config: AppConfig): AppConfig {
         var updated = config
         if (updated.defaults.modelId == null && updated.models.isNotEmpty()) {
             updated = updated.copy(
                 defaults = updated.defaults.copy(modelId = updated.models.first().id)
+            )
+        }
+        val legacy = updated.agent
+        val normalizedPreset = updated.preset.copy(
+            builtin = updated.preset.builtin ?: legacy.builtin,
+            file = updated.preset.file ?: legacy.file,
+        )
+        if (normalizedPreset != updated.preset || legacy.builtin != null || legacy.file != null) {
+            updated = updated.copy(
+                preset = normalizedPreset,
+                agent = io.github.stream29.kode.config.api.AgentConfig(),
             )
         }
         return updated

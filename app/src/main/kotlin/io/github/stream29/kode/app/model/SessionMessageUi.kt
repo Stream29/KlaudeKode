@@ -1,5 +1,3 @@
-@file:Suppress("DEPRECATION")
-
 package io.github.stream29.kode.app.model
 
 import ai.koog.prompt.message.Message

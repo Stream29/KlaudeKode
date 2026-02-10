@@ -21,6 +21,7 @@ plugins {
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 include(":app")
+include(":agent-api-test")
 include(":scripting-tool")
 include(":virtual-thread-dispatcher")
 

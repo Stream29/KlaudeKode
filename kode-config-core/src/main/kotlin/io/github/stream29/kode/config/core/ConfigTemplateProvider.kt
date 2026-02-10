@@ -14,7 +14,7 @@ public object ConfigTemplateProvider {
         # 5. loop_control: Agent loop control limits
         # 6. services: External service config (web search/fetch)
         # 7. mcp: MCP client/servers config
-        # 8. skills/agent/ui/approvals/logging: UX and behavior settings
+        # 8. skills/preset/ui/approvals/logging: UX and behavior settings
         
         auths:
           - type: Anthropic
@@ -79,7 +79,7 @@ public object ConfigTemplateProvider {
         skills:
           dir: "~/.kode/skills"
 
-        agent:
+        preset:
           builtin: default
           file: null
 

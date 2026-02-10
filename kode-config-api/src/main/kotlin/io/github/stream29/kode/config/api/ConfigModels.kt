@@ -12,6 +12,8 @@ public data class AppConfig(
     val services: ServicesConfig = ServicesConfig(),
     val mcp: McpConfig = McpConfig(),
     val skills: SkillsConfig = SkillsConfig(),
+    val preset: PresetConfig = PresetConfig(),
+    @Suppress("DEPRECATION")
     val agent: AgentConfig = AgentConfig(),
     val ui: UiConfig = UiConfig(),
     val approvals: ApprovalConfig = ApprovalConfig(),
@@ -78,6 +80,13 @@ public data class SkillsConfig(
 )
 
 @Serializable
+public data class PresetConfig(
+    val builtin: String? = null,
+    val file: String? = null,
+)
+
+@Serializable
+@Deprecated("Use PresetConfig via AppConfig.preset")
 public data class AgentConfig(
     val builtin: String? = null,
     val file: String? = null,

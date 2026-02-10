@@ -1030,7 +1030,7 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
         item {
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                "Skills & Agent",
+                "Skills & Preset",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary
@@ -1048,9 +1048,9 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
             Spacer(modifier = Modifier.height(8.dp))
 
             OutlinedTextField(
-                value = ui.agentBuiltin,
-                onValueChange = { viewModel.agentBuiltin = it },
-                label = { Text("Agent builtin") },
+                value = ui.presetBuiltin,
+                onValueChange = { viewModel.presetBuiltin = it },
+                label = { Text("Preset builtin") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -1058,9 +1058,9 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
             Spacer(modifier = Modifier.height(8.dp))
 
             OutlinedTextField(
-                value = ui.agentFile,
-                onValueChange = { viewModel.agentFile = it },
-                label = { Text("Agent file path") },
+                value = ui.presetFile,
+                onValueChange = { viewModel.presetFile = it },
+                label = { Text("Preset file path") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )

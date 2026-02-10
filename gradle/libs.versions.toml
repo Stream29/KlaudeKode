@@ -12,9 +12,12 @@ koog = "0.6.1"
 ktor = "3.3.2"
 ivy = "2.5.3"
 kaml = "0.104.0"
-compose = "1.9.3"
+compose = "1.10.0"
 androidx-lifecycle = "2.9.4"
 jsoup = "1.17.2"
+commonmark = "0.27.1"
+javafx = "21.0.8"
+markdownRenderer = "0.39.2"
 kotlinxCollectionsImmutable = "0.4.0"
 kotlinxSerializationCsv = "0.0.23"
 koin = "4.1.0"
@@ -57,6 +60,18 @@ kotlinxCoroutinesTest = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-tes
 
 # HTML parsing for web fetch
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+commonmark = { module = "org.commonmark:commonmark", version.ref = "commonmark" }
+commonmarkExtAutolink = { module = "org.commonmark:commonmark-ext-autolink", version.ref = "commonmark" }
+commonmarkExtGfmTables = { module = "org.commonmark:commonmark-ext-gfm-tables", version.ref = "commonmark" }
+commonmarkExtGfmStrikethrough = { module = "org.commonmark:commonmark-ext-gfm-strikethrough", version.ref = "commonmark" }
+commonmarkExtTaskListItems = { module = "org.commonmark:commonmark-ext-task-list-items", version.ref = "commonmark" }
+javafxBase = { module = "org.openjfx:javafx-base", version.ref = "javafx" }
+javafxGraphics = { module = "org.openjfx:javafx-graphics", version.ref = "javafx" }
+javafxControls = { module = "org.openjfx:javafx-controls", version.ref = "javafx" }
+javafxMedia = { module = "org.openjfx:javafx-media", version.ref = "javafx" }
+javafxWeb = { module = "org.openjfx:javafx-web", version.ref = "javafx" }
+javafxSwing = { module = "org.openjfx:javafx-swing", version.ref = "javafx" }
+markdownRendererM3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdownRenderer" }
 
 [bundles]
 koog = [

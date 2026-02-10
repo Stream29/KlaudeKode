@@ -662,7 +662,7 @@ public class SessionManager(
             }
 
             val parentAgent = resolveAgent(runtime, sessionId, parentAgentId)
-            val parentMessages = parentAgent.messages.value
+            val parentMessages = trimTrailingPendingToolCall(parentAgent.messages.value)
             val initialMessages = if (normalizedMode == "fork") {
                 val toolCallId = generateId()
                 val forkCall = SessionMessage(
@@ -753,6 +753,17 @@ public class SessionManager(
         } finally {
             runtime.mutex.unlock()
         }
+    }
+
+    private fun trimTrailingPendingToolCall(messages: List<SessionMessage>): kotlinx.collections.immutable.PersistentList<SessionMessage> {
+        if (messages.isEmpty()) {
+            return persistentListOf()
+        }
+        val last = messages.last()
+        if (last.role != MessageRole.TOOL_CALL) {
+            return persistentListOf<SessionMessage>().addAll(messages)
+        }
+        return persistentListOf<SessionMessage>().addAll(messages.dropLast(1))
     }
 
     public suspend fun completeSubAgentResult(sessionId: String, agentId: String, result: String): Boolean {

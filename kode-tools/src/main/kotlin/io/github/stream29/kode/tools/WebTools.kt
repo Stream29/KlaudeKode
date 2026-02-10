@@ -87,19 +87,14 @@ public class WebTools public constructor(
 
             // Extract main content
             // Try to find main content areas first
-            var content = doc.select("article, main, [role='main'], .content, .post-content, .entry-content")
+            val extractedContent = doc.select("article, main, [role='main'], .content, .post-content, .entry-content")
                 .firstOrNull()
                 ?.text()
 
             // Fallback to body text
-            if (content.isNullOrBlank()) {
-                content = doc.body()?.text()
-            }
+            val content = cleanWebContent(extractedContent.takeIf { !it.isNullOrBlank() } ?: doc.body().text())
 
-            // Clean up the content
-            content = content?.let { cleanWebContent(it) }
-
-            if (content.isNullOrBlank()) {
+            if (content.isBlank()) {
                 return@withContext FetchResult(
                     success = false,
                     url = url,

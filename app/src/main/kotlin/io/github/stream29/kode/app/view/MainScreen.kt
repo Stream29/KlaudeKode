@@ -1,6 +1,6 @@
 package io.github.stream29.kode.app.view
 
-import androidx.compose.desktop.ui.tooling.preview.Preview
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -1076,7 +1076,7 @@ private fun InfoPage(state: MainViewModel, ui: AppUiState) {
                 InfoRow(label = "Java", value = System.getProperty("java.version"))
                 InfoRow(label = "User", value = System.getProperty("user.name"))
                 InfoRow(label = "Config", value = io.github.stream29.kode.config.fs.FileSystemLocations.configFile.absolutePath)
-                InfoRow(label = "Agent spec", value = ui.agentSpecPath.ifBlank { "Not found" })
+                InfoRow(label = "Preset spec", value = ui.presetSpecPath.ifBlank { "Not found" })
                 InfoRow(label = "Skills", value = if (ui.skillsPreview.isEmpty()) "None" else ui.skillsPreview.size.toString())
                 InfoRow(label = "Models", value = ui.models.size.toString())
                 InfoRow(label = "Auth Providers", value = ui.auths.size.toString())
@@ -1095,7 +1095,7 @@ private fun InfoPage(state: MainViewModel, ui: AppUiState) {
                 Text("Export Logs")
             }
 
-            FilledTonalButton(onClick = { state.refreshAgentAndSkillsPreview() }) {
+            FilledTonalButton(onClick = { state.refreshPresetAndSkillsPreview() }) {
                 Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Refresh")
@@ -1111,7 +1111,7 @@ private fun InfoPage(state: MainViewModel, ui: AppUiState) {
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                if (ui.agentSpecPreview.isBlank()) {
+                if (ui.presetSpecPreview.isBlank()) {
                     Text(
                         text = "No AGENTS.md found",
                         style = MaterialTheme.typography.bodySmall,
@@ -1119,7 +1119,7 @@ private fun InfoPage(state: MainViewModel, ui: AppUiState) {
                     )
                 } else {
                     Text(
-                        text = ui.agentSpecPreview.take(800),
+                        text = ui.presetSpecPreview.take(800),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -1532,7 +1532,7 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
             )
         }
 
-        AgentQuickSwitch(state = state, ui = ui)
+        PresetQuickSwitch(state = state, ui = ui)
         ModelQuickSwitch(state = state, ui = ui)
     }
 }
@@ -1540,22 +1540,22 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 @Suppress("UNUSED_VALUE", "ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-private fun AgentQuickSwitch(state: MainViewModel, ui: AppUiState) {
-    val profiles = ui.agentProfiles
+private fun PresetQuickSwitch(state: MainViewModel, ui: AppUiState) {
+    val presets = ui.agentPresets
     var expanded by remember { mutableStateOf(false) }
-    val activeName = ui.activeAgentProfileName
-    val activeProfile = profiles.firstOrNull { it.name == activeName }
-    val displayName = activeProfile?.name ?: activeName.ifBlank { "build" }
+    val activeName = ui.activePresetName
+    val activePreset = presets.firstOrNull { it.name == activeName }
+    val displayName = activePreset?.name ?: activeName.ifBlank { "build" }
 
     ExposedDropdownMenuBox(
         expanded = expanded,
         onExpandedChange = { expanded = !expanded }
     ) {
         OutlinedTextField(
-            value = "Agent: $displayName",
+            value = "Preset: $displayName",
             onValueChange = {},
             readOnly = true,
-            label = { Text("Agent") },
+            label = { Text("Preset") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
                 .widthIn(min = 180.dp)
@@ -1566,20 +1566,20 @@ private fun AgentQuickSwitch(state: MainViewModel, ui: AppUiState) {
             expanded = expanded,
             onDismissRequest = { expanded = false }
         ) {
-            profiles.forEach { profile ->
+            presets.forEach { preset ->
                 DropdownMenuItem(
                     text = {
                         Column {
-                            Text(profile.name)
+                            Text(preset.name)
                             Text(
-                                profile.description,
+                                preset.description,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     },
                     onClick = {
-                        state.selectAgentProfile(profile.name, persist = true)
+                        state.selectPreset(preset.name, persist = true)
                         expanded = false
                     }
                 )

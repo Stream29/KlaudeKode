@@ -1,5 +1,3 @@
-@file:Suppress("DEPRECATION")
-
 package io.github.stream29.kode.app.view.components
 
 import androidx.compose.foundation.clickable
@@ -143,7 +141,8 @@ public fun MessageBubble(
                 // Message content
                 MessageContent(
                     message = message,
-                    contentColor = contentColor
+                    contentColor = contentColor,
+                    containerColor = backgroundColor,
                 )
 
                 if (toolDetailText != null) {
@@ -294,13 +293,16 @@ private fun ToolMessageDetails(
 @Composable
 private fun MessageContent(
     message: SessionMessage,
-    contentColor: androidx.compose.ui.graphics.Color
+    contentColor: androidx.compose.ui.graphics.Color,
+    containerColor: androidx.compose.ui.graphics.Color,
 ) {
     val text = message.content
-    if (text.contains("```") && message.role == MessageRole.ASSISTANT) {
-        MarkdownCodeBlocks(
-            content = text,
-            contentColor = contentColor
+    if (shouldRenderMarkdownMessage(message = message, content = text)) {
+        MarkdownMessageContent(
+            markdown = text,
+            textColor = contentColor,
+            containerColor = containerColor,
+            modifier = Modifier.fillMaxWidth(),
         )
         return
     }
@@ -317,38 +319,24 @@ private fun MessageContent(
     )
 }
 
-@Composable
-private fun MarkdownCodeBlocks(
-    content: String,
-    contentColor: androidx.compose.ui.graphics.Color
-) {
-    val parts = content.split("```")
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        parts.forEachIndexed { index, part ->
-            val isCode = index % 2 == 1
-            if (isCode) {
-                ElevatedCard(
-                    colors = CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Text(
-                        text = part.trim(),
-                        modifier = Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else if (part.isNotBlank()) {
-                Text(
-                    text = part.trim(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = contentColor
-                )
-            }
-        }
+private val blockMarkdownRegex: Regex = Regex("""(?m)^\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>|```)""")
+private val inlineMarkdownRegex: Regex = Regex("""(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^\)]+\))""")
+private val mermaidFenceRegex: Regex = Regex("""(?is)```\s*mermaid\b""")
+
+private fun shouldRenderMarkdownMessage(message: SessionMessage, content: String): Boolean {
+    if (content.isBlank()) {
+        return false
     }
+    if (message.role == MessageRole.TOOL_CALL || message.role == MessageRole.TOOL_RESULT) {
+        return false
+    }
+    if (mermaidFenceRegex.containsMatchIn(content)) {
+        return true
+    }
+    if (blockMarkdownRegex.containsMatchIn(content)) {
+        return true
+    }
+    return inlineMarkdownRegex.containsMatchIn(content)
 }
 
 @Composable

@@ -57,6 +57,7 @@ public val viewModelModule: Module = module {
             sessionManager = get(),
             agentFactoryProvider = get(),
             webToolsProvider = get(),
+            hookManager = get(),
         )
     }
 }

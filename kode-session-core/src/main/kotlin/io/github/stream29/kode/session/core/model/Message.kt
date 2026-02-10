@@ -1,5 +1,3 @@
-@file:Suppress("DEPRECATION")
-
 package io.github.stream29.kode.session.core.model
 
 import ai.koog.prompt.message.Message
@@ -64,6 +62,7 @@ public data class SessionMessage(
     ),
 ) {
     public companion object {
+        @Suppress("DEPRECATION")
         public fun fromKoogMessage(
             id: String,
             message: Message,
@@ -170,6 +169,7 @@ public fun Message.toSessionDisplayContent(): String {
     }
 }
 
+@Suppress("DEPRECATION")
 public fun MessageRole.toKoogMessage(
     content: String,
     timestamp: Instant,
