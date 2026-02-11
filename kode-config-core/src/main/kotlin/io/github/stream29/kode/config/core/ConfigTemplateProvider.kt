@@ -10,11 +10,12 @@ public object ConfigTemplateProvider {
         # 1. auths: Provider credentials (can be shared by multiple models)
         # 2. models: Specific model configurations referencing an auth
         # 3. Chat: Runtime model selection from the pre-registered model list
-        # 4. defaults: Runtime defaults (model + thinking)
-        # 5. loop_control: Agent loop control limits
-        # 6. services: External service config (web search/fetch)
-        # 7. mcp: MCP client/servers config
-        # 8. skills/preset/ui/approvals/logging: UX and behavior settings
+        # 4. storage: App-private data root (sessions/global state)
+        # 5. defaults: Runtime defaults (model + thinking)
+        # 6. loop_control: Agent loop control limits
+        # 7. services: External service config (web search/fetch)
+        # 8. mcp: MCP client/servers config
+        # 9. skills/preset/ui/approvals/logging: UX and behavior settings
         
         auths:
           - type: Anthropic
@@ -49,6 +50,9 @@ public object ConfigTemplateProvider {
           #   auth_id: moonshot-main
           #   model: kimi-k2-0711-preview
           #   display_name: Kimi K2
+
+        storage:
+          data_dir: "~/.kode/"
 
         defaults:
           model_id: claude-sonnet
@@ -85,6 +89,9 @@ public object ConfigTemplateProvider {
 
         ui:
           theme: dark
+          message_alignment: left
+          message_max_width_ratio: 0.9
+          last_opened_session_id: null
 
         approvals:
           yolo_default: false

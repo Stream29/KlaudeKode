@@ -18,12 +18,18 @@ import ai.koog.agents.features.acp.AcpAgent
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import io.github.stream29.kode.app.service.WebToolsProvider
+import io.github.stream29.kode.app.model.extractToolCallPrimaryTextArg
+import io.github.stream29.kode.app.model.extractToolResultText
+import io.github.stream29.kode.app.model.isAwaitUserInputToolCall
+import io.github.stream29.kode.app.model.isAwaitUserInputToolResult
+import io.github.stream29.kode.app.model.isSayToUserToolCall
 import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemLocations
 import io.github.stream29.kode.core.agent.SessionAwareAgentFactory
 import io.github.stream29.kode.core.agent.SessionAwareAgentFactoryProvider
 import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.model.ConversationSession
 import io.github.stream29.kode.session.core.model.SessionMessage
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.storage.SessionFilter
@@ -172,9 +178,23 @@ public class MainViewModel(
             val previousSessionId = _sessionUiState.value.currentSessionId
             updateSessionUiState { current ->
                 applySessionRunState(
-                    base = current.copy(currentSessionId = value),
+                    base = current.copy(
+                        currentSessionId = value,
+                        showContinueRecoveryDialog = false,
+                        continueRecoveryToolName = "",
+                        continueRecoveryToolCallId = "",
+                    ),
                     sessionId = value,
                 )
+            }
+            if (value != null) {
+                updateAppUiState { current ->
+                    if (current.lastOpenedSessionId == value) {
+                        current
+                    } else {
+                        current.copy(lastOpenedSessionId = value)
+                    }
+                }
             }
             if (previousSessionId != null && previousSessionId != value) {
                 hookManager.unbindSessionPreset(previousSessionId)
@@ -197,14 +217,6 @@ public class MainViewModel(
         set(value) {
             updateAppUiState { current ->
                 current.copy(sessionSearchQuery = value)
-            }
-        }
-
-    public var sessionTagFilter: String
-        get() = _appUiState.value.sessionTagFilter
-        set(value) {
-            updateAppUiState { current ->
-                current.copy(sessionTagFilter = value)
             }
         }
 
@@ -298,6 +310,10 @@ public class MainViewModel(
         get() = _appUiState.value.defaultSessionDir
         set(value) = updateAppUiState { it.copy(defaultSessionDir = value) }
 
+    public var appDataDir: String
+        get() = _appUiState.value.appDataDir
+        set(value) = updateAppUiState { it.copy(appDataDir = normalizeAppDataDirInput(value)) }
+
     public var maxStepsPerTurn: Int
         get() = _appUiState.value.maxStepsPerTurn
         set(value) = updateAppUiState { it.copy(maxStepsPerTurn = value) }
@@ -337,6 +353,18 @@ public class MainViewModel(
     public var uiTheme: String
         get() = _appUiState.value.uiTheme
         set(value) = updateAppUiState { it.copy(uiTheme = value) }
+
+    public var lastOpenedSessionId: String?
+        get() = _appUiState.value.lastOpenedSessionId
+        set(value) = updateAppUiState { it.copy(lastOpenedSessionId = value?.trim()?.takeIf { id -> id.isNotBlank() }) }
+
+    public var messageAlignment: String
+        get() = _appUiState.value.messageAlignment
+        set(value) = updateAppUiState { it.copy(messageAlignment = normalizeMessageAlignment(value)) }
+
+    public var messageMaxWidthRatio: Float
+        get() = _appUiState.value.messageMaxWidthRatio
+        set(value) = updateAppUiState { it.copy(messageMaxWidthRatio = normalizeMessageWidthRatio(value)) }
 
     public var mcpToolTimeoutMs: Int
         get() = _appUiState.value.mcpToolTimeoutMs
@@ -500,10 +528,21 @@ public class MainViewModel(
         set(value) = updateAppUiState { it.copy(temperature = value) }
 
     private var sessionRunStates: Map<String, SessionRunState> = emptyMap()
+    private var sessionTitleGeneratingIds: Set<String> = emptySet()
     private val inputDeferreds: MutableMap<String, CompletableDeferred<String>> = mutableMapOf()
     private val sessionJobs: MutableMap<String, Job> = mutableMapOf()
     private var sessionBindingJob: Job? = null
     private var boundSessionId: String? = null
+    private var lastSessionRestoreAttempted: Boolean = false
+    private val defaultAppDataDir: String = "~/.kode/"
+    private val autoSessionTitlePlaceholder: String = "New Chat"
+    private val legacySessionTitlePrefix: String = "Conversation "
+
+    private enum class ContinueConflictResolution {
+        Auto,
+        Rollback,
+        ContinueWithoutRollback,
+    }
 
     // AgentState implementation
     override val isRunning: Boolean
@@ -579,6 +618,7 @@ public class MainViewModel(
             val config = configManager.load()
             loadConfigToState(config)
             refreshAgentFactoryForConversation()
+            restoreLastSessionIfNeeded()
         } catch (e: Exception) {
             addSystemMessage("Failed to initialize: ${e.message}")
             e.printStackTrace()
@@ -618,6 +658,7 @@ public class MainViewModel(
         }
         defaultModelId = config.defaults.modelId
         defaultThinking = config.defaults.thinking
+        appDataDir = normalizeAppDataDirInput(config.storage.dataDir)
         defaultSessionDir = config.defaults.workDir ?: ""
         if (currentSessionId == null && currentSessionWorkDir.isBlank()) {
             currentSessionWorkDir = normalizeSessionDir(defaultSessionDir).orEmpty()
@@ -645,6 +686,9 @@ public class MainViewModel(
             }
         }
         uiTheme = config.ui.theme
+        lastOpenedSessionId = config.ui.lastOpenedSessionId
+        messageAlignment = normalizeMessageAlignment(config.ui.messageAlignment)
+        messageMaxWidthRatio = normalizeMessageWidthRatio(config.ui.messageMaxWidthRatio)
         approvalDefaultYolo = config.approvals.yoloDefault
         approvalAutoApproveActions = config.approvals.autoApproveActions
         yoloEnabled = approvalDefaultYolo
@@ -748,6 +792,12 @@ public class MainViewModel(
                 }
 
                 factory.runWithSession(sessionId, task, modelId)
+                ensureSessionAutoTitle(
+                    sessionId = sessionId,
+                    modelId = modelId,
+                    factory = factory,
+                    force = false,
+                )
             } catch (e: Exception) {
                 val message = e.message ?: "Unknown error"
                 val targetSessionId = runningSessionId ?: currentSessionId
@@ -779,6 +829,30 @@ public class MainViewModel(
     }
     
     public fun continueCurrentSession() {
+        continueCurrentSession(resolution = ContinueConflictResolution.Auto)
+    }
+
+    public fun continueCurrentSessionAfterRollback() {
+        dismissContinueRecoveryDialog()
+        continueCurrentSession(resolution = ContinueConflictResolution.Rollback)
+    }
+
+    public fun continueCurrentSessionWithoutRollback() {
+        dismissContinueRecoveryDialog()
+        continueCurrentSession(resolution = ContinueConflictResolution.ContinueWithoutRollback)
+    }
+
+    public fun dismissContinueRecoveryDialog() {
+        updateSessionUiState { current ->
+            current.copy(
+                showContinueRecoveryDialog = false,
+                continueRecoveryToolName = "",
+                continueRecoveryToolCallId = "",
+            )
+        }
+    }
+
+    private fun continueCurrentSession(resolution: ContinueConflictResolution) {
         val sessionId = currentSessionId
         if (sessionId == null) {
             addSystemMessage("No active session")
@@ -790,8 +864,44 @@ public class MainViewModel(
             addSystemMessage("No model selected")
             return
         }
+
         viewModelScope.launch(Dispatchers.IO) {
+            var runStarted = false
             try {
+                if (sessionRunStates[sessionId]?.isRunning == true) {
+                    addSystemMessage("Session is already running", sessionId)
+                    return@launch
+                }
+
+                when (resolution) {
+                    ContinueConflictResolution.Auto -> {
+                        val pendingCall = sessionManager.getTrailingPendingToolCall(sessionId)
+                        if (pendingCall != null) {
+                            if (isAwaitUserInputToolNameForContinue(pendingCall.toolName)) {
+                                val normalized = sessionManager.normalizeTrailingAwaitUserInputToolCall(sessionId)
+                                if (normalized) {
+                                    addSystemMessage(
+                                        "Detected pending awaitUserInput call and normalized it to sayToUser before continue.",
+                                        sessionId,
+                                    )
+                                }
+                            } else {
+                                showContinueRecoveryDialog(
+                                    toolName = pendingCall.toolName,
+                                    toolCallId = pendingCall.toolCallId,
+                                )
+                                return@launch
+                            }
+                        }
+                    }
+
+                    ContinueConflictResolution.Rollback -> {
+                        sessionManager.rollbackTrailingPendingToolCall(sessionId)
+                    }
+
+                    ContinueConflictResolution.ContinueWithoutRollback -> Unit
+                }
+
                 if (!refreshAgentFactoryForConversation()) {
                     addSystemMessage("Agent not initialized. Please check your configuration.")
                     return@launch
@@ -802,11 +912,7 @@ public class MainViewModel(
                     return@launch
                 }
 
-                if (sessionRunStates[sessionId]?.isRunning == true) {
-                    addSystemMessage("Session is already running", sessionId)
-                    return@launch
-                }
-
+                runStarted = true
                 sessionJobs[sessionId] = requireNotNull(coroutineContext[Job])
                 bindSessionFlows(sessionId)
                 ensureSessionWorkDir(sessionId)
@@ -823,10 +929,12 @@ public class MainViewModel(
                 addSystemMessage("Error: ${e.message}", sessionId)
                 log("continueCurrentSession failed: ${e.stackTraceToString()}", sessionId)
             } finally {
-                updateSessionRunState(sessionId) { state ->
-                    state.copy(isRunning = false, currentTask = "", isWaitingForInput = false)
+                if (runStarted) {
+                    updateSessionRunState(sessionId) { state ->
+                        state.copy(isRunning = false, currentTask = "", isWaitingForInput = false)
+                    }
+                    sessionJobs.remove(sessionId)
                 }
-                sessionJobs.remove(sessionId)
             }
         }
     }
@@ -847,7 +955,192 @@ public class MainViewModel(
             }
         }
     }
-    
+
+    public fun regenerateCurrentSessionTitle() {
+        val sessionId = currentSessionId
+        if (sessionId == null) {
+            addSystemMessage("No active session")
+            return
+        }
+        val modelId = activeModelId
+        if (modelId == null) {
+            addSystemMessage("No model selected")
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (!refreshAgentFactoryForConversation()) {
+                    addSystemMessage("Agent not initialized. Please check your configuration.")
+                    return@launch
+                }
+                val factory = agentFactory ?: run {
+                    addSystemMessage("Agent not initialized. Please check your configuration.")
+                    return@launch
+                }
+
+                ensureSessionAutoTitle(
+                    sessionId = sessionId,
+                    modelId = modelId,
+                    factory = factory,
+                    force = true,
+                )
+            } catch (e: Exception) {
+                addSystemMessage("Failed to regenerate title: ${e.message}", sessionId)
+            }
+        }
+    }
+
+    public fun updateCurrentSessionTitle(newTitle: String) {
+        val sessionId = currentSessionId
+        if (sessionId == null) {
+            addSystemMessage("No active session")
+            return
+        }
+        val normalizedTitle = normalizeSessionTitleInput(newTitle)
+        if (normalizedTitle.isBlank()) {
+            addSystemMessage("Title cannot be empty", sessionId)
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                sessionManager.updateTitle(sessionId, normalizedTitle)
+            }.onSuccess {
+                loadSessionList()
+            }.onFailure { error ->
+                addSystemMessage("Failed to update title: ${error.message}", sessionId)
+            }
+        }
+    }
+
+    private fun normalizeSessionTitleInput(raw: String): String {
+        val compact = raw
+            .lineSequence()
+            .firstOrNull()
+            .orEmpty()
+            .trim()
+            .replace(Regex("\\s+"), " ")
+        return if (compact.length > 80) {
+            compact.take(80).trimEnd()
+        } else {
+            compact
+        }
+    }
+
+    private fun showContinueRecoveryDialog(toolName: String, toolCallId: String) {
+        updateSessionUiState { current ->
+            current.copy(
+                showContinueRecoveryDialog = true,
+                continueRecoveryToolName = toolName,
+                continueRecoveryToolCallId = toolCallId,
+            )
+        }
+    }
+
+    private fun isAwaitUserInputToolNameForContinue(toolName: String): Boolean {
+        val normalized = toolName.trim().replace("_", "").lowercase()
+        return normalized == "awaituserinput" || normalized == "waitforuserinput"
+    }
+
+    private suspend fun ensureSessionAutoTitle(
+        sessionId: String,
+        modelId: String,
+        factory: SessionAwareAgentFactory,
+        force: Boolean,
+    ) {
+        val session = sessionManager.getSession(sessionId) ?: return
+        val currentTitle = session.title.trim()
+        if (!force && !shouldAutoGenerateSessionTitle(currentTitle)) {
+            return
+        }
+
+        setSessionTitleGenerating(sessionId = sessionId, isGenerating = true)
+        try {
+            val generatedTitle = runCatching {
+                factory.generateSessionTitleFromConversation(sessionId = sessionId, modelId = modelId)
+            }.getOrNull()
+            val fallbackTitle = buildFallbackSessionTitleFromSession(session)
+            val resolvedTitle = generatedTitle?.takeIf { it.isNotBlank() } ?: fallbackTitle
+
+            if (resolvedTitle.isBlank() || resolvedTitle == currentTitle) {
+                return
+            }
+
+            runCatching {
+                sessionManager.updateTitle(sessionId, resolvedTitle)
+            }.onSuccess {
+                loadSessionList()
+            }
+        } finally {
+            setSessionTitleGenerating(sessionId = sessionId, isGenerating = false)
+        }
+    }
+
+    private fun setSessionTitleGenerating(sessionId: String, isGenerating: Boolean) {
+        val updatedIds = if (isGenerating) {
+            sessionTitleGeneratingIds + sessionId
+        } else {
+            sessionTitleGeneratingIds - sessionId
+        }
+        if (updatedIds == sessionTitleGeneratingIds) {
+            return
+        }
+
+        sessionTitleGeneratingIds = updatedIds
+        updateSessionUiState { currentUi ->
+            applySessionRunState(
+                base = currentUi,
+                sessionId = currentUi.currentSessionId,
+            )
+        }
+    }
+
+    private fun shouldAutoGenerateSessionTitle(currentTitle: String): Boolean {
+        if (currentTitle.isBlank()) {
+            return true
+        }
+        if (currentTitle.equals(autoSessionTitlePlaceholder, ignoreCase = true)) {
+            return true
+        }
+        return currentTitle.startsWith(legacySessionTitlePrefix)
+    }
+
+    private fun buildFallbackSessionTitleFromSession(session: ConversationSession): String {
+        val projected = session.messages.firstNotNullOfOrNull { message ->
+            when (message.role) {
+                io.github.stream29.kode.session.core.model.MessageRole.USER,
+                io.github.stream29.kode.session.core.model.MessageRole.ASSISTANT -> {
+                    message.content.trim().takeIf { it.isNotBlank() }
+                }
+                io.github.stream29.kode.session.core.model.MessageRole.TOOL_CALL -> {
+                    if (message.isSayToUserToolCall() || message.isAwaitUserInputToolCall()) {
+                        message.extractToolCallPrimaryTextArg()?.trim()?.takeIf { it.isNotBlank() }
+                    } else {
+                        null
+                    }
+                }
+                io.github.stream29.kode.session.core.model.MessageRole.TOOL_RESULT -> {
+                    if (message.isAwaitUserInputToolResult()) {
+                        message.extractToolResultText()?.trim()?.takeIf { it.isNotBlank() }
+                    } else {
+                        null
+                    }
+                }
+                else -> null
+            }
+        }
+        val normalized = projected.orEmpty().replace(Regex("\\s+"), " ").trim()
+        if (normalized.isBlank()) {
+            return autoSessionTitlePlaceholder
+        }
+        return if (normalized.length > 50) {
+            normalized.take(50).trimEnd() + "..."
+        } else {
+            normalized
+        }
+    }
+
     public fun forkFromMessage(messageIndex: Int) {
         val sessionId = currentSessionId
         if (sessionId == null) {
@@ -898,22 +1191,110 @@ public class MainViewModel(
     }
     
     // ==================== Session Management ====================
-    
+
+    private fun buildSessionFilter(): SessionFilter {
+        return SessionFilter(
+            status = sessionStatusFilter,
+            sortBy = SortBy.CREATED_AT,
+            sortOrder = SortOrder.DESCENDING
+        )
+    }
+
     public fun loadSessionList() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val filter = SessionFilter(
-                    status = sessionStatusFilter,
-                    tags = sessionTagFilter.takeIf { it.isNotBlank() }?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() },
-                    searchQuery = sessionSearchQuery.takeIf { it.isNotBlank() },
-                    sortBy = SortBy.UPDATED_AT,
-                    sortOrder = SortOrder.DESCENDING
+                val filter = buildSessionFilter()
+                val summaries = sessionManager.listSessions(filter = filter)
+                sessionSummaries = applySessionTextSearch(
+                    summaries = summaries,
+                    query = sessionSearchQuery,
                 )
-                sessionSummaries = sessionManager.listSessions(filter = filter)
             } catch (e: Exception) {
                 addSystemMessage("Failed to load sessions: ${e.message}")
             }
         }
+    }
+
+    private suspend fun applySessionTextSearch(
+        summaries: List<SessionSummary>,
+        query: String,
+    ): List<SessionSummary> {
+        val normalizedQuery = query.trim()
+        if (normalizedQuery.isBlank()) {
+            return summaries
+        }
+
+        val ranked = summaries.mapNotNull { summary ->
+            val corpus = buildSessionSearchCorpus(summary)
+            val hits = countOccurrencesIgnoreCase(corpus, normalizedQuery)
+            if (hits <= 0) {
+                null
+            } else {
+                SessionSearchHit(summary = summary, hits = hits)
+            }
+        }
+
+        return ranked.sortedWith(
+            compareByDescending<SessionSearchHit> { hit -> hit.hits }
+                .thenByDescending { hit -> hit.summary.createdAt }
+                .thenBy { hit -> hit.summary.id }
+        ).map { hit -> hit.summary }
+    }
+
+    private suspend fun buildSessionSearchCorpus(summary: SessionSummary): String {
+        val session = sessionManager.getSession(summary.id) ?: return summary.title
+
+        val projectedTexts = session.messages.mapNotNull { message ->
+            when (message.role) {
+                io.github.stream29.kode.session.core.model.MessageRole.USER,
+                io.github.stream29.kode.session.core.model.MessageRole.ASSISTANT -> {
+                    message.content.trim().takeIf { it.isNotBlank() }
+                }
+
+                io.github.stream29.kode.session.core.model.MessageRole.TOOL_CALL -> {
+                    if (message.isSayToUserToolCall() || message.isAwaitUserInputToolCall()) {
+                        message.extractToolCallPrimaryTextArg()?.trim()?.takeIf { it.isNotBlank() }
+                    } else {
+                        null
+                    }
+                }
+
+                io.github.stream29.kode.session.core.model.MessageRole.TOOL_RESULT -> {
+                    if (message.isAwaitUserInputToolResult()) {
+                        message.extractToolResultText()?.trim()?.takeIf { it.isNotBlank() }
+                    } else {
+                        null
+                    }
+                }
+
+                else -> null
+            }
+        }
+
+        return buildString {
+            append(summary.title)
+            projectedTexts.forEach { text ->
+                append('\n')
+                append(text)
+            }
+        }
+    }
+
+    private fun countOccurrencesIgnoreCase(text: String, query: String): Int {
+        if (text.isBlank() || query.isBlank()) {
+            return 0
+        }
+        var count = 0
+        var cursor = 0
+        while (cursor < text.length) {
+            val found = text.indexOf(query, startIndex = cursor, ignoreCase = true)
+            if (found < 0) {
+                break
+            }
+            count += 1
+            cursor = found + query.length
+        }
+        return count
     }
 
     public fun updateSessionSearchQuery(query: String) {
@@ -921,17 +1302,46 @@ public class MainViewModel(
         loadSessionList()
     }
 
-    public fun updateSessionTagFilter(tags: String) {
-        sessionTagFilter = tags
-        loadSessionList()
-    }
-
     public fun updateSessionStatusFilter(status: SessionStatusFilter) {
         sessionStatusFilter = status
         loadSessionList()
     }
-    
+
     public fun switchToSession(sessionId: String) {
+        switchToSessionInternal(sessionId = sessionId, announce = true)
+    }
+
+    public fun restoreLastSessionIfNeeded() {
+        if (currentSessionId != null || lastSessionRestoreAttempted) {
+            return
+        }
+        lastSessionRestoreAttempted = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val filter = buildSessionFilter()
+                val summaries = sessionManager.listSessions(filter = filter)
+                sessionSummaries = summaries
+                val preferredSessionId = lastOpenedSessionId
+                if (!preferredSessionId.isNullOrBlank()) {
+                    val preferredExists = runCatching {
+                        sessionManager.getSession(preferredSessionId)
+                    }.getOrNull() != null
+                    if (preferredExists) {
+                        switchToSessionInternal(sessionId = preferredSessionId, announce = false)
+                        return@launch
+                    }
+                    lastOpenedSessionId = null
+                }
+
+                val latest = summaries.firstOrNull() ?: return@launch
+                switchToSessionInternal(sessionId = latest.id, announce = false)
+            } catch (e: Exception) {
+                addSystemMessage("Failed to restore session: ${e.message}")
+            }
+        }
+    }
+
+    private fun switchToSessionInternal(sessionId: String, announce: Boolean) {
         currentSessionId = sessionId
         showSessionManager = false
         bindSessionFlows(sessionId)
@@ -942,7 +1352,9 @@ public class MainViewModel(
                     messages = session.messages
                     ensureSessionWorkDir(sessionId)
                 }
-                addSystemMessage("Switched to session: ${sessionId.take(8)}...")
+                if (announce) {
+                    addSystemMessage("Switched to session: ${sessionId.take(8)}...")
+                }
             } catch (e: Exception) {
                 addSystemMessage("Failed to load session: ${e.message}")
             }
@@ -959,8 +1371,12 @@ public class MainViewModel(
                     currentSessionWorkDir = ""
                     unbindSessionFlows(sessionId)
                 }
+                if (lastOpenedSessionId == sessionId) {
+                    lastOpenedSessionId = null
+                }
                 sessionJobs.remove(sessionId)?.cancel("Session deleted")
                 clearSessionRunState(sessionId)
+                setSessionTitleGenerating(sessionId = sessionId, isGenerating = false)
                 inputDeferreds.remove(sessionId)
                 pendingApprovals = pendingApprovals.filterNot { it.sessionId == sessionId }
                 autoApproveActionsBySession.remove(sessionId)
@@ -1012,30 +1428,6 @@ public class MainViewModel(
                 addSystemMessage("Session restored")
             } catch (e: Exception) {
                 addSystemMessage("Failed to restore session: ${e.message}")
-            }
-        }
-    }
-
-    public fun addSessionTags(sessionId: String, tags: List<String>) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                sessionManager.addTags(sessionId, tags)
-                loadSessionList()
-                addSystemMessage("Tags updated")
-            } catch (e: Exception) {
-                addSystemMessage("Failed to update tags: ${e.message}")
-            }
-        }
-    }
-
-    public fun removeSessionTag(sessionId: String, tag: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                sessionManager.removeTags(sessionId, listOf(tag))
-                loadSessionList()
-                addSystemMessage("Tag removed")
-            } catch (e: Exception) {
-                addSystemMessage("Failed to remove tag: ${e.message}")
             }
         }
     }
@@ -1110,7 +1502,7 @@ public class MainViewModel(
                 val normalizedWorkDir = normalizeSessionDir(newSessionDirInput)
                 currentSessionWorkDir = normalizedWorkDir.orEmpty()
                 val sessionId = factory.createSession(
-                    title = "Conversation ${System.currentTimeMillis()}",
+                    title = autoSessionTitlePlaceholder,
                     systemPrompt = buildSystemPrompt(),
                     modelId = modelId,
                     workDir = normalizedWorkDir
@@ -1118,6 +1510,7 @@ public class MainViewModel(
                 createdSessionId = sessionId
                 currentSessionId = sessionId
                 bindSessionFlows(sessionId)
+                loadSessionList()
 
                 val task = pendingTaskAfterSessionCreate
                 pendingTaskAfterSessionCreate = null
@@ -1137,6 +1530,12 @@ public class MainViewModel(
                     }
                     sessionJobs[sessionId] = requireNotNull(coroutineContext[Job])
                     factory.runWithSession(sessionId, task, modelId)
+                    ensureSessionAutoTitle(
+                        sessionId = sessionId,
+                        modelId = modelId,
+                        factory = factory,
+                        force = false,
+                    )
                 } else {
                     addSystemMessage("New session created")
                 }
@@ -1190,6 +1589,52 @@ public class MainViewModel(
         return File(expanded).absolutePath
     }
 
+    private fun normalizeAppDataDirInput(input: String): String {
+        val trimmed = input.trim()
+        return trimmed.ifBlank { defaultAppDataDir }
+    }
+
+    private suspend fun persistAppDataDirSetting(dataDir: String) {
+        val current = configManager.load()
+        val updated = current.copy(
+            storage = current.storage.copy(
+                dataDir = normalizeAppDataDirInput(dataDir)
+            )
+        )
+        configManager.save(updated)
+    }
+
+    private fun migrateAppDataDirectory(sourceDir: File, targetDir: File) {
+        if (!sourceDir.exists()) {
+            targetDir.mkdirs()
+            return
+        }
+
+        val sourceCanonical = sourceDir.canonicalFile
+        val targetCanonical = targetDir.canonicalFile
+        if (targetCanonical.path.startsWith(sourceCanonical.path + File.separator)) {
+            throw IllegalArgumentException("Target directory cannot be nested inside current data directory")
+        }
+
+        val entries = sourceDir.listFiles().orEmpty()
+        targetDir.mkdirs()
+        val conflicts = entries.map { entry -> File(targetDir, entry.name) }
+            .filter { candidate -> candidate.exists() }
+        if (conflicts.isNotEmpty()) {
+            throw IllegalStateException(
+                "Target directory already contains ${conflicts.first().name}; please choose an empty directory"
+            )
+        }
+
+        entries.forEach { entry ->
+            entry.copyRecursively(target = File(targetDir, entry.name), overwrite = false)
+        }
+    }
+
+    private fun resolveAppDataDir(): File {
+        return FileSystemLocations.resolveDataDir(path = appDataDir)
+    }
+
     private fun updateSessionRunState(
         sessionId: String,
         transform: (SessionRunState) -> SessionRunState
@@ -1216,10 +1661,12 @@ public class MainViewModel(
 
     private fun applySessionRunState(base: SessionUiState, sessionId: String?): SessionUiState {
         val runState = sessionId?.let { id -> sessionRunStates[id] }
+        val titleGenerating = sessionId?.let { id -> id in sessionTitleGeneratingIds } ?: false
         return base.copy(
             isRunning = runState?.isRunning ?: false,
             isWaitingForInput = runState?.isWaitingForInput ?: false,
             currentTask = runState?.currentTask.orEmpty(),
+            isGeneratingSessionTitle = titleGenerating,
         )
     }
 
@@ -1317,6 +1764,10 @@ models:
 defaults:
   model_id: claude-sonnet
   thinking: false
+  work_dir: "."
+
+storage:
+  data_dir: "~/.kode/"
 
 loop_control:
   max_steps_per_turn: 100
@@ -1437,8 +1888,10 @@ logging:
     public fun openDataDirectory() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val dataDir = resolveAppDataDir()
+                dataDir.mkdirs()
                 if (Desktop.isDesktopSupported()) {
-                    Desktop.getDesktop().open(FileSystemLocations.dataDir)
+                    Desktop.getDesktop().open(dataDir)
                 }
             } catch (e: Exception) {
                 addSystemMessage("Failed to open directory: ${e.message}")
@@ -1458,6 +1911,7 @@ logging:
                 currentSessionWorkDir = ""
                 messages = emptyList()
                 sessionRunStates = emptyMap()
+                sessionTitleGeneratingIds = emptySet()
                 inputDeferreds.clear()
                 pendingApprovals = emptyList()
                 autoApproveActionsBySession.clear()
@@ -1644,6 +2098,44 @@ logging:
         defaultModelId = modelId
     }
 
+    public fun resolveAppDataDirPath(input: String): String {
+        val normalized = normalizeAppDataDirInput(input)
+        return FileSystemLocations.resolveDataDir(path = normalized).absolutePath
+    }
+
+    public fun applyAppDataDirChange(newInput: String, migrateExistingData: Boolean) {
+        val normalized = normalizeAppDataDirInput(newInput)
+        val currentDir = resolveAppDataDir()
+        val targetDir = FileSystemLocations.resolveDataDir(path = normalized)
+        if (currentDir.absolutePath == targetDir.absolutePath) {
+            appDataDir = normalized
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (migrateExistingData) {
+                    migrateAppDataDirectory(sourceDir = currentDir, targetDir = targetDir)
+                } else {
+                    targetDir.mkdirs()
+                }
+                appDataDir = normalized
+                persistAppDataDirSetting(dataDir = normalized)
+                val action = if (migrateExistingData) {
+                    "updated and migrated"
+                } else {
+                    "updated"
+                }
+                addSystemMessage(
+                    "App data directory $action: ${targetDir.absolutePath}. Restart Kode to apply session storage switching."
+                )
+                enqueueToast("App data directory updated. Please restart Kode.")
+            } catch (e: Exception) {
+                addSystemMessage("Failed to update app data directory: ${e.message}")
+            }
+        }
+    }
+
     public fun savePreferences() {
         viewModelScope.launch(Dispatchers.IO) {
             persistPreferences()
@@ -1654,6 +2146,9 @@ logging:
         try {
             val current = configManager.load()
             val updated = current.copy(
+                storage = current.storage.copy(
+                    dataDir = normalizeAppDataDirInput(appDataDir)
+                ),
                 defaults = current.defaults.copy(
                     modelId = defaultModelId,
                     thinking = defaultThinking,
@@ -1677,7 +2172,10 @@ logging:
                     file = logFile.takeIf { it.isNotBlank() }
                 ),
                 ui = current.ui.copy(
-                    theme = uiTheme
+                    theme = uiTheme,
+                    messageAlignment = messageAlignment,
+                    messageMaxWidthRatio = messageMaxWidthRatio,
+                    lastOpenedSessionId = lastOpenedSessionId,
                 ),
                 approvals = current.approvals.copy(
                     yoloDefault = approvalDefaultYolo,
@@ -2312,10 +2810,27 @@ logging:
         return map.entries.joinToString("\n") { (key, value) -> "$key$separator$value" }
     }
 
+    private fun normalizeMessageAlignment(value: String): String {
+        val normalized = value.trim().lowercase()
+        return if (normalized == "split") {
+            "split"
+        } else {
+            "left"
+        }
+    }
+
+    private fun normalizeMessageWidthRatio(value: Float): Float {
+        if (value.isNaN()) {
+            return 0.9f
+        }
+        return value.coerceIn(0.5f, 1f)
+    }
+
     private fun buildPreferencesSnapshot(): PreferencesSnapshot {
         return PreferencesSnapshot(
             defaultModelId = defaultModelId,
             defaultThinking = defaultThinking,
+            appDataDir = appDataDir,
             defaultSessionDir = defaultSessionDir,
             skillsDir = skillsDir,
             presetBuiltin = presetBuiltin,
@@ -2323,6 +2838,9 @@ logging:
             logLevel = logLevel,
             logFile = logFile,
             uiTheme = uiTheme,
+            lastOpenedSessionId = lastOpenedSessionId,
+            messageAlignment = messageAlignment,
+            messageMaxWidthRatio = messageMaxWidthRatio,
             approvalDefaultYolo = approvalDefaultYolo,
             approvalAutoApproveActions = approvalAutoApproveActions,
             disabledTools = disabledTools,
@@ -2368,7 +2886,7 @@ logging:
             return projectAgents.readText()
         }
 
-        val userAgents = File(FileSystemLocations.dataDir, "AGENTS.md")
+        val userAgents = File(resolveAppDataDir(), "AGENTS.md")
         if (userAgents.isFile) {
             presetSpecPath = userAgents.absolutePath
             return userAgents.readText()
@@ -2536,7 +3054,7 @@ logging:
         if (overrideDir.isNotBlank()) {
             roots.add(File(expandHome(overrideDir)))
         } else {
-            roots.add(File(homeDir, ".kode/skills"))
+            roots.add(File(resolveAppDataDir(), "skills"))
         }
 
         listOf(
@@ -2909,11 +3427,15 @@ public data class SessionUiState(
     val currentSessionWorkDir: String = "",
     val showNewSessionDialog: Boolean = false,
     val showSessionDirDialog: Boolean = false,
+    val showContinueRecoveryDialog: Boolean = false,
+    val continueRecoveryToolName: String = "",
+    val continueRecoveryToolCallId: String = "",
     val newSessionDirInput: String = "",
     val sessionDirDraft: String = "",
     val isRunning: Boolean = false,
     val isWaitingForInput: Boolean = false,
     val currentTask: String = "",
+    val isGeneratingSessionTitle: Boolean = false,
 )
 
 public data class AppUiState(
@@ -2924,7 +3446,6 @@ public data class AppUiState(
     val showSettings: Boolean = false,
     val sessionSummaries: List<SessionSummary> = emptyList(),
     val sessionSearchQuery: String = "",
-    val sessionTagFilter: String = "",
     val sessionStatusFilter: SessionStatusFilter = SessionStatusFilter.ALL,
     val configText: String = "",
     val configError: String? = null,
@@ -2933,6 +3454,7 @@ public data class AppUiState(
     val activeModelId: String? = null,
     val defaultModelId: String? = null,
     val defaultThinking: Boolean = false,
+    val appDataDir: String = "~/.kode/",
     val defaultSessionDir: String = "",
     val maxStepsPerTurn: Int = 100,
     val maxRetriesPerStep: Int = 3,
@@ -2944,6 +3466,9 @@ public data class AppUiState(
     val logLevel: String = "info",
     val logFile: String = "",
     val uiTheme: String = "dark",
+    val lastOpenedSessionId: String? = null,
+    val messageAlignment: String = "left",
+    val messageMaxWidthRatio: Float = 0.9f,
     val mcpToolTimeoutMs: Int = 60000,
     val mcpServers: Map<String, io.github.stream29.kode.config.api.McpServerConfig> = emptyMap(),
     val mcpTestResults: Map<String, MainViewModel.McpTestResult> = emptyMap(),
@@ -3004,9 +3529,15 @@ public data class PendingApproval(
     val request: ToolApprovalRequest
 )
 
+private data class SessionSearchHit(
+    val summary: SessionSummary,
+    val hits: Int,
+)
+
 private data class PreferencesSnapshot(
     val defaultModelId: String?,
     val defaultThinking: Boolean,
+    val appDataDir: String,
     val defaultSessionDir: String,
     val skillsDir: String,
     val presetBuiltin: String,
@@ -3014,6 +3545,9 @@ private data class PreferencesSnapshot(
     val logLevel: String,
     val logFile: String,
     val uiTheme: String,
+    val lastOpenedSessionId: String?,
+    val messageAlignment: String,
+    val messageMaxWidthRatio: Float,
     val approvalDefaultYolo: Boolean,
     val approvalAutoApproveActions: List<String>,
     val disabledTools: Set<String>,

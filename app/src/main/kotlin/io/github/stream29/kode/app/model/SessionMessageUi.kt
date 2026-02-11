@@ -51,6 +51,28 @@ public fun SessionMessage.extractToolName(): String? {
     }
 }
 
+public fun SessionMessage.extractToolCallId(): String? {
+    return when (role) {
+        MessageRole.TOOL_CALL -> {
+            structuredData?.let { element ->
+                runCatching {
+                    Json.decodeFromJsonElement(ToolCallData.serializer(), element).toolCallId
+                }.getOrNull()
+            } ?: (koogMessage as? Message.Tool.Call)?.id
+        }
+
+        MessageRole.TOOL_RESULT -> {
+            structuredData?.let { element ->
+                runCatching {
+                    Json.decodeFromJsonElement(ToolResultData.serializer(), element).toolCallId
+                }.getOrNull()
+            } ?: (koogMessage as? Message.Tool.Result)?.id
+        }
+
+        else -> null
+    }
+}
+
 public fun SessionMessage.isSayToUserToolCall(): Boolean {
     return role == MessageRole.TOOL_CALL && normalizeToolName(extractToolName()) == SAY_TO_USER_KEY
 }

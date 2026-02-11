@@ -1,10 +1,13 @@
 package io.github.stream29.kode.app.view.components
 
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.hoverable
 import androidx.compose.material.icons.Icons
@@ -35,6 +38,8 @@ import java.awt.datatransfer.StringSelection
 public fun MessageBubble(
     message: SessionMessage,
     isCurrentUser: Boolean = false,
+    messageAlignment: String,
+    messageMaxWidthRatio: Float,
     onForkFromHere: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -47,15 +52,24 @@ public fun MessageBubble(
         MessageRole.TOOL_RESULT -> message.extractToolResultText()
         else -> null
     }
+    val canToggleDetails = toolDetailText != null
     val hoverInteractionSource = remember { MutableInteractionSource() }
     val isHovered by hoverInteractionSource.collectIsHoveredAsState()
-    var metaPinned by rememberSaveable(message.id) { mutableStateOf(false) }
-    val showMeta = isHovered || metaPinned
     var detailsExpanded by rememberSaveable("${message.id}-details") {
         mutableStateOf(message.role == MessageRole.TOOL_CALL || message.role == MessageRole.TOOL_RESULT)
     }
     val clickInteractionSource = remember { MutableInteractionSource() }
-    
+    val timeFormat = message.timestamp.toLocalDateTime(TimeZone.currentSystemDefault())
+    val timeText = "${timeFormat.hour.toString().padStart(2, '0')}:${timeFormat.minute.toString().padStart(2, '0')}"
+    val copyText = toolDetailText?.takeIf { it.isNotBlank() } ?: message.content
+    val alignmentMode = messageAlignment.trim().lowercase()
+    val bubbleAlignment = if (alignmentMode == "split" && isUser) {
+        Alignment.End
+    } else {
+        Alignment.Start
+    }
+    val maxWidthRatio = messageMaxWidthRatio.coerceIn(0.5f, 1f)
+
     val backgroundColor = when {
         message.isUiError() -> MaterialTheme.colorScheme.errorContainer
         isUser -> MaterialTheme.colorScheme.primaryContainer
@@ -63,7 +77,7 @@ public fun MessageBubble(
         isTool -> MaterialTheme.colorScheme.tertiaryContainer
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
-    
+
     val contentColor = when {
         message.isUiError() -> MaterialTheme.colorScheme.onErrorContainer
         isUser -> MaterialTheme.colorScheme.onPrimaryContainer
@@ -71,158 +85,162 @@ public fun MessageBubble(
         isTool -> MaterialTheme.colorScheme.onTertiaryContainer
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
-    ) {
-        if (showMeta) {
-            Text(
-                text = when (message.role) {
-                    MessageRole.USER -> "You"
-                    MessageRole.ASSISTANT -> "Assistant"
-                    MessageRole.SYSTEM -> "System"
-                    MessageRole.TOOL_CALL -> "Tool Call"
-                    MessageRole.TOOL_RESULT -> "Tool Result"
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-            )
-        }
 
-        // Message bubble
-        ElevatedCard(
-            modifier = Modifier
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-                .widthIn(max = 600.dp)
-                .hoverable(interactionSource = hoverInteractionSource)
-                .clickable(
-                    interactionSource = clickInteractionSource,
-                    indication = null,
-                ) {
-                    metaPinned = !metaPinned
-                },
-            colors = CardDefaults.elevatedCardColors(
-                containerColor = backgroundColor
-            ),
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (isUser) 16.dp else 4.dp,
-                bottomEnd = if (isUser) 4.dp else 16.dp
-            )
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val maxBubbleWidth = maxWidth * maxWidthRatio
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = bubbleAlignment,
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                // Tool name if applicable
-                if (showMeta && isTool && toolName != null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Build,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = contentColor
-                        )
-                        Text(
-                            text = toolName,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Medium,
-                            color = contentColor
-                        )
-                    }
-                }
-                
-                // Message content
-                MessageContent(
-                    message = message,
-                    contentColor = contentColor,
-                    containerColor = backgroundColor,
+            // Message bubble
+            ElevatedCard(
+                modifier = Modifier
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .widthIn(max = maxBubbleWidth)
+                    .hoverable(interactionSource = hoverInteractionSource)
+                    .then(
+                        if (canToggleDetails) {
+                            Modifier.clickable(
+                                interactionSource = clickInteractionSource,
+                                indication = null,
+                            ) {
+                                detailsExpanded = !detailsExpanded
+                            }
+                        } else {
+                            Modifier
+                        }
+                    ),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = backgroundColor
+                ),
+                shape = RoundedCornerShape(
+                    topStart = 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = if (isUser) 16.dp else 4.dp,
+                    bottomEnd = if (isUser) 4.dp else 16.dp
                 )
-
-                if (toolDetailText != null) {
-                    ToolMessageDetails(
-                        role = message.role,
-                        details = toolDetailText,
-                        expanded = detailsExpanded,
-                        onToggle = { detailsExpanded = !detailsExpanded },
-                        contentColor = contentColor,
-                    )
-                }
-
-                if (showMeta) {
-                    // Timestamp and actions
-                    Row(
+            ) {
+                Box(
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Column(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        val timeFormat = message.timestamp.toLocalDateTime(TimeZone.currentSystemDefault())
-                        Text(
-                            text = "${timeFormat.hour.toString().padStart(2, '0')}:${timeFormat.minute.toString().padStart(2, '0')}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = contentColor.copy(alpha = 0.7f)
+                        MessageContent(
+                            message = message,
+                            contentColor = contentColor,
+                            containerColor = backgroundColor,
                         )
 
-                        // Action buttons
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            if (onForkFromHere != null) {
-                                TooltipBox(
-                                    positionProvider = TooltipDefaults.rememberTooltipPositionProvider(
-                                        TooltipAnchorPosition.Above
-                                    ),
-                                    tooltip = {
-                                        PlainTooltip {
-                                            Text("Fork from this message")
-                                        }
-                                    },
-                                    state = rememberTooltipState()
-                                ) {
-                                    IconButton(
-                                        onClick = onForkFromHere,
-                                        modifier = Modifier.size(24.dp)
+                        if (toolDetailText != null && detailsExpanded) {
+                            ToolMessageDetails(
+                                role = message.role,
+                                details = toolDetailText,
+                                contentColor = contentColor,
+                            )
+                        }
+                    }
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isHovered,
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                        modifier = Modifier.matchParentSize(),
+                    ) {
+                        DisableSelection {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                if (isTool && toolName != null) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .padding(start = 2.dp, top = 2.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.AutoMirrored.Filled.CallSplit,
-                                            contentDescription = "Fork",
-                                            modifier = Modifier.size(16.dp),
-                                            tint = contentColor.copy(alpha = 0.7f)
+                                            imageVector = Icons.Default.Build,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                            tint = contentColor.copy(alpha = 0.85f)
+                                        )
+                                        Text(
+                                            text = toolName,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Medium,
+                                            color = contentColor.copy(alpha = 0.85f)
                                         )
                                     }
                                 }
-                            }
 
-                            TooltipBox(
-                                positionProvider = TooltipDefaults.rememberTooltipPositionProvider(
-                                    TooltipAnchorPosition.Above
-                                ),
-                                tooltip = {
-                                    PlainTooltip {
-                                        Text("Copy message")
-                                    }
-                                },
-                                state = rememberTooltipState()
-                            ) {
-                                IconButton(
-                                    onClick = { copyToClipboard(message.content) },
-                                    modifier = Modifier.size(24.dp)
+                                Row(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(top = 2.dp, end = 2.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.ContentCopy,
-                                        contentDescription = "Copy",
-                                        modifier = Modifier.size(16.dp),
-                                        tint = contentColor.copy(alpha = 0.7f)
+                                    Text(
+                                        text = timeText,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = contentColor.copy(alpha = 0.7f),
                                     )
+                                    if (canToggleDetails) {
+                                        Icon(
+                                            imageVector = if (detailsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = contentColor.copy(alpha = 0.75f),
+                                        )
+                                    }
+                                    if (onForkFromHere != null) {
+                                        TooltipBox(
+                                            positionProvider = TooltipDefaults.rememberTooltipPositionProvider(
+                                                TooltipAnchorPosition.Above
+                                            ),
+                                            tooltip = {
+                                                PlainTooltip { Text("Fork from this message") }
+                                            },
+                                            state = rememberTooltipState()
+                                        ) {
+                                            IconButton(
+                                                onClick = onForkFromHere,
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.CallSplit,
+                                                    contentDescription = "Fork",
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = contentColor.copy(alpha = 0.7f)
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    TooltipBox(
+                                        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(
+                                            TooltipAnchorPosition.Above
+                                        ),
+                                        tooltip = {
+                                            PlainTooltip { Text("Copy message") }
+                                        },
+                                        state = rememberTooltipState()
+                                    ) {
+                                        IconButton(
+                                            onClick = { copyToClipboard(copyText) },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ContentCopy,
+                                                contentDescription = "Copy",
+                                                modifier = Modifier.size(16.dp),
+                                                tint = contentColor.copy(alpha = 0.7f)
+                                            )
+                                        }
+                                    }
                                 }
+
                             }
                         }
                     }
@@ -242,8 +260,6 @@ private fun copyToClipboard(text: String) {
 private fun ToolMessageDetails(
     role: MessageRole,
     details: String,
-    expanded: Boolean,
-    onToggle: () -> Unit,
     contentColor: androidx.compose.ui.graphics.Color,
 ) {
     val label = when (role) {
@@ -252,40 +268,28 @@ private fun ToolMessageDetails(
         else -> "Details"
     }
 
-    TextButton(
-        onClick = onToggle,
-        contentPadding = PaddingValues(0.dp),
-        modifier = Modifier.padding(top = 8.dp),
-    ) {
-        Icon(
-            imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
-        )
-        Spacer(modifier = Modifier.width(4.dp))
-        Text(if (expanded) "Hide $label" else "Show $label")
-    }
-
-    if (!expanded) {
-        return
-    }
-
     ElevatedCard(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 4.dp),
+            .fillMaxWidth(),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
-        SelectionContainer {
+        Column(modifier = Modifier.padding(12.dp)) {
             Text(
-                text = details,
-                style = MaterialTheme.typography.bodySmall,
-                color = contentColor,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(12.dp),
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = contentColor.copy(alpha = 0.7f),
             )
+            Spacer(modifier = Modifier.height(6.dp))
+            SelectionContainer {
+                Text(
+                    text = details,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = contentColor,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
         }
     }
 }
@@ -307,16 +311,18 @@ private fun MessageContent(
         return
     }
 
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = contentColor,
-        fontFamily = if (message.role == MessageRole.TOOL_RESULT) {
-            FontFamily.Monospace
-        } else {
-            null
-        }
-    )
+    SelectionContainer {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = contentColor,
+            fontFamily = if (message.role == MessageRole.TOOL_RESULT) {
+                FontFamily.Monospace
+            } else {
+                null
+            }
+        )
+    }
 }
 
 private val blockMarkdownRegex: Regex = Regex("""(?m)^\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>|```)""")
@@ -354,12 +360,14 @@ public fun SystemMessage(
             color = MaterialTheme.colorScheme.surfaceVariant,
             shape = RoundedCornerShape(16.dp)
         ) {
-            Text(
-                text = content,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-            )
+            SelectionContainer {
+                Text(
+                    text = content,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
         }
     }
 }

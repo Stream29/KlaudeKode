@@ -7,6 +7,7 @@ import kotlinx.serialization.Serializable
 public data class AppConfig(
     val auths: List<LlmAuthConfig> = emptyList(),
     val models: List<LlmModelConfig> = emptyList(),
+    val storage: StorageConfig = StorageConfig(),
     val defaults: DefaultsConfig = DefaultsConfig(),
     val loopControl: LoopControlConfig = LoopControlConfig(),
     val services: ServicesConfig = ServicesConfig(),
@@ -19,6 +20,11 @@ public data class AppConfig(
     val approvals: ApprovalConfig = ApprovalConfig(),
     val logging: LoggingConfig = LoggingConfig(),
     val tools: ToolsConfig = ToolsConfig(),
+)
+
+@Serializable
+public data class StorageConfig(
+    val dataDir: String = "~/.kode/",
 )
 
 @Serializable
@@ -95,6 +101,9 @@ public data class AgentConfig(
 @Serializable
 public data class UiConfig(
     val theme: String = "dark",
+    val messageAlignment: String = "left",
+    val messageMaxWidthRatio: Float = 0.9f,
+    val lastOpenedSessionId: String? = null,
 )
 
 @Serializable

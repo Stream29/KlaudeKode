@@ -10,9 +10,6 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -142,14 +139,8 @@ public fun SessionManagerContent(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            OutlinedTextField(
-                value = ui.sessionTagFilter,
-                onValueChange = { viewModel.updateSessionTagFilter(it) },
-                label = { Text("Tags (comma separated)") },
-                modifier = Modifier.weight(1f),
-                singleLine = true
-            )
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
@@ -205,8 +196,6 @@ public fun SessionManagerContent(
                         onSwitch = { viewModel.switchToSession(session.id) },
                         onFork = { viewModel.forkSession(session.id) },
                         onExport = { viewModel.exportSession(session.id) },
-                        onAddTags = { tags -> viewModel.addSessionTags(session.id, tags) },
-                        onRemoveTag = { tag -> viewModel.removeSessionTag(session.id, tag) },
                         onRestore = { viewModel.restoreSession(session.id) },
                         onDelete = { viewModel.deleteSession(session.id) },
                         onArchive = { viewModel.archiveSession(session.id) }
@@ -224,13 +213,10 @@ private fun SessionCard(
     onSwitch: () -> Unit,
     onFork: () -> Unit,
     onExport: () -> Unit,
-    onAddTags: (List<String>) -> Unit,
-    onRemoveTag: (String) -> Unit,
     onRestore: () -> Unit,
     onDelete: () -> Unit,
     onArchive: () -> Unit
 ) {
-    var tagInput by remember { mutableStateOf("") }
     val statusColor = when (session.status) {
         SessionStatus.ACTIVE -> MaterialTheme.colorScheme.primary
         SessionStatus.ARCHIVED -> MaterialTheme.colorScheme.tertiary
@@ -314,49 +300,6 @@ private fun SessionCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            
-            Spacer(modifier = Modifier.height(12.dp))
-
-            if (session.tags.isNotEmpty()) {
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    session.tags.forEach { tag ->
-                        AssistChip(
-                            onClick = { onRemoveTag(tag) },
-                            label = { Text(tag) }
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = tagInput,
-                    onValueChange = { tagInput = it },
-                    label = { Text("Add tag") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                FilledTonalButton(
-                    onClick = {
-                        val tags = tagInput.split(",").map { it.trim() }.filter { it.isNotBlank() }
-                        if (tags.isNotEmpty()) {
-                            onAddTags(tags)
-                            tagInput = ""
-                        }
-                    }
-                ) {
-                    Text("Add")
-                }
-            }
 
             Spacer(modifier = Modifier.height(12.dp))
             

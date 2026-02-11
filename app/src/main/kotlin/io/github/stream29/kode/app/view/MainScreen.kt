@@ -1,10 +1,10 @@
 package io.github.stream29.kode.app.view
 
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -27,10 +27,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.stream29.kode.app.model.extractToolCallArgumentsText
+import io.github.stream29.kode.app.model.extractToolCallId
 import io.github.stream29.kode.app.model.extractToolCallPrimaryTextArg
 import io.github.stream29.kode.app.model.extractToolName
 import io.github.stream29.kode.app.model.extractToolResultText
@@ -52,7 +54,6 @@ import io.github.stream29.kode.ui.core.ToolApprovalDecision
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
-@Preview
 public fun MainScreen(state: MainViewModel) {
     val ui by state.appUiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -179,6 +180,16 @@ public fun MainScreen(state: MainViewModel) {
                 onDismiss = { state.cancelSessionDirDialog() }
             )
         }
+
+        if (ui.session.showContinueRecoveryDialog) {
+            ContinueRecoveryDialog(
+                toolName = ui.session.continueRecoveryToolName,
+                toolCallId = ui.session.continueRecoveryToolCallId,
+                onRollbackAndContinue = { state.continueCurrentSessionAfterRollback() },
+                onContinueWithoutRollback = { state.continueCurrentSessionWithoutRollback() },
+                onDismiss = { state.dismissContinueRecoveryDialog() },
+            )
+        }
     }
 }
 
@@ -263,6 +274,10 @@ private fun AppNavigationRail(
 
 @Composable
 private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: AppUiState) {
+    LaunchedEffect(Unit) {
+        state.loadSessionList()
+        state.restoreLastSessionIfNeeded()
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         ApprovalControls(state = state, ui = ui)
 
@@ -282,6 +297,8 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: AppUiS
             onForkFromMessage = { index ->
                 state.forkFromMessage(index)
             },
+            messageAlignment = ui.messageAlignment,
+            messageMaxWidthRatio = ui.messageMaxWidthRatio,
             modifier = Modifier.weight(1f)
         )
 
@@ -472,7 +489,6 @@ private fun ToolsPage(state: MainViewModel, ui: AppUiState) {
 }
 
 @Composable
-@Suppress("UNUSED_VALUE", "ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
 private fun McpPage(state: MainViewModel, ui: AppUiState) {
     var showAddDialog by remember { mutableStateOf(false) }
     var timeoutText by remember { mutableStateOf(ui.mcpToolTimeoutMs.toString()) }
@@ -729,6 +745,57 @@ private fun EditSessionDirDialog(
                 Text("Cancel")
             }
         }
+    )
+}
+
+@Composable
+private fun ContinueRecoveryDialog(
+    toolName: String,
+    toolCallId: String,
+    onRollbackAndContinue: () -> Unit,
+    onContinueWithoutRollback: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Continue needs recovery") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Detected an unfinished tool call without result.")
+                Text(
+                    text = "Tool: $toolName",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (toolCallId.isNotBlank()) {
+                    Text(
+                        text = "Call ID: $toolCallId",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = "Rollback to before this tool call and continue?",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            FilledTonalButton(onClick = onRollbackAndContinue) {
+                Text("Rollback & Continue")
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onContinueWithoutRollback) {
+                    Text("Continue Anyway")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel")
+                }
+            }
+        },
     )
 }
 
@@ -1520,17 +1587,7 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
             }
         )
         
-        sessionUi.currentSessionId?.let { sessionId ->
-            SuggestionChip(
-                onClick = { },
-                label = { 
-                    Text(
-                        "Session: ${sessionId.take(8)}...",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-            )
-        }
+        SessionQuickSwitch(state = state, sessionUi = sessionUi, ui = ui)
 
         PresetQuickSwitch(state = state, ui = ui)
         ModelQuickSwitch(state = state, ui = ui)
@@ -1539,7 +1596,157 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-@Suppress("UNUSED_VALUE", "ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+private fun SessionQuickSwitch(state: MainViewModel, sessionUi: SessionUiState, ui: AppUiState) {
+    val sessions = ui.sessionSummaries
+    val activeId = sessionUi.currentSessionId
+    val activeSession = sessions.firstOrNull { it.id == activeId }
+    val displayName = activeSession?.title?.takeIf { it.isNotBlank() }
+        ?: activeId?.let { "Session ${it.take(8)}" }
+        ?: "No session"
+    var expanded by remember { mutableStateOf(false) }
+    val showEditDialogState = rememberSaveable(activeId) { mutableStateOf(false) }
+    var titleDraft by rememberSaveable(activeId) { mutableStateOf(activeSession?.title.orEmpty()) }
+    val enabled = sessions.isNotEmpty()
+    val hasActiveSession = activeId != null
+    val titleGenerating = sessionUi.isGeneratingSessionTitle
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = {
+                if (enabled) {
+                    expanded = !expanded
+                }
+            }
+        ) {
+            OutlinedTextField(
+                value = displayName,
+                onValueChange = {},
+                readOnly = true,
+                enabled = enabled,
+                label = { Text("Session") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                modifier = Modifier
+                    .widthIn(min = 260.dp)
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+            )
+
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                sessions.forEach { session ->
+                    val title = session.title.takeIf { it.isNotBlank() }
+                        ?: "Session ${session.id.take(8)}"
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(title)
+                                Text(
+                                    "${session.messageCount} messages · ${session.id.take(8)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        onClick = {
+                            state.switchToSession(session.id)
+                            expanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        TooltipBox(
+            positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+            tooltip = {
+                PlainTooltip {
+                    Text(if (titleGenerating) "Generating title..." else "Refresh title")
+                }
+            },
+            state = rememberTooltipState(),
+        ) {
+            FilledTonalIconButton(
+                onClick = { state.regenerateCurrentSessionTitle() },
+                enabled = hasActiveSession && !titleGenerating,
+                modifier = Modifier.size(36.dp),
+            ) {
+                if (titleGenerating) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh title",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+
+        TooltipBox(
+            positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+            tooltip = { PlainTooltip { Text("Edit title") } },
+            state = rememberTooltipState(),
+        ) {
+            FilledTonalIconButton(
+                onClick = {
+                    titleDraft = activeSession?.title.orEmpty()
+                    showEditDialogState.value = true
+                },
+                enabled = hasActiveSession,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = "Edit title",
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+
+    if (showEditDialogState.value) {
+        AlertDialog(
+            onDismissRequest = { showEditDialogState.value = false },
+            title = { Text("Edit session title") },
+            text = {
+                OutlinedTextField(
+                    value = titleDraft,
+                    onValueChange = { titleDraft = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Title") },
+                )
+            },
+            confirmButton = {
+                FilledTonalButton(
+                    onClick = {
+                        state.updateCurrentSessionTitle(titleDraft)
+                        showEditDialogState.value = false
+                    },
+                    enabled = titleDraft.isNotBlank(),
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditDialogState.value = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun PresetQuickSwitch(state: MainViewModel, ui: AppUiState) {
     val presets = ui.agentPresets
     var expanded by remember { mutableStateOf(false) }
@@ -1590,7 +1797,6 @@ private fun PresetQuickSwitch(state: MainViewModel, ui: AppUiState) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-@Suppress("UNUSED_VALUE", "ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
 private fun ModelQuickSwitch(state: MainViewModel, ui: AppUiState) {
     val models = ui.models
     val auths = ui.auths
@@ -1665,13 +1871,45 @@ private fun getModelDisplayName(
     return "$provider - $name"
 }
 
-private data class MessageListItem(
+private sealed interface MessageListItem {
+    val stableId: String
+}
+
+private data class SingleMessageItem(
+    val message: SessionMessage,
+    val sourceIndex: Int,
+) : MessageListItem {
+    override val stableId: String = message.id
+}
+
+private data class ToolGroupItem(
+    val groupId: String,
+    val entries: List<ToolGroupEntry>,
+    val entryCount: Int,
+    val previewText: String,
+    val sourceIndices: List<Int>,
+) : MessageListItem {
+    override val stableId: String = groupId
+}
+
+private data class ToolGroupEntry(
+    val toolName: String?,
+    val argumentsText: String?,
+    val resultText: String?,
+    val callId: String?,
+    val callMessageId: String?,
+    val resultMessageId: String?,
+    val callSourceIndex: Int?,
+    val resultSourceIndex: Int?,
+)
+
+private data class IndexedMessage(
     val message: SessionMessage,
     val sourceIndex: Int,
 )
 
 private fun buildMessageListItems(messages: List<SessionMessage>): List<MessageListItem> {
-    return messages.mapIndexedNotNull { index, message ->
+    val projected = messages.mapIndexedNotNull { index, message ->
         when {
             message.isSayToUserToolResult() -> null
             message.isSayToUserToolCall() || message.isAwaitUserInputToolCall() -> {
@@ -1679,7 +1917,7 @@ private fun buildMessageListItems(messages: List<SessionMessage>): List<MessageL
                     ?.trim()
                     ?.takeIf { it.isNotBlank() }
                     ?: message.content
-                MessageListItem(
+                IndexedMessage(
                     message = message.copy(
                         role = MessageRole.ASSISTANT,
                         content = projectedContent,
@@ -1692,7 +1930,7 @@ private fun buildMessageListItems(messages: List<SessionMessage>): List<MessageL
                     ?.trim()
                     ?.takeIf { it.isNotBlank() }
                     ?: message.content
-                MessageListItem(
+                IndexedMessage(
                     message = message.copy(
                         role = MessageRole.USER,
                         content = projectedContent,
@@ -1700,15 +1938,150 @@ private fun buildMessageListItems(messages: List<SessionMessage>): List<MessageL
                     sourceIndex = index,
                 )
             }
-            else -> MessageListItem(message = message, sourceIndex = index)
+            else -> IndexedMessage(message = message, sourceIndex = index)
         }
     }
+
+    if (projected.isEmpty()) {
+        return emptyList()
+    }
+
+    val items = mutableListOf<MessageListItem>()
+    var cursor = 0
+    while (cursor < projected.size) {
+        val current = projected[cursor]
+        val role = current.message.role
+        if (role == MessageRole.TOOL_CALL || role == MessageRole.TOOL_RESULT) {
+            val run = mutableListOf<IndexedMessage>()
+            while (cursor < projected.size) {
+                val candidate = projected[cursor]
+                val candidateRole = candidate.message.role
+                if (candidateRole != MessageRole.TOOL_CALL && candidateRole != MessageRole.TOOL_RESULT) {
+                    break
+                }
+                run += candidate
+                cursor += 1
+            }
+            items += buildToolGroupItem(run)
+        } else {
+            items += SingleMessageItem(message = current.message, sourceIndex = current.sourceIndex)
+            cursor += 1
+        }
+    }
+
+    return items
+}
+
+private fun buildToolGroupItem(run: List<IndexedMessage>): ToolGroupItem {
+    val entries = buildToolGroupEntries(run)
+    val previewEntry = entries.lastOrNull()
+    val previewText = previewEntry?.let { buildToolPreviewText(it) } ?: ""
+    val firstId = run.firstOrNull()?.message?.id ?: "group"
+    val lastId = run.lastOrNull()?.message?.id ?: firstId
+    val groupId = "tool-group-$firstId-$lastId"
+    val sourceIndices = run.map { it.sourceIndex }
+    return ToolGroupItem(
+        groupId = groupId,
+        entries = entries,
+        entryCount = entries.size,
+        previewText = previewText,
+        sourceIndices = sourceIndices,
+    )
+}
+
+private fun buildToolGroupEntries(run: List<IndexedMessage>): List<ToolGroupEntry> {
+    val entries = mutableListOf<ToolGroupEntry>()
+
+    fun appendEntry(entry: ToolGroupEntry) {
+        entries += entry
+    }
+
+    fun updateEntry(index: Int, updated: ToolGroupEntry) {
+        entries[index] = updated
+    }
+
+    run.forEach { item ->
+        val message = item.message
+        val callId = message.extractToolCallId()
+        when (message.role) {
+            MessageRole.TOOL_CALL -> {
+                val argumentsText = message.extractToolCallArgumentsText()?.takeIf { it.isNotBlank() }
+                    ?: message.content
+                appendEntry(
+                    ToolGroupEntry(
+                        toolName = message.extractToolName(),
+                        argumentsText = argumentsText,
+                        resultText = null,
+                        callId = callId,
+                        callMessageId = message.id,
+                        resultMessageId = null,
+                        callSourceIndex = item.sourceIndex,
+                        resultSourceIndex = null,
+                    )
+                )
+            }
+            MessageRole.TOOL_RESULT -> {
+                val resultText = message.extractToolResultText()?.takeIf { it.isNotBlank() }
+                    ?: message.content
+                val matchIndex = entries.indexOfLast { entry ->
+                    entry.resultMessageId == null && (
+                        (callId != null && entry.callId == callId) || callId == null
+                    )
+                }
+                if (matchIndex >= 0) {
+                    val existing = entries[matchIndex]
+                    updateEntry(
+                        matchIndex,
+                        existing.copy(
+                            resultText = resultText,
+                            resultMessageId = message.id,
+                            resultSourceIndex = item.sourceIndex,
+                            toolName = existing.toolName ?: message.extractToolName(),
+                            callId = existing.callId ?: callId,
+                        )
+                    )
+                } else {
+                    appendEntry(
+                        ToolGroupEntry(
+                            toolName = message.extractToolName(),
+                            argumentsText = null,
+                            resultText = resultText,
+                            callId = callId,
+                            callMessageId = null,
+                            resultMessageId = message.id,
+                            callSourceIndex = null,
+                            resultSourceIndex = item.sourceIndex,
+                        )
+                    )
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    return entries
+}
+
+private fun buildToolPreviewText(entry: ToolGroupEntry): String {
+    val toolName = entry.toolName?.takeIf { it.isNotBlank() } ?: "Tool"
+    val rawArgs = entry.argumentsText?.takeIf { it.isNotBlank() }
+        ?: entry.resultText?.takeIf { it.isNotBlank() }
+        ?: "(no parameters)"
+    val normalizedArgs = rawArgs.replace(Regex("\\s+"), " ").trim()
+    val snippet = if (normalizedArgs.length > 120) {
+        normalizedArgs.take(120) + "..."
+    } else {
+        normalizedArgs
+    }
+    return "$toolName: $snippet"
 }
 
 @Composable
 private fun MessageList(
     messages: List<SessionMessage>,
     onForkFromMessage: (Int) -> Unit,
+    messageAlignment: String,
+    messageMaxWidthRatio: Float,
     modifier: Modifier = Modifier
 ) {
     val items = remember(messages) {
@@ -1744,53 +2117,75 @@ private fun MessageList(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                itemsIndexed(items, key = { _, item -> item.message.id }) { _, item ->
-                    val message = item.message
-                    val sourceMessage = messages.getOrNull(item.sourceIndex)
-                    val defaultExpanded = remember(
-                        message.id,
-                        message.role,
-                        message.isUiToolCallLike(),
-                        message.isUiError(),
-                    ) {
-                        shouldExpandByDefault(message)
-                    }
-                    var expanded by rememberSaveable(message.id) { mutableStateOf(defaultExpanded) }
-
-                    if (!expanded) {
-                        CollapsedMessageRow(
-                            message = message,
-                            onExpand = { expanded = true },
-                        )
-                        return@itemsIndexed
-                    }
-
-                    when (message.role) {
-                        MessageRole.SYSTEM -> SystemMessage(content = message.content)
-                        else -> MessageBubble(
-                            message = message,
-                            isCurrentUser = message.role == MessageRole.USER,
-                            onForkFromHere = if (sourceMessage?.role == MessageRole.SYSTEM) {
-                                null
-                            } else {
-                                { onForkFromMessage(item.sourceIndex) }
+                itemsIndexed(items, key = { _, item -> item.stableId }) { _, item ->
+                    when (item) {
+                        is SingleMessageItem -> {
+                            val message = item.message
+                            val sourceMessage = messages.getOrNull(item.sourceIndex)
+                            val defaultExpanded = remember(
+                                message.id,
+                                message.role,
+                                message.isUiToolCallLike(),
+                                message.isUiError(),
+                            ) {
+                                shouldExpandByDefault(message)
                             }
-                        )
-                    }
+                            var expanded by rememberSaveable(message.id) { mutableStateOf(defaultExpanded) }
 
-                    if (!defaultExpanded) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                        ) {
-                            TextButton(onClick = { expanded = false }) {
-                                Icon(
-                                    imageVector = Icons.Default.ExpandLess,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
+                            if (!expanded) {
+                                CollapsedMessageRow(
+                                    message = message,
+                                    onExpand = { expanded = true },
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Collapse")
+                                return@itemsIndexed
+                            }
+
+                            when (message.role) {
+                                MessageRole.SYSTEM -> SystemMessage(content = message.content)
+                                else -> MessageBubble(
+                                    message = message,
+                                    isCurrentUser = message.role == MessageRole.USER,
+                                    messageAlignment = messageAlignment,
+                                    messageMaxWidthRatio = messageMaxWidthRatio,
+                                    onForkFromHere = if (sourceMessage?.role == MessageRole.SYSTEM) {
+                                        null
+                                    } else {
+                                        { onForkFromMessage(item.sourceIndex) }
+                                    }
+                                )
+                            }
+
+                            if (!defaultExpanded) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                ) {
+                                    TextButton(onClick = { expanded = false }) {
+                                        Icon(
+                                            imageVector = Icons.Default.ExpandLess,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Collapse")
+                                    }
+                                }
+                            }
+                        }
+                        is ToolGroupItem -> {
+                            var expanded by rememberSaveable(item.groupId) { mutableStateOf(false) }
+                            if (!expanded) {
+                                CollapsedToolGroupRow(
+                                    entryCount = item.entryCount,
+                                    previewText = item.previewText,
+                                    onExpand = { expanded = true },
+                                )
+                            } else {
+                                ToolGroupDetails(
+                                    groupId = item.groupId,
+                                    entries = item.entries,
+                                    onCollapse = { expanded = false },
+                                )
                             }
                         }
                     }
@@ -1833,6 +2228,187 @@ private fun CollapsedMessageRow(
                 contentDescription = "Expand",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun CollapsedToolGroupRow(
+    entryCount: Int,
+    previewText: String,
+    onExpand: () -> Unit,
+) {
+    val countLabel = if (entryCount == 1) {
+        "1 tool call"
+    } else {
+        "$entryCount tool calls"
+    }
+    val summary = if (previewText.isBlank()) {
+        countLabel
+    } else {
+        "$countLabel · $previewText"
+    }
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onExpand)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Default.Build,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                imageVector = Icons.Default.ExpandMore,
+                contentDescription = "Expand",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ToolGroupDetails(
+    groupId: String,
+    entries: List<ToolGroupEntry>,
+    onCollapse: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                entries.forEachIndexed { index, entry ->
+                    ToolGroupEntryRow(
+                        entry = entry,
+                        groupId = groupId,
+                        index = index,
+                    )
+                    if (index != entries.lastIndex) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
+                    }
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            TextButton(onClick = onCollapse) {
+                Icon(
+                    imageVector = Icons.Default.ExpandLess,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Collapse")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToolGroupEntryRow(
+    entry: ToolGroupEntry,
+    groupId: String,
+    index: Int,
+) {
+    val toolName = entry.toolName?.takeIf { it.isNotBlank() } ?: "Tool"
+    val argumentsText = entry.argumentsText?.takeIf { it.isNotBlank() } ?: "(no parameters)"
+    val resultText = entry.resultText?.takeIf { it.isNotBlank() }
+    val pending = resultText == null
+    val resultDisplay = resultText ?: "Pending"
+    val entryKey = entry.callId
+        ?: entry.callMessageId
+        ?: entry.resultMessageId
+        ?: "entry-$index"
+    var expanded by rememberSaveable("$groupId-$entryKey") { mutableStateOf(false) }
+    val previewText = buildToolPreviewText(entry)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded },
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Build,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = toolName,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Text(
+            text = previewText,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = if (expanded) Int.MAX_VALUE else 1,
+            overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
+        )
+
+        if (expanded) {
+            SelectionContainer {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Parameters",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = argumentsText,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                    )
+
+                    Text(
+                        text = "Result",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = resultDisplay,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = if (pending) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                }
+            }
         }
     }
 }

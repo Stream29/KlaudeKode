@@ -5,12 +5,14 @@ import io.github.stream29.kode.app.service.WebToolsProvider
 import io.github.stream29.kode.app.viewmodel.MainViewModel
 import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemConfigFactory
+import io.github.stream29.kode.config.fs.FileSystemLocations
 import io.github.stream29.kode.core.agent.SessionAwareAgentFactoryProvider
 import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.SessionRepository
 import io.github.stream29.kode.session.core.storage.FileSessionStorage
 import io.github.stream29.kode.session.core.storage.SessionStorage
+import kotlinx.coroutines.runBlocking
 import org.koin.core.module.Module
 import org.koin.dsl.module
 
@@ -22,7 +24,13 @@ public val configModule: Module = module {
 
 public val sessionModule: Module = module {
     single<FileSessionStorage> {
-        FileSessionStorage()
+        val configManager = get<ConfigManager>()
+        val configuredDataDir = runBlocking {
+            runCatching {
+                configManager.load().storage.dataDir
+            }.getOrNull()
+        }
+        FileSessionStorage(dataDir = FileSystemLocations.resolveDataDir(path = configuredDataDir))
     }
     single<SessionStorage> {
         get<FileSessionStorage>()

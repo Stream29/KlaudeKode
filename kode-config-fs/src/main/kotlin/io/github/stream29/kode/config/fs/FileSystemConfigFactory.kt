@@ -2,15 +2,33 @@ package io.github.stream29.kode.config.fs
 
 import io.github.stream29.kode.config.api.AppConfig
 import io.github.stream29.kode.config.core.ConfigManager
-import io.github.stream29.kode.config.core.ConfigTemplateProvider
 import java.io.File
 
 /**
  * Pre-configured file system config locations.
  */
 public object FileSystemLocations {
-    public val dataDir: File = File(System.getProperty("user.home"), ".kode")
-    public val configFile: File = File(dataDir, "config.yaml")
+    public val dataDir: File
+        get() = resolveDataDir(path = null)
+
+    public val configFile: File
+        get() = File(dataDir, "config.yaml")
+
+    public fun resolveDataDir(path: String?): File {
+        val defaultDir = File(System.getProperty("user.home"), ".kode")
+        val raw = path?.trim().orEmpty()
+        if (raw.isBlank()) {
+            return defaultDir
+        }
+
+        val expanded = if (raw.startsWith("~")) {
+            val home = System.getProperty("user.home")
+            home + raw.removePrefix("~")
+        } else {
+            raw
+        }
+        return File(expanded).absoluteFile
+    }
 }
 
 /**

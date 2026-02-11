@@ -1003,6 +1003,11 @@ public fun PreferencesTab(viewModel: MainViewModel, ui: AppUiState) {
 @Composable
 public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
     var approvalActionInput by remember { mutableStateOf("") }
+    var appDataDirDraft by remember(ui.appDataDir) { mutableStateOf(ui.appDataDir) }
+    val showDataDirChangeDialogState = remember { mutableStateOf(false) }
+    val currentAppDataDirPath = remember(ui.appDataDir) { viewModel.resolveAppDataDirPath(ui.appDataDir) }
+    val draftAppDataDirPath = remember(appDataDirDraft) { viewModel.resolveAppDataDirPath(appDataDirDraft) }
+    val appDataDirChanged = draftAppDataDirPath != currentAppDataDirPath
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1011,7 +1016,7 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
         item {
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                "Workspace",
+                "General",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary
@@ -1019,11 +1024,55 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedTextField(
+                value = appDataDirDraft,
+                onValueChange = { appDataDirDraft = it },
+                label = { Text("App data directory") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = draftAppDataDirPath,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                FilledTonalButton(
+                    onClick = { showDataDirChangeDialogState.value = true },
+                    enabled = appDataDirChanged,
+                ) {
+                    Text("Apply")
+                }
+            }
+
+            Text(
+                "Session/global state root (restart required after changing this path)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
                 value = ui.defaultSessionDir,
                 onValueChange = { viewModel.defaultSessionDir = it },
-                label = { Text("Default session directory") },
+                label = { Text("Default work directory") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
+            )
+
+            Text(
+                "Used as agent execution workdir, not app-private storage",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
@@ -1105,6 +1154,9 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
             )
             Spacer(modifier = Modifier.height(12.dp))
             ThemeSelectionSection(viewModel, ui)
+
+            Spacer(modifier = Modifier.height(12.dp))
+            ChatLayoutSection(viewModel, ui)
         }
 
         item {
@@ -1424,6 +1476,56 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
             
         }
     }
+
+    if (showDataDirChangeDialogState.value) {
+        AlertDialog(
+            onDismissRequest = { showDataDirChangeDialogState.value = false },
+            title = { Text("Change app data directory") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Current: $currentAppDataDirPath")
+                    Text("Target: $draftAppDataDirPath")
+                    Text("Do you want to migrate existing app data to the new directory?")
+                    Text(
+                        text = "Changing this path requires app restart to switch session storage.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = {
+                            viewModel.applyAppDataDirChange(
+                                newInput = appDataDirDraft,
+                                migrateExistingData = false,
+                            )
+                            showDataDirChangeDialogState.value = false
+                        },
+                    ) {
+                        Text("Change only")
+                    }
+                    FilledTonalButton(
+                        onClick = {
+                            viewModel.applyAppDataDirChange(
+                                newInput = appDataDirDraft,
+                                migrateExistingData = true,
+                            )
+                            showDataDirChangeDialogState.value = false
+                        },
+                    ) {
+                        Text("Migrate")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDataDirChangeDialogState.value = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1525,6 +1627,91 @@ private fun ThemeSelectionSection(viewModel: MainViewModel, ui: AppUiState) {
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatLayoutSection(viewModel: MainViewModel, ui: AppUiState) {
+    data class AlignmentOption(val value: String, val label: String)
+
+    val alignmentOptions = listOf(
+        AlignmentOption(value = "left", label = "Same side (left)"),
+        AlignmentOption(value = "split", label = "Split sides"),
+    )
+    val selectedAlignment = alignmentOptions.firstOrNull { it.value == ui.messageAlignment }
+        ?: alignmentOptions.first()
+    var alignmentExpanded by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "Chat layout",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+
+        ExposedDropdownMenuBox(
+            expanded = alignmentExpanded,
+            onExpandedChange = { alignmentExpanded = it },
+        ) {
+            OutlinedTextField(
+                value = selectedAlignment.label,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Message alignment") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = alignmentExpanded) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+            )
+            ExposedDropdownMenu(
+                expanded = alignmentExpanded,
+                onDismissRequest = { alignmentExpanded = false },
+            ) {
+                alignmentOptions.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.label) },
+                        onClick = {
+                            viewModel.messageAlignment = option.value
+                            alignmentExpanded = false
+                        },
+                    )
+                }
+            }
+        }
+
+        val ratio = ui.messageMaxWidthRatio.coerceIn(0.5f, 1f)
+        val ratioPercent = (ratio * 100).toInt()
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Message max width",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = "$ratioPercent%",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+
+        Slider(
+            value = ratio,
+            onValueChange = { viewModel.messageMaxWidthRatio = it },
+            valueRange = 0.5f..1f,
+            steps = 9,
+        )
+
+        Text(
+            text = "Controls the maximum bubble width relative to the chat pane.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

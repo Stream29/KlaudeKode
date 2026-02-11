@@ -26,8 +26,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Clock
@@ -53,6 +57,12 @@ public class SessionManager(
         val status: SubAgentPollStatus,
         val result: String?,
         val error: String?,
+    )
+
+    public data class PendingToolCallInfo(
+        val messageId: String,
+        val toolName: String,
+        val toolCallId: String,
     )
 
     public suspend fun createSession(
@@ -641,6 +651,142 @@ public class SessionManager(
         }
     }
 
+    public suspend fun getTrailingPendingToolCall(
+        sessionId: String,
+        agentId: String? = null,
+    ): PendingToolCallInfo? {
+        val runtime = requireRuntime(sessionId)
+        runtime.mutex.lock()
+        try {
+            val agent = resolveAgent(runtime, sessionId, agentId)
+            val trailing = agent.messages.value.lastOrNull() ?: return null
+            if (trailing.role != MessageRole.TOOL_CALL) {
+                return null
+            }
+
+            val data = trailing.toToolCallDataOrNull()
+            val toolName = data?.toolName ?: extractToolNameFromContent(trailing.content) ?: return null
+            val toolCallId = data?.toolCallId?.takeIf { id -> id.isNotBlank() } ?: trailing.id
+            return PendingToolCallInfo(
+                messageId = trailing.id,
+                toolName = toolName,
+                toolCallId = toolCallId,
+            )
+        } finally {
+            runtime.mutex.unlock()
+        }
+    }
+
+    public suspend fun rollbackTrailingPendingToolCall(
+        sessionId: String,
+        agentId: String? = null,
+    ): Boolean {
+        val runtime = requireRuntime(sessionId)
+        runtime.mutex.lock()
+        try {
+            val agent = resolveAgent(runtime, sessionId, agentId)
+            val trailing = agent.messages.value.lastOrNull()
+            if (trailing == null || trailing.role != MessageRole.TOOL_CALL) {
+                return false
+            }
+
+            agent.messages.value = agent.messages.value.dropLast(1).toPersistentList()
+            runtime.runJob.value = null
+            if (isMainAgent(sessionId, agentId)) {
+                runtime.agent.value.state.value = AgentState.Suspended
+            }
+            runtime.metadata.value = runtime.metadata.value.copy(
+                state = computeSessionState(runtime),
+                updatedAt = clock.now(),
+                version = runtime.metadata.value.version + 1,
+                messageCount = runtime.agent.value.messages.value.size,
+            )
+            persist(runtime)
+            return true
+        } finally {
+            runtime.mutex.unlock()
+        }
+    }
+
+    public suspend fun normalizeTrailingAwaitUserInputToolCall(
+        sessionId: String,
+        agentId: String? = null,
+    ): Boolean {
+        val runtime = requireRuntime(sessionId)
+        runtime.mutex.lock()
+        try {
+            val agent = resolveAgent(runtime, sessionId, agentId)
+            val trailing = agent.messages.value.lastOrNull()
+            if (trailing == null || trailing.role != MessageRole.TOOL_CALL) {
+                return false
+            }
+
+            val data = trailing.toToolCallDataOrNull()
+            val rawToolName = data?.toolName ?: extractToolNameFromContent(trailing.content) ?: return false
+            if (!isAwaitUserInputToolName(rawToolName)) {
+                return false
+            }
+
+            val toolCallId = data?.toolCallId?.takeIf { id -> id.isNotBlank() } ?: trailing.id
+            val sayToUserMessage = extractAwaitUserPrompt(arguments = data?.arguments)
+            val sayToUserArguments = buildJsonObject {
+                put("message", JsonPrimitive(sayToUserMessage))
+            }
+            val normalizedCall = SessionMessage(
+                id = generateId(),
+                role = MessageRole.TOOL_CALL,
+                content = "Calling tool: sayToUser",
+                structuredData = Json.encodeToJsonElement(
+                    ToolCallData.serializer(),
+                    ToolCallData(
+                        toolName = "sayToUser",
+                        toolCallId = toolCallId,
+                        arguments = sayToUserArguments,
+                        displayName = null,
+                    ),
+                ),
+                contentType = ContentType.TOOL_CALL,
+                timestamp = clock.now(),
+                metadata = mapOf("normalizedFrom" to rawToolName),
+            )
+            val normalizedResult = SessionMessage(
+                id = generateId(),
+                role = MessageRole.TOOL_RESULT,
+                content = "Tool result",
+                structuredData = Json.encodeToJsonElement(
+                    ToolResultData.serializer(),
+                    ToolResultData(
+                        toolCallId = toolCallId,
+                        toolName = "sayToUser",
+                        result = JsonPrimitive(SAY_TO_USER_SUCCESS_RESULT),
+                        isError = false,
+                        errorMessage = null,
+                    ),
+                ),
+                contentType = ContentType.TOOL_RESULT,
+                timestamp = clock.now(),
+                metadata = mapOf("normalizedFrom" to rawToolName),
+            )
+
+            val baseMessages = agent.messages.value.dropLast(1).toPersistentList()
+            agent.messages.value = baseMessages.add(normalizedCall).add(normalizedResult)
+            runtime.runJob.value = null
+            if (isMainAgent(sessionId, agentId)) {
+                runtime.agent.value.state.value = AgentState.Suspended
+            }
+            runtime.metadata.value = runtime.metadata.value.copy(
+                state = computeSessionState(runtime),
+                updatedAt = clock.now(),
+                version = runtime.metadata.value.version + 1,
+                messageCount = runtime.agent.value.messages.value.size,
+            )
+            persist(runtime)
+            return true
+        } finally {
+            runtime.mutex.unlock()
+        }
+    }
+
     public suspend fun createSubAgent(
         sessionId: String,
         agentId: String,
@@ -1066,6 +1212,49 @@ public class SessionManager(
         }
     }
 
+    private fun SessionMessage.toToolCallDataOrNull(): ToolCallData? {
+        if (role != MessageRole.TOOL_CALL) {
+            return null
+        }
+        val element = structuredData ?: return null
+        return runCatching {
+            Json.decodeFromJsonElement(ToolCallData.serializer(), element)
+        }.getOrNull()
+    }
+
+    private fun extractToolNameFromContent(content: String): String? {
+        val prefix = "Calling tool:"
+        if (!content.startsWith(prefix)) {
+            return null
+        }
+        return content.removePrefix(prefix).trim().takeIf { name -> name.isNotBlank() }
+    }
+
+    private fun isAwaitUserInputToolName(toolName: String): Boolean {
+        val normalized = toolName.trim().replace("_", "").lowercase()
+        return normalized == "awaituserinput" || normalized == "waitforuserinput"
+    }
+
+    private fun extractAwaitUserPrompt(arguments: JsonElement?): String {
+        if (arguments == null) {
+            return DEFAULT_AWAIT_USER_INPUT_PROMPT
+        }
+        if (arguments is JsonPrimitive && arguments.isString) {
+            return arguments.contentOrNull?.trim()?.takeIf { text -> text.isNotBlank() }
+                ?: DEFAULT_AWAIT_USER_INPUT_PROMPT
+        }
+
+        val objectValue = runCatching { arguments.jsonObject }.getOrNull() ?: return DEFAULT_AWAIT_USER_INPUT_PROMPT
+        val keys = listOf("message", "text", "content", "prompt", "input")
+        for (key in keys) {
+            val candidate = objectValue[key]?.jsonPrimitive?.contentOrNull?.trim()
+            if (!candidate.isNullOrBlank()) {
+                return candidate
+            }
+        }
+        return DEFAULT_AWAIT_USER_INPUT_PROMPT
+    }
+
     private suspend fun persist(runtime: Session) {
         repository.persistSession(runtime.metadata.value.id, runtime)
     }
@@ -1085,5 +1274,10 @@ public class SessionManager(
     }
 
     private fun <E> List<E>.toPersistentList() = persistentListOf<E>().addAll(this)
+
+    private companion object {
+        private const val SAY_TO_USER_SUCCESS_RESULT: String = "Message sent to user successfully."
+        private const val DEFAULT_AWAIT_USER_INPUT_PROMPT: String = "Please provide additional details."
+    }
 
 }
