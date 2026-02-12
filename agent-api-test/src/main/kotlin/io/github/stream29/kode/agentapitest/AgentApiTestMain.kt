@@ -31,15 +31,15 @@ private suspend fun validateConfigMigrationFromLegacyAgentField() {
     val source = InMemoryConfigSource(initialContent = legacyYaml)
     val configManager = ConfigManager(provider = provider, source = source)
 
-    val loaded = configManager.load()
+    val loadedConfig = configManager.load()
 
-    ensure(loaded.preset.builtin == "explore") {
+    ensure(loadedConfig.preset.builtin == "explore") {
         "expected preset.builtin to migrate from legacy agent.builtin"
     }
-    ensure(loaded.preset.file == "/tmp/preset.md") {
+    ensure(loadedConfig.preset.file == "/tmp/preset.md") {
         "expected preset.file to migrate from legacy agent.file"
     }
-    ensure(loaded.agent.builtin == null && loaded.agent.file == null) {
+    ensure(loadedConfig.agent.builtin == null && loadedConfig.agent.file == null) {
         "expected legacy agent field to be normalized to empty content"
     }
 
@@ -52,6 +52,12 @@ private suspend fun validateConfigMigrationFromLegacyAgentField() {
 }
 
 private fun validatePresetBoundHookExecution() {
+    val sessionId = "s-1"
+    val presetName = "build"
+    val toolName = "demo"
+    val userInput = "hello"
+    val initialToolArgs = "args"
+
     val hookManager = HookManager(
         userPromptHooks = listOf(AppendUserHook(tag = "base-user")),
         toolCallBeforeHooks = listOf(AppendToolBeforeHook(tag = "base-before")),
@@ -60,24 +66,24 @@ private fun validatePresetBoundHookExecution() {
     )
 
     hookManager.registerPresetHooks(
-        presetName = "build",
+        presetName = presetName,
         userPromptHooks = listOf(AppendUserHook(tag = "preset-user")),
         toolCallBeforeHooks = listOf(AppendToolBeforeHook(tag = "preset-before")),
         toolCallAfterHooks = listOf(AppendToolAfterHook(tag = "preset-after")),
         assistantResponseHooks = listOf(AppendAssistantHook(tag = "preset-assistant")),
     )
 
-    hookManager.bindSessionPreset(sessionId = "s-1", presetName = "build")
+    hookManager.bindSessionPreset(sessionId = sessionId, presetName = presetName)
 
-    val userPrompt = hookManager.applyUserPromptHooks(sessionId = "s-1", input = "hello")
+    val userPrompt = hookManager.applyUserPromptHooks(sessionId = sessionId, input = userInput)
     ensure(userPrompt == "hello|base-user|preset-user") {
         "unexpected user prompt hook chain: $userPrompt"
     }
 
     val beforeResult = hookManager.applyToolCallBeforeHooks(
-        sessionId = "s-1",
-        toolName = "demo",
-        toolArgs = "args",
+        sessionId = sessionId,
+        toolName = toolName,
+        toolArgs = initialToolArgs,
     )
     ensure(beforeResult.allowed) {
         "tool should be allowed by before hooks"
@@ -87,8 +93,8 @@ private fun validatePresetBoundHookExecution() {
     }
 
     val toolResult = hookManager.applyToolCallAfterHooks(
-        sessionId = "s-1",
-        toolName = "demo",
+        sessionId = sessionId,
+        toolName = toolName,
         toolArgs = beforeResult.toolArgs,
         result = "result",
     )
@@ -96,13 +102,13 @@ private fun validatePresetBoundHookExecution() {
         "unexpected tool result after after-hooks: $toolResult"
     }
 
-    val assistant = hookManager.applyAssistantResponseHooks(sessionId = "s-1", content = "done")
+    val assistant = hookManager.applyAssistantResponseHooks(sessionId = sessionId, content = "done")
     ensure(assistant == "done|base-assistant|preset-assistant") {
         "unexpected assistant response hook chain: $assistant"
     }
 
-    hookManager.unbindSessionPreset(sessionId = "s-1")
-    val unboundUserPrompt = hookManager.applyUserPromptHooks(sessionId = "s-1", input = "hello")
+    hookManager.unbindSessionPreset(sessionId = sessionId)
+    val unboundUserPrompt = hookManager.applyUserPromptHooks(sessionId = sessionId, input = userInput)
     ensure(unboundUserPrompt == "hello|base-user") {
         "preset hooks should not run after unbind"
     }
@@ -113,17 +119,13 @@ private fun validatePresetBoundHookExecution() {
 private class InMemoryConfigProvider(initialConfig: AppConfig?) : ConfigProvider {
     private var storedConfig: AppConfig? = initialConfig
 
-    override suspend fun load(): AppConfig? {
-        return storedConfig
-    }
+    override suspend fun load(): AppConfig? = storedConfig
 
     override suspend fun save(config: AppConfig) {
         storedConfig = config
     }
 
-    override suspend fun exists(): Boolean {
-        return storedConfig != null
-    }
+    override suspend fun exists(): Boolean = storedConfig != null
 
     override suspend fun initialize(defaultConfig: AppConfig) {
         if (storedConfig == null) {
@@ -135,41 +137,38 @@ private class InMemoryConfigProvider(initialConfig: AppConfig?) : ConfigProvider
 private class InMemoryConfigSource(initialContent: String?) : ConfigSource {
     private var rawContent: String? = initialContent
 
-    override suspend fun read(): String? {
-        return rawContent
-    }
+    override suspend fun read(): String? = rawContent
 
     override suspend fun write(content: String) {
         rawContent = content
     }
 
-    public fun currentContent(): String? {
-        return rawContent
-    }
+    fun currentContent(): String? = rawContent
 }
 
 private class AppendUserHook(private val tag: String) : UserPromptHook {
-    override fun onUserPrompt(sessionId: String, input: String): String {
-        return "$input|$tag"
-    }
+    override fun onUserPrompt(sessionId: String, input: String): String = "$input|$tag"
 }
 
 private class AppendToolBeforeHook(private val tag: String) : ToolCallBeforeHook {
-    override fun onToolCallBefore(sessionId: String, toolName: String, toolArgs: String): ToolCallHookResult {
-        return ToolCallHookResult.allow(toolArgs = "$toolArgs|$tag")
-    }
+    override fun onToolCallBefore(
+        sessionId: String,
+        toolName: String,
+        toolArgs: String,
+    ): ToolCallHookResult = ToolCallHookResult.allow(toolArgs = "$toolArgs|$tag")
 }
 
 private class AppendToolAfterHook(private val tag: String) : ToolCallAfterHook {
-    override fun onToolCallAfter(sessionId: String, toolName: String, toolArgs: String, result: String): String {
-        return "$result|$tag"
-    }
+    override fun onToolCallAfter(
+        sessionId: String,
+        toolName: String,
+        toolArgs: String,
+        result: String,
+    ): String = "$result|$tag"
 }
 
 private class AppendAssistantHook(private val tag: String) : AssistantResponseHook {
-    override fun onAssistantResponse(sessionId: String, content: String): String {
-        return "$content|$tag"
-    }
+    override fun onAssistantResponse(sessionId: String, content: String): String = "$content|$tag"
 }
 
 private inline fun ensure(condition: Boolean, lazyMessage: () -> String) {

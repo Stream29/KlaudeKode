@@ -5,7 +5,7 @@ plugins {
 
 dependencies {
     implementation(projects.kodeTools)
-    implementation(projects.kodeConfig)
+    implementation(projects.kodeConfigApi)
     implementation(projects.kodeUiCore)
     implementation(projects.kodeSessionCore)
     implementation(projects.scriptingTool)

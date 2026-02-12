@@ -4,11 +4,14 @@ import ai.koog.agents.core.tools.annotations.LLMDescription
 import ai.koog.agents.core.tools.annotations.Tool
 import ai.koog.agents.core.tools.reflect.ToolSet
 import io.github.stream29.kode.ui.core.MessageHandler
-import io.ktor.client.*
-import io.ktor.client.engine.cio.*
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
-import io.ktor.http.*
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpHeaders
+import io.ktor.http.contentType
+import io.ktor.http.encodeURLQueryComponent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -32,6 +35,11 @@ public class WebTools public constructor(
 
     public companion object {
         private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        private const val MAX_CONTENT_CHARS = 50_000
+        private const val MAIN_CONTENT_SELECTOR = "article, main, [role='main'], .content, .post-content, .entry-content"
+        private const val STRIPPED_ELEMENTS_SELECTOR = "script, style, nav, footer, header, aside, .advertisement, .ads"
+        private val WHITESPACE_REGEX = Regex("\\s+")
+        private val EXTRA_BLANK_LINES_REGEX = Regex("\\n\\s*\\n\\s*\\n+")
     }
 
     @Tool
@@ -42,91 +50,58 @@ public class WebTools public constructor(
     )
     public suspend fun fetchURL(
         @LLMDescription("The URL to fetch content from")
-        url: String
+        url: String,
     ): FetchResult = withContext(Dispatchers.IO) {
         logger("🌐 Fetching URL: $url")
         messageHandler.addMessageToUser("🌐 Fetching: $url")
 
         try {
             val response = client.get(url) {
-                header("User-Agent", DEFAULT_USER_AGENT)
+                header(HttpHeaders.UserAgent, DEFAULT_USER_AGENT)
             }
 
             if (response.status.value >= 400) {
-                return@withContext FetchResult(
-                    success = false,
+                return@withContext fetchFailure(
                     url = url,
                     title = null,
-                    content = "",
-                    error = "HTTP ${response.status.value} error"
+                    error = "HTTP ${response.status.value} error",
                 )
             }
 
-            val contentType = response.contentType()?.toString() ?: ""
+            val contentType = response.contentType()?.toString()?.lowercase().orEmpty()
             val body = response.bodyAsText()
 
-            // Handle plain text or markdown directly
-            if (contentType.contains("text/plain") || contentType.contains("text/markdown")) {
-                return@withContext FetchResult(
-                    success = true,
-                    url = url,
-                    title = null,
-                    content = body,
-                    error = null
-                )
+            if (isTextLikeContentType(contentType)) {
+                return@withContext fetchSuccess(url = url, title = null, content = body)
             }
 
-            // Parse HTML using Jsoup
-            val doc: Document = Jsoup.parse(body, url)
-
-            // Remove unwanted elements
-            doc.select("script, style, nav, footer, header, aside, .advertisement, .ads").remove()
-
-            // Extract title
-            val title = doc.title().takeIf { it.isNotBlank() }
-
-            // Extract main content
-            // Try to find main content areas first
-            val extractedContent = doc.select("article, main, [role='main'], .content, .post-content, .entry-content")
-                .firstOrNull()
-                ?.text()
-
-            // Fallback to body text
-            val content = cleanWebContent(extractedContent.takeIf { !it.isNullOrBlank() } ?: doc.body().text())
+            val htmlContent = extractContentFromHtml(url = url, body = body)
+            val title = htmlContent.title
+            val content = htmlContent.content
 
             if (content.isBlank()) {
-                return@withContext FetchResult(
-                    success = false,
+                return@withContext fetchFailure(
                     url = url,
                     title = title,
-                    content = "",
-                    error = "Could not extract meaningful content from the page"
+                    error = "Could not extract meaningful content from the page",
                 )
             }
 
             logger("✅ Successfully fetched: ${title ?: url}")
-
-            FetchResult(
-                success = true,
-                url = url,
-                title = title,
-                content = content,
-                error = null
-            )
+            fetchSuccess(url = url, title = title, content = content)
 
         } catch (e: Exception) {
             logger("❌ Failed to fetch URL: ${e.message}")
-            FetchResult(
-                success = false,
+            fetchFailure(
                 url = url,
                 title = null,
-                content = "",
-                error = "Failed to fetch URL: ${e.message}"
+                error = "Failed to fetch URL: ${e.message}",
             )
         }
     }
 
     @Tool
+    @Suppress("RedundantSuspendModifier")
     @LLMDescription(
         "Search the web for information. " +
         "Note: This is a placeholder implementation. In production, integrate with a search API " +
@@ -137,17 +112,13 @@ public class WebTools public constructor(
         @LLMDescription("The search query")
         query: String,
         @LLMDescription("Number of results to request (1-10, default 5)")
-        limit: Int = 5
+        limit: Int = 5,
     ): SearchResult {
         logger("🔍 Web search (manual guidance): $query")
         messageHandler.addMessageToUser("🔍 Search requested: $query")
 
-        // Since we don't have a search API configured, provide helpful guidance
-        val searchEngines = listOf(
-            "https://www.google.com/search?q=${query.replace(" ", "+")}",
-            "https://duckduckgo.com/?q=${query.replace(" ", "+")}",
-            "https://www.bing.com/search?q=${query.replace(" ", "+")}"
-        )
+        val actualLimit = limit.coerceIn(1, 10)
+        val searchEngines = createManualSearchUrls(query).take(actualLimit)
 
         return SearchResult(
             success = true,
@@ -166,16 +137,64 @@ public class WebTools public constructor(
         )
     }
 
-    /**
-     * Clean up extracted web content
-     */
+    private fun isTextLikeContentType(contentType: String): Boolean {
+        return contentType.contains("text/plain") || contentType.contains("text/markdown")
+    }
+
+    private fun extractContentFromHtml(url: String, body: String): ExtractedHtmlContent {
+        val doc: Document = Jsoup.parse(body, url)
+        doc.select(STRIPPED_ELEMENTS_SELECTOR).remove()
+
+        val title = doc.title().takeIf { it.isNotBlank() }
+        val extractedMainContent = doc.select(MAIN_CONTENT_SELECTOR)
+            .firstOrNull()
+            ?.text()
+        val content = cleanWebContent(extractedMainContent.takeIf { !it.isNullOrBlank() } ?: doc.body().text())
+
+        return ExtractedHtmlContent(title = title, content = content)
+    }
+
     private fun cleanWebContent(content: String): String {
         return content
-            .replace(Regex("\\s+"), " ")  // Normalize whitespace
-            .replace(Regex("\\n\\s*\\n\\s*\\n+"), "\n\n")  // Limit consecutive newlines
+            .replace(WHITESPACE_REGEX, " ")
+            .replace(EXTRA_BLANK_LINES_REGEX, "\n\n")
             .trim()
-            .take(50000)  // Limit content length
+            .take(MAX_CONTENT_CHARS)
     }
+
+    private fun fetchSuccess(url: String, title: String?, content: String): FetchResult {
+        return FetchResult(
+            success = true,
+            url = url,
+            title = title,
+            content = content,
+            error = null,
+        )
+    }
+
+    private fun fetchFailure(url: String, title: String?, error: String): FetchResult {
+        return FetchResult(
+            success = false,
+            url = url,
+            title = title,
+            content = "",
+            error = error,
+        )
+    }
+
+    private fun createManualSearchUrls(query: String): List<String> {
+        val encodedQuery = query.encodeURLQueryComponent()
+        return listOf(
+            "https://www.google.com/search?q=$encodedQuery",
+            "https://duckduckgo.com/?q=$encodedQuery",
+            "https://www.bing.com/search?q=$encodedQuery",
+        )
+    }
+
+    private data class ExtractedHtmlContent(
+        val title: String?,
+        val content: String,
+    )
 }
 
 /**
@@ -187,7 +206,7 @@ public data class FetchResult(
     val url: String,
     val title: String?,
     val content: String,
-    val error: String?
+    val error: String?,
 ) {
     override fun toString(): String = buildString {
         if (success) {
@@ -209,7 +228,7 @@ public data class FetchResult(
 public data class WebSearchResultItem(
     val title: String,
     val url: String,
-    val snippet: String
+    val snippet: String,
 )
 
 /**
@@ -220,7 +239,7 @@ public data class SearchResult(
     val success: Boolean,
     val query: String,
     val results: List<WebSearchResultItem>,
-    val message: String
+    val message: String,
 ) {
     override fun toString(): String = buildString {
         appendLine("Search query: $query")

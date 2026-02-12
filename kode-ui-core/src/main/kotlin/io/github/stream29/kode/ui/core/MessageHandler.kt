@@ -24,23 +24,17 @@ public interface MessageHandler {
     /**
      * Add a message for a specific session.
      */
-    public fun addMessageToUser(message: String, sessionId: String) {
-        addMessageToUser(message)
-    }
+    public fun addMessageToUser(message: String, sessionId: String): Unit = addMessageToUser(message)
 
     /**
      * Log a message for a specific session.
      */
-    public fun log(message: String, sessionId: String) {
-        log(message)
-    }
+    public fun log(message: String, sessionId: String): Unit = log(message)
 
     /**
      * Request input for a specific session.
      */
-    public suspend fun requestInput(sessionId: String): String {
-        return requestInput()
-    }
+    public suspend fun requestInput(sessionId: String): String = requestInput()
 }
 
 /**
@@ -57,6 +51,6 @@ public class ConsoleMessageHandler : MessageHandler {
 
     override suspend fun requestInput(): String {
         print("[User Input]: ")
-        return readlnOrNull() ?: ""
+        return readlnOrNull().orEmpty()
     }
 }

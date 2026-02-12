@@ -8,16 +8,14 @@ import ai.koog.prompt.message.RequestMetaInfo
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.ui.core.ApprovalHandler
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
-import io.github.stream29.kode.ui.core.ToolApprovalDecision
-import io.github.stream29.kode.ui.core.ToolApprovalRequest
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.datetime.toDeprecatedClock
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -38,87 +36,111 @@ public class ConversationAgent(
     private val sessionBridge: KoogSessionBridge,
     private val messageHandler: MessageHandler,
     private val hookManager: HookManager,
-    private val approvalHandler: ApprovalHandler?,
     private val eventListener: AgentEventListener?,
     private val logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext = AgentRuntimeContext(),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
-    
-    private fun buildJsonString(content: String): String {
-        val escaped = content.replace("\\", "\\\\").replace("\"", "\\\"")
-        return "\"$escaped\""
+
+    private data class ResolvedToolCall(
+        val call: Message.Tool.Call,
+        val rawToolName: String,
+        val toolName: String,
+        val toolArgs: String,
+        val toolCallId: String,
+        val parsedArgs: JsonElement,
+    )
+
+    private fun requireInteractiveContext(message: String) {
+        if (!runtimeContext.canInteractWithUser) {
+            throw IllegalStateException(message)
+        }
+    }
+
+    private suspend fun <T> withManagedSessionRun(sessionId: String, block: suspend () -> T): T {
+        sessionManager.beginRun(sessionId, currentJob())
+        return try {
+            block()
+        } finally {
+            sessionManager.completeRun(sessionId)
+        }
+    }
+
+    private suspend fun resolvePromptContext(sessionId: String, agentId: String?): Pair<String, List<Message>> {
+        val messages = sessionBridge.prepareMessagesForAgent(sessionId, agentId)
+        val systemPrompt = sessionManager.getAgentConfig(sessionId, agentId).systemPrompt ?: DEFAULT_SYSTEM_PROMPT
+        return systemPrompt to messages
+    }
+
+    private suspend fun executeAndPersistResponse(
+        sessionId: String,
+        agentId: String?,
+        model: LLModel,
+        checkpointAfterExecution: Boolean,
+    ): String {
+        val (systemPrompt, messages) = resolvePromptContext(sessionId = sessionId, agentId = agentId)
+        val finalResponse = executeWithTools(sessionId, systemPrompt, messages, model)
+        sessionManager.addAssistantMessage(sessionId, finalResponse, null, agentId)
+        if (checkpointAfterExecution) {
+            sessionBridge.checkpoint(sessionId, "After execution")
+        }
+        return finalResponse
     }
 
     public suspend fun chat(sessionId: String, userInput: String, model: LLModel): String {
-        if (!runtimeContext.canInteractWithUser) {
-            throw IllegalStateException("Subagent cannot accept direct user chat")
-        }
-
-        sessionManager.beginRun(sessionId, currentJob())
-
-        val processedInput = hookManager.applyUserPromptHooks(sessionId, userInput)
-        return try {
+        requireInteractiveContext("Subagent cannot accept direct user chat")
+        return withManagedSessionRun(sessionId) {
+            val processedInput = hookManager.applyUserPromptHooks(sessionId, userInput)
             sessionManager.addUserMessage(sessionId, processedInput, runtimeContext.agentId)
-
-            val messages = sessionBridge.prepareMessagesForAgent(sessionId, runtimeContext.agentId)
-            val systemPrompt = sessionManager.getAgentConfig(sessionId, runtimeContext.agentId).systemPrompt ?: DEFAULT_SYSTEM_PROMPT
-
-            val finalResponse = executeWithTools(sessionId, systemPrompt, messages, model)
-
-            sessionManager.addAssistantMessage(sessionId, finalResponse, null, runtimeContext.agentId)
-            sessionBridge.checkpoint(sessionId, "After execution")
-
-            finalResponse
-        } finally {
-            sessionManager.completeRun(sessionId)
+            executeAndPersistResponse(
+                sessionId = sessionId,
+                agentId = runtimeContext.agentId,
+                model = model,
+                checkpointAfterExecution = true,
+            )
         }
     }
 
     public suspend fun continueSession(sessionId: String, model: LLModel): String {
-        if (!runtimeContext.canInteractWithUser) {
-            throw IllegalStateException("Subagent cannot continue user session directly")
-        }
-
-        sessionManager.beginRun(sessionId, currentJob())
-
-        return try {
-            val messages = sessionBridge.prepareMessagesForAgent(sessionId, runtimeContext.agentId)
-            val systemPrompt = sessionManager.getAgentConfig(sessionId, runtimeContext.agentId).systemPrompt ?: DEFAULT_SYSTEM_PROMPT
-
-            val finalResponse = executeWithTools(
+        requireInteractiveContext("Subagent cannot continue user session directly")
+        return withManagedSessionRun(sessionId) {
+            executeAndPersistResponse(
                 sessionId = sessionId,
-                systemPrompt = systemPrompt,
-                historyMessages = messages,
-                model = model
+                agentId = runtimeContext.agentId,
+                model = model,
+                checkpointAfterExecution = true,
             )
-
-            sessionManager.addAssistantMessage(sessionId, finalResponse, null, runtimeContext.agentId)
-            sessionBridge.checkpoint(sessionId, "After execution")
-
-            finalResponse
-        } finally {
-            sessionManager.completeRun(sessionId)
         }
     }
 
     public suspend fun runSubAgent(sessionId: String, model: LLModel): String {
         val agentId = requireNotNull(runtimeContext.agentId) { "Subagent context requires agentId" }
-        val messages = sessionBridge.prepareMessagesForAgent(sessionId, agentId)
-        val systemPrompt = sessionManager.getAgentConfig(sessionId, agentId).systemPrompt ?: DEFAULT_SYSTEM_PROMPT
-
         return try {
-            val finalResponse = executeWithTools(
+            executeAndPersistResponse(
                 sessionId = sessionId,
-                systemPrompt = systemPrompt,
-                historyMessages = messages,
+                agentId = agentId,
                 model = model,
+                checkpointAfterExecution = false,
             )
-            sessionManager.addAssistantMessage(sessionId, finalResponse, null, agentId)
-            finalResponse
         } catch (signal: SubAgentReturnSignal) {
             signal.result
         }
+    }
+
+    private fun buildPrompt(
+        sessionId: String,
+        iteration: Int,
+        systemPrompt: String,
+        messages: List<Message>,
+    ): ai.koog.prompt.dsl.Prompt {
+        val messagesForPrompt = buildList {
+            add(Message.System(systemPrompt, RequestMetaInfo.create(Clock.System.toDeprecatedClock())))
+            addAll(messages)
+        }
+        return ai.koog.prompt.dsl.Prompt(
+            id = "conversation_${sessionId}_$iteration",
+            messages = messagesForPrompt,
+        )
     }
 
     private suspend fun executeWithTools(
@@ -138,15 +160,11 @@ public class ConversationAgent(
                 allMessages = refreshedMessages.toMutableList()
             }
 
-            val messagesForPrompt = mutableListOf<Message>()
-            messagesForPrompt.add(
-                Message.System(systemPrompt, RequestMetaInfo.create(Clock.System.toDeprecatedClock()))
-            )
-            messagesForPrompt.addAll(allMessages)
-            
-            val currentPrompt = ai.koog.prompt.dsl.Prompt(
-                id = "conversation_${sessionId}_$iteration",
-                messages = messagesForPrompt
+            val currentPrompt = buildPrompt(
+                sessionId = sessionId,
+                iteration = iteration,
+                systemPrompt = systemPrompt,
+                messages = allMessages,
             )
 
             val response = promptExecutor.execute(currentPrompt, model, toolRegistry.tools.map { it.descriptor }).first()
@@ -181,68 +199,43 @@ public class ConversationAgent(
         sessionId: String,
         toolCall: Message.Tool.Call
     ): Message.Tool.Result {
-        val rawToolName = toolCall.tool
-        val toolName = resolveToolName(rawToolName)
-        val toolArgs = toolCall.content
-        val toolCallId = toolCall.id.orEmpty()
-        val parsedArgs = parseToolArgs(toolArgs)
+        val resolvedCall = resolveToolCall(toolCall)
 
         handleCreateAgentRestriction(
             sessionId = sessionId,
-            toolCall = toolCall,
-            rawToolName = rawToolName,
-            toolName = toolName,
-            toolCallId = toolCallId,
-            parsedArgs = parsedArgs,
+            resolvedCall = resolvedCall,
         )?.let { return it }
 
         handleReturnAgentResult(
             sessionId = sessionId,
-            rawToolName = rawToolName,
-            toolName = toolName,
-            toolCallId = toolCallId,
-            toolArgs = toolArgs,
-            parsedArgs = parsedArgs,
+            resolvedCall = resolvedCall,
         )
 
         handleAwaitUserInputToolCall(
             sessionId = sessionId,
-            toolCall = toolCall,
-            rawToolName = rawToolName,
-            toolName = toolName,
-            toolCallId = toolCallId,
-            parsedArgs = parsedArgs,
+            resolvedCall = resolvedCall,
         )?.let { return it }
 
-        val preHook = hookManager.applyToolCallBeforeHooks(sessionId, toolName, toolArgs)
+        val preHook = hookManager.applyToolCallBeforeHooks(sessionId, resolvedCall.toolName, resolvedCall.toolArgs)
         if (!preHook.allowed) {
             val reason = preHook.reason ?: "Tool call blocked by hook"
-            val blockedArgs = preHook.toolArgs
-            saveToolCall(
+            return rejectToolCall(
                 sessionId = sessionId,
-                toolName = toolName,
-                toolCallId = toolCallId,
-                arguments = parseToolArgs(blockedArgs),
+                resolvedCall = resolvedCall,
+                reason = reason,
+                resultToolName = resolvedCall.toolName,
+                arguments = parseToolArgs(preHook.toolArgs),
             )
-            saveToolResult(
-                sessionId = sessionId,
-                toolCallId = toolCallId,
-                toolName = toolName,
-                result = json.parseToJsonElement(buildJsonString(reason)),
-                isError = true,
-                errorMessage = reason,
-            )
-            return buildToolResult(toolCall = toolCall, rawToolName = toolName, content = reason)
         }
 
         val finalArgs = preHook.toolArgs
 
-        logger("🔧 Calling tool: $toolName")
+        logger("🔧 Calling tool: ${resolvedCall.toolName}")
         logger("   Args: ${finalArgs.take(100)}")
 
         eventListener?.onEvent(
             AgentEvent.ToolCallStarting(
-                toolName = toolName,
+                toolName = resolvedCall.toolName,
                 arguments = finalArgs
             ),
             sessionId
@@ -250,101 +243,126 @@ public class ConversationAgent(
 
         saveToolCall(
             sessionId = sessionId,
-            toolName = toolName,
-            toolCallId = toolCallId,
+            toolName = resolvedCall.toolName,
+            toolCallId = resolvedCall.toolCallId,
             arguments = json.parseToJsonElement(finalArgs),
         )
 
-        val decision = approvalHandler?.requestApproval(
-            ToolApprovalRequest(
-                id = toolCallId,
-                toolName = toolName,
-                arguments = finalArgs,
-                description = "Tool call: $toolName"
-            ),
-            sessionId
-        ) ?: ToolApprovalDecision.Approve
-
-        val result = if (decision == ToolApprovalDecision.Reject) {
-            "Tool call rejected by user: $toolName"
-        } else {
-            executeRegisteredTool(
-                rawToolName = rawToolName,
-                toolName = toolName,
-                toolArgs = finalArgs,
-            )
-        }
+        val result = executeRegisteredTool(
+            rawToolName = resolvedCall.rawToolName,
+            toolName = resolvedCall.toolName,
+            toolArgs = finalArgs,
+        )
 
         val processedResult = hookManager.applyToolCallAfterHooks(
             sessionId = sessionId,
-            toolName = toolName,
+            toolName = resolvedCall.toolName,
             toolArgs = finalArgs,
             result = result
         )
 
         saveToolResult(
             sessionId = sessionId,
-            toolCallId = toolCallId,
-            toolName = toolName,
-            result = json.parseToJsonElement(buildJsonString(processedResult)),
+            toolCallId = resolvedCall.toolCallId,
+            toolName = resolvedCall.toolName,
+            result = JsonPrimitive(processedResult),
             isError = false,
             errorMessage = null,
         )
 
         eventListener?.onEvent(
             AgentEvent.ToolCallCompleted(
-                toolName = toolName,
+                toolName = resolvedCall.toolName,
                 result = processedResult
             ),
             sessionId
         )
 
-        return buildToolResult(toolCall = toolCall, rawToolName = rawToolName, content = processedResult)
+        return buildToolResult(
+            toolCall = resolvedCall.call,
+            rawToolName = resolvedCall.rawToolName,
+            content = processedResult,
+        )
     }
 
-    private suspend fun handleCreateAgentRestriction(
-        sessionId: String,
-        toolCall: Message.Tool.Call,
-        rawToolName: String,
-        toolName: String,
-        toolCallId: String,
-        parsedArgs: kotlinx.serialization.json.JsonElement,
-    ): Message.Tool.Result? {
-        if (runtimeContext.canCreateSubagents || !isCreateAgentTool(rawToolName)) {
-            return null
-        }
+    private fun resolveToolCall(toolCall: Message.Tool.Call): ResolvedToolCall {
+        val rawToolName = toolCall.tool
+        val toolArgs = toolCall.content
+        return ResolvedToolCall(
+            call = toolCall,
+            rawToolName = rawToolName,
+            toolName = resolveToolName(rawToolName),
+            toolArgs = toolArgs,
+            toolCallId = toolCall.id.orEmpty(),
+            parsedArgs = parseToolArgs(toolArgs),
+        )
+    }
 
-        val reason = "Subagent is not allowed to create subagents."
-        saveToolCall(sessionId = sessionId, toolName = toolName, toolCallId = toolCallId, arguments = parsedArgs)
+    private suspend fun rejectToolCall(
+        sessionId: String,
+        resolvedCall: ResolvedToolCall,
+        reason: String,
+        resultToolName: String,
+        arguments: JsonElement,
+    ): Message.Tool.Result {
+        saveToolCall(
+            sessionId = sessionId,
+            toolName = resolvedCall.toolName,
+            toolCallId = resolvedCall.toolCallId,
+            arguments = arguments,
+        )
         saveToolResult(
             sessionId = sessionId,
-            toolCallId = toolCallId,
-            toolName = toolName,
+            toolCallId = resolvedCall.toolCallId,
+            toolName = resolvedCall.toolName,
             result = JsonPrimitive(reason),
             isError = true,
             errorMessage = reason,
         )
-        return buildToolResult(toolCall = toolCall, rawToolName = rawToolName, content = reason)
+        return buildToolResult(
+            toolCall = resolvedCall.call,
+            rawToolName = resultToolName,
+            content = reason,
+        )
+    }
+
+    private suspend fun handleCreateAgentRestriction(
+        sessionId: String,
+        resolvedCall: ResolvedToolCall,
+    ): Message.Tool.Result? {
+        if (runtimeContext.canCreateSubagents || !isCreateAgentTool(resolvedCall.rawToolName)) {
+            return null
+        }
+
+        val reason = "Subagent is not allowed to create subagents."
+        return rejectToolCall(
+            sessionId = sessionId,
+            resolvedCall = resolvedCall,
+            reason = reason,
+            resultToolName = resolvedCall.rawToolName,
+            arguments = resolvedCall.parsedArgs,
+        )
     }
 
     private suspend fun handleReturnAgentResult(
         sessionId: String,
-        rawToolName: String,
-        toolName: String,
-        toolCallId: String,
-        toolArgs: String,
-        parsedArgs: kotlinx.serialization.json.JsonElement,
+        resolvedCall: ResolvedToolCall,
     ) {
-        if (runtimeContext.agentId == null || !isReturnAgentResultTool(rawToolName)) {
+        if (runtimeContext.agentId == null || !isReturnAgentResultTool(resolvedCall.rawToolName)) {
             return
         }
 
-        val result = extractReturnAgentResult(toolArgs)
-        saveToolCall(sessionId = sessionId, toolName = toolName, toolCallId = toolCallId, arguments = parsedArgs)
+        val result = extractReturnAgentResult(resolvedCall.toolArgs)
+        saveToolCall(
+            sessionId = sessionId,
+            toolName = resolvedCall.toolName,
+            toolCallId = resolvedCall.toolCallId,
+            arguments = resolvedCall.parsedArgs,
+        )
         saveToolResult(
             sessionId = sessionId,
-            toolCallId = toolCallId,
-            toolName = toolName,
+            toolCallId = resolvedCall.toolCallId,
+            toolName = resolvedCall.toolName,
             result = JsonPrimitive(result),
             isError = false,
             errorMessage = null,
@@ -354,51 +372,53 @@ public class ConversationAgent(
 
     private suspend fun handleAwaitUserInputToolCall(
         sessionId: String,
-        toolCall: Message.Tool.Call,
-        rawToolName: String,
-        toolName: String,
-        toolCallId: String,
-        parsedArgs: kotlinx.serialization.json.JsonElement,
+        resolvedCall: ResolvedToolCall,
     ): Message.Tool.Result? {
-        if (!isAwaitUserInputTool(rawToolName)) {
+        if (!isAwaitUserInputTool(resolvedCall.rawToolName)) {
             return null
         }
 
         if (!runtimeContext.canInteractWithUser) {
             val reason = "Subagent cannot call await_user_input."
-            saveToolCall(sessionId = sessionId, toolName = toolName, toolCallId = toolCallId, arguments = parsedArgs)
-            saveToolResult(
+            return rejectToolCall(
                 sessionId = sessionId,
-                toolCallId = toolCallId,
-                toolName = toolName,
-                result = JsonPrimitive(reason),
-                isError = true,
-                errorMessage = reason,
+                resolvedCall = resolvedCall,
+                reason = reason,
+                resultToolName = resolvedCall.rawToolName,
+                arguments = resolvedCall.parsedArgs,
             )
-            return buildToolResult(toolCall = toolCall, rawToolName = rawToolName, content = reason)
         }
 
-        saveToolCall(sessionId = sessionId, toolName = toolName, toolCallId = toolCallId, arguments = parsedArgs)
+        saveToolCall(
+            sessionId = sessionId,
+            toolName = resolvedCall.toolName,
+            toolCallId = resolvedCall.toolCallId,
+            arguments = resolvedCall.parsedArgs,
+        )
         sessionManager.suspendForUserInput(sessionId)
         val input = messageHandler.requestInput(sessionId)
         sessionManager.addUserMessage(sessionId, input, runtimeContext.agentId)
         sessionManager.resumeRun(sessionId, currentJob())
         saveToolResult(
             sessionId = sessionId,
-            toolCallId = toolCallId,
-            toolName = toolName,
+            toolCallId = resolvedCall.toolCallId,
+            toolName = resolvedCall.toolName,
             result = JsonPrimitive(input),
             isError = false,
             errorMessage = null,
         )
-        return buildToolResult(toolCall = toolCall, rawToolName = rawToolName, content = input)
+        return buildToolResult(
+            toolCall = resolvedCall.call,
+            rawToolName = resolvedCall.rawToolName,
+            content = input,
+        )
     }
 
     private suspend fun saveToolCall(
         sessionId: String,
         toolName: String,
         toolCallId: String,
-        arguments: kotlinx.serialization.json.JsonElement,
+        arguments: JsonElement,
     ) {
         sessionBridge.saveToolCall(
             sessionId = sessionId,
@@ -413,7 +433,7 @@ public class ConversationAgent(
         sessionId: String,
         toolCallId: String,
         toolName: String,
-        result: kotlinx.serialization.json.JsonElement,
+        result: JsonElement,
         isError: Boolean,
         errorMessage: String?,
     ) {
@@ -497,7 +517,7 @@ public class ConversationAgent(
         }
     }
 
-    private fun parseToolArgs(toolArgs: String): kotlinx.serialization.json.JsonElement {
+    private fun parseToolArgs(toolArgs: String): JsonElement {
         return runCatching {
             json.parseToJsonElement(toolArgs)
         }.getOrElse {

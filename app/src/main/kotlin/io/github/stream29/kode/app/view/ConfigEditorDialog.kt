@@ -5,21 +5,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.github.stream29.kode.app.viewmodel.MainViewModel
+import io.github.stream29.kode.app.viewmodel.ConfigEditorUiState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 public fun ConfigEditorDialog(
-    viewModel: MainViewModel,
+    ui: ConfigEditorUiState,
+    onConfigTextChange: (String) -> Unit,
+    onSave: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val ui by viewModel.appUiState.collectAsStateWithLifecycle()
-
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = {
@@ -47,7 +45,7 @@ public fun ConfigEditorDialog(
                 
                 OutlinedTextField(
                     value = ui.configText,
-                    onValueChange = { viewModel.configText = it },
+                    onValueChange = onConfigTextChange,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
@@ -143,7 +141,7 @@ models:
         },
         confirmButton = {
             Button(
-                onClick = { viewModel.saveConfig() }
+                onClick = onSave
             ) {
                 Icon(
                     imageVector = Icons.Default.Save,

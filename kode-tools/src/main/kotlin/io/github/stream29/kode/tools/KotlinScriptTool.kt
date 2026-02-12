@@ -13,11 +13,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
+import java.io.File
 
 @Suppress("unused")
 @LLMDescription("Execute Kotlin scripts with the embedded Kotlin scripting engine")
 public class KotlinScriptTool public constructor(
     private val messageHandler: MessageHandler,
+    private val workingDir: File = File("."),
     private val logger: (String) -> Unit = { println(it) },
 ) : ToolSet {
 
@@ -49,7 +51,7 @@ public class KotlinScriptTool public constructor(
         try {
             val evalResult = withTimeout(actualTimeout * 1000L) {
                 EVAL_MUTEX.withLock {
-                    eval(script)
+                    eval(script = script, workingDir = workingDir.absolutePath)
                 }
             }
 

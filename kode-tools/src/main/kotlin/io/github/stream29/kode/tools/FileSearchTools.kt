@@ -9,7 +9,6 @@ import java.io.File
 import java.nio.file.FileSystems
 import java.nio.file.PathMatcher
 import java.nio.file.Paths
-import kotlin.io.path.name
 
 /**
  * File search tools for glob and grep operations.
@@ -26,6 +25,16 @@ public class FileSearchTools public constructor(
     public companion object {
         private const val MAX_MATCHES = 1000
         private const val MAX_LINE_LENGTH = 500
+        private val SKIPPED_DIRECTORIES: Set<String> = setOf(
+            "node_modules",
+            "build",
+            ".gradle",
+            "out",
+            "dist",
+            "target",
+            ".git",
+            ".idea",
+        )
     }
 
     @Tool
@@ -41,17 +50,17 @@ public class FileSearchTools public constructor(
         @LLMDescription("Directory to search in (defaults to working directory)")
         directory: String? = null,
         @LLMDescription("Whether to include directories in results (default false)")
-        includeDirs: Boolean = false
+        includeDirs: Boolean = false,
     ): GlobResult {
-        val searchDir = directory?.let { File(it) } ?: workingDir
-        
+        val searchDir = resolveSearchDirectory(directory).directory
+
         if (!searchDir.exists()) {
             return GlobResult(
                 success = false,
                 pattern = pattern,
                 directory = searchDir.absolutePath,
                 matches = emptyList(),
-                message = "Directory does not exist: ${searchDir.absolutePath}"
+                message = "Directory does not exist: ${searchDir.absolutePath}",
             )
         }
 
@@ -61,7 +70,7 @@ public class FileSearchTools public constructor(
                 pattern = pattern,
                 directory = searchDir.absolutePath,
                 matches = emptyList(),
-                message = "Not a directory: ${searchDir.absolutePath}"
+                message = "Not a directory: ${searchDir.absolutePath}",
             )
         }
 
@@ -80,7 +89,7 @@ public class FileSearchTools public constructor(
                     appendLine()
                     appendLine("Contents of ${searchDir.absolutePath}:")
                     lsResult.forEach { appendLine("  $it") }
-                }
+                },
             )
         }
 
@@ -89,17 +98,12 @@ public class FileSearchTools public constructor(
         try {
             val matches = mutableListOf<String>()
             val matcher = createGlobMatcher(pattern)
-            
+
             searchDir.walkTopDown().onEnter { dir ->
-                // Skip hidden directories and common non-source directories
-                val name = dir.name
-                !name.startsWith(".") && name !in setOf(
-                    "node_modules", "build", ".gradle", "out", 
-                    "dist", "target", ".git", ".idea"
-                )
+                isSearchableDirectory(dir)
             }.forEach { file ->
                 if (matches.size >= MAX_MATCHES) return@forEach
-                
+
                 val relativePath = file.relativeTo(searchDir).path
                 if (matcher.matches(Paths.get(relativePath))) {
                     if (includeDirs || file.isFile) {
@@ -126,7 +130,7 @@ public class FileSearchTools public constructor(
                 pattern = pattern,
                 directory = searchDir.absolutePath,
                 matches = matches,
-                message = message
+                message = message,
             )
 
         } catch (e: Exception) {
@@ -136,7 +140,7 @@ public class FileSearchTools public constructor(
                 pattern = pattern,
                 directory = searchDir.absolutePath,
                 matches = emptyList(),
-                message = "Error searching for pattern: ${e.message}"
+                message = "Error searching for pattern: ${e.message}",
             )
         }
     }
@@ -156,9 +160,9 @@ public class FileSearchTools public constructor(
         @LLMDescription("Directory to search in (defaults to working directory)")
         directory: String? = null,
         @LLMDescription("Maximum number of matches to return (1-100, default 50)")
-        maxResults: Int = 50
+        maxResults: Int = 50,
     ): GrepResult {
-        val searchDir = directory?.let { File(it) } ?: workingDir
+        val searchDir = resolveSearchDirectory(directory).directory
         val actualMaxResults = maxResults.coerceIn(1, 100)
 
         if (!searchDir.exists() || !searchDir.isDirectory) {
@@ -167,7 +171,7 @@ public class FileSearchTools public constructor(
                 pattern = pattern,
                 directory = searchDir.absolutePath,
                 matches = emptyList(),
-                message = "Invalid directory: ${searchDir.absolutePath}"
+                message = "Invalid directory: ${searchDir.absolutePath}",
             )
         }
 
@@ -180,11 +184,7 @@ public class FileSearchTools public constructor(
             val matches = mutableListOf<GrepMatch>()
 
             searchDir.walkTopDown().onEnter { dir ->
-                val name = dir.name
-                !name.startsWith(".") && name !in setOf(
-                    "node_modules", "build", ".gradle", "out",
-                    "dist", "target", ".git"
-                )
+                isSearchableDirectory(dir)
             }.filter { file ->
                 file.isFile && globMatcher.matches(Paths.get(file.relativeTo(searchDir).path))
             }.take(1000) // Limit files to search
@@ -207,7 +207,7 @@ public class FileSearchTools public constructor(
                             matches.add(GrepMatch(
                                 file = file.relativeTo(searchDir).path,
                                 line = lineNum,
-                                content = truncatedLine.trim()
+                                content = truncatedLine.trim(),
                             ))
                         }
                     }
@@ -230,7 +230,7 @@ public class FileSearchTools public constructor(
                 pattern = pattern,
                 directory = searchDir.absolutePath,
                 matches = matches,
-                message = message
+                message = message,
             )
 
         } catch (e: Exception) {
@@ -240,7 +240,7 @@ public class FileSearchTools public constructor(
                 pattern = pattern,
                 directory = searchDir.absolutePath,
                 matches = emptyList(),
-                message = "Error searching files: ${e.message}"
+                message = "Error searching files: ${e.message}",
             )
         }
     }
@@ -254,12 +254,12 @@ public class FileSearchTools public constructor(
         @LLMDescription("Name or partial name to search for")
         name: String,
         @LLMDescription("Directory to search in (defaults to working directory)")
-        directory: String? = null
+        directory: String? = null,
     ): GlobResult {
         return globFiles(
             pattern = "**/*${name}*",
             directory = directory,
-            includeDirs = false
+            includeDirs = false,
         )
     }
 
@@ -270,6 +270,41 @@ public class FileSearchTools public constructor(
         val globPattern = if (pattern.startsWith("glob:")) pattern else "glob:$pattern"
         return FileSystems.getDefault().getPathMatcher(globPattern)
     }
+
+    private fun isSearchableDirectory(directory: File): Boolean {
+        val directoryName = directory.name
+        return !directoryName.startsWith(".") && directoryName !in SKIPPED_DIRECTORIES
+    }
+
+    private fun resolveSearchDirectory(directory: String?): DirectoryResolution {
+        val root = workingDir.toPath().toAbsolutePath().normalize()
+        val requested = directory?.trim().orEmpty()
+        if (requested.isBlank()) {
+            return DirectoryResolution(directory = root.toFile())
+        }
+
+        val expanded = expandHome(requested)
+        val requestedFile = File(expanded)
+        val candidate = if (requestedFile.isAbsolute) {
+            requestedFile.toPath().toAbsolutePath().normalize()
+        } else {
+            root.resolve(expanded).normalize()
+        }
+
+        return DirectoryResolution(directory = candidate.toFile())
+    }
+
+    private fun expandHome(path: String): String {
+        if (!path.startsWith("~")) {
+            return path
+        }
+        val home = System.getProperty("user.home")
+        return home + path.removePrefix("~")
+    }
+
+    private data class DirectoryResolution(
+        val directory: File,
+    )
 }
 
 /**
@@ -279,7 +314,7 @@ public class FileSearchTools public constructor(
 public data class GrepMatch(
     val file: String,
     val line: Int,
-    val content: String
+    val content: String,
 )
 
 /**
@@ -291,7 +326,7 @@ public data class GlobResult(
     val pattern: String,
     val directory: String,
     val matches: List<String>,
-    val message: String
+    val message: String,
 ) {
     override fun toString(): String = buildString {
         appendLine(message)
@@ -314,7 +349,7 @@ public data class GrepResult(
     val pattern: String,
     val directory: String,
     val matches: List<GrepMatch>,
-    val message: String
+    val message: String,
 ) {
     override fun toString(): String = buildString {
         appendLine(message)

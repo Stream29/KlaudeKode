@@ -15,10 +15,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.github.stream29.kode.app.viewmodel.AppUiState
 import io.github.stream29.kode.app.viewmodel.MainViewModel
+import io.github.stream29.kode.app.viewmodel.SessionsPageUiState
+import io.github.stream29.kode.app.viewmodel.SessionUiState
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
+import io.github.stream29.kode.session.core.storage.SessionStatusFilter
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
@@ -28,7 +30,8 @@ public fun SessionManagerDialog(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
-    val ui by viewModel.appUiState.collectAsStateWithLifecycle()
+    val ui by viewModel.sessionsPageUiState.collectAsStateWithLifecycle()
+    val sessionUi by viewModel.sessionUiState.collectAsStateWithLifecycle()
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -50,6 +53,7 @@ public fun SessionManagerDialog(
             SessionManagerContent(
                 viewModel = viewModel,
                 ui = ui,
+                sessionUi = sessionUi,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(450.dp)
@@ -79,7 +83,8 @@ public fun SessionManagerDialog(
 @Composable
 public fun SessionManagerContent(
     viewModel: MainViewModel,
-    ui: AppUiState,
+    ui: SessionsPageUiState,
+    sessionUi: SessionUiState,
     modifier: Modifier
 ) {
     Column(modifier = modifier) {
@@ -111,7 +116,7 @@ public fun SessionManagerContent(
         Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedTextField(
-            value = ui.session.currentSessionWorkDir,
+            value = sessionUi.currentSessionWorkDir,
             onValueChange = {},
             label = { Text("Session directory") },
             modifier = Modifier.fillMaxWidth(),
@@ -121,7 +126,7 @@ public fun SessionManagerContent(
         Spacer(modifier = Modifier.height(8.dp))
         FilledTonalButton(
             onClick = { viewModel.openSessionDirDialog() },
-            enabled = ui.session.currentSessionId != null
+            enabled = sessionUi.currentSessionId != null
         ) {
             Icon(
                 imageVector = Icons.Default.Edit,
@@ -144,18 +149,18 @@ public fun SessionManagerContent(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
-                    selected = ui.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ACTIVE,
-                    onClick = { viewModel.updateSessionStatusFilter(io.github.stream29.kode.session.core.storage.SessionStatusFilter.ACTIVE) },
+                    selected = ui.sessionStatusFilter == SessionStatusFilter.ACTIVE,
+                    onClick = { viewModel.updateSessionStatusFilter(SessionStatusFilter.ACTIVE) },
                     label = { Text("Active") }
                 )
                 FilterChip(
-                    selected = ui.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ARCHIVED,
-                    onClick = { viewModel.updateSessionStatusFilter(io.github.stream29.kode.session.core.storage.SessionStatusFilter.ARCHIVED) },
+                    selected = ui.sessionStatusFilter == SessionStatusFilter.ARCHIVED,
+                    onClick = { viewModel.updateSessionStatusFilter(SessionStatusFilter.ARCHIVED) },
                     label = { Text("Archived") }
                 )
                 FilterChip(
-                    selected = ui.sessionStatusFilter == io.github.stream29.kode.session.core.storage.SessionStatusFilter.ALL,
-                    onClick = { viewModel.updateSessionStatusFilter(io.github.stream29.kode.session.core.storage.SessionStatusFilter.ALL) },
+                    selected = ui.sessionStatusFilter == SessionStatusFilter.ALL,
+                    onClick = { viewModel.updateSessionStatusFilter(SessionStatusFilter.ALL) },
                     label = { Text("All") }
                 )
             }
@@ -189,10 +194,13 @@ public fun SessionManagerContent(
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(ui.sessionSummaries) { session ->
+                items(
+                    items = ui.sessionSummaries,
+                    key = { session -> session.id },
+                ) { session ->
                     SessionCard(
                         session = session,
-                        isCurrent = session.id == ui.session.currentSessionId,
+                        isCurrent = session.id == sessionUi.currentSessionId,
                         onSwitch = { viewModel.switchToSession(session.id) },
                         onFork = { viewModel.forkSession(session.id) },
                         onExport = { viewModel.exportSession(session.id) },

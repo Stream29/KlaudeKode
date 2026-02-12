@@ -3,6 +3,13 @@ package io.github.stream29.kode.config.api
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+private const val PROVIDER_ANTHROPIC: String = "Anthropic"
+private const val PROVIDER_OPEN_AI: String = "OpenAI"
+private const val PROVIDER_MOONSHOT: String = "Moonshot"
+private const val PROVIDER_GEMINI: String = "Gemini"
+private const val PROVIDER_DEEP_SEEK: String = "DeepSeek"
+private const val PROVIDER_OPEN_AI_COMPATIBLE: String = "OpenAICompatible"
+
 @Serializable
 public data class AppConfig(
     val auths: List<LlmAuthConfig> = emptyList(),
@@ -17,7 +24,7 @@ public data class AppConfig(
     @Suppress("DEPRECATION")
     val agent: AgentConfig = AgentConfig(),
     val ui: UiConfig = UiConfig(),
-    val approvals: ApprovalConfig = ApprovalConfig(),
+    val approvals: LegacyApprovalsConfig = LegacyApprovalsConfig(),
     val logging: LoggingConfig = LoggingConfig(),
     val tools: ToolsConfig = ToolsConfig(),
 )
@@ -107,8 +114,8 @@ public data class UiConfig(
 )
 
 @Serializable
-public data class ApprovalConfig(
-    val yoloDefault: Boolean = false,
+public data class LegacyApprovalsConfig(
+    val yoloDefault: Boolean = true,
     val autoApproveActions: List<String> = emptyList(),
 )
 
@@ -134,7 +141,7 @@ public sealed interface LlmAuthConfig {
     public val oauth: OAuthConfig?
 
     @Serializable
-    @SerialName("Anthropic")
+    @SerialName(PROVIDER_ANTHROPIC)
     public data class Anthropic(
         override val id: String,
         override val apiKey: String,
@@ -143,11 +150,11 @@ public sealed interface LlmAuthConfig {
         override val env: Map<String, String>? = null,
         override val oauth: OAuthConfig? = null,
     ) : LlmAuthConfig {
-        override val provider: String = "Anthropic"
+        override val provider: String = PROVIDER_ANTHROPIC
     }
 
     @Serializable
-    @SerialName("OpenAI")
+    @SerialName(PROVIDER_OPEN_AI)
     public data class OpenAI(
         override val id: String,
         override val apiKey: String,
@@ -156,11 +163,11 @@ public sealed interface LlmAuthConfig {
         override val env: Map<String, String>? = null,
         override val oauth: OAuthConfig? = null,
     ) : LlmAuthConfig {
-        override val provider: String = "OpenAI"
+        override val provider: String = PROVIDER_OPEN_AI
     }
 
     @Serializable
-    @SerialName("Moonshot")
+    @SerialName(PROVIDER_MOONSHOT)
     public data class Moonshot(
         override val id: String,
         override val apiKey: String,
@@ -169,11 +176,11 @@ public sealed interface LlmAuthConfig {
         override val env: Map<String, String>? = null,
         override val oauth: OAuthConfig? = null,
     ) : LlmAuthConfig {
-        override val provider: String = "Moonshot"
+        override val provider: String = PROVIDER_MOONSHOT
     }
 
     @Serializable
-    @SerialName("Gemini")
+    @SerialName(PROVIDER_GEMINI)
     public data class Gemini(
         override val id: String,
         override val apiKey: String,
@@ -182,11 +189,11 @@ public sealed interface LlmAuthConfig {
         override val env: Map<String, String>? = null,
         override val oauth: OAuthConfig? = null,
     ) : LlmAuthConfig {
-        override val provider: String = "Gemini"
+        override val provider: String = PROVIDER_GEMINI
     }
 
     @Serializable
-    @SerialName("DeepSeek")
+    @SerialName(PROVIDER_DEEP_SEEK)
     public data class DeepSeek(
         override val id: String,
         override val apiKey: String,
@@ -195,11 +202,11 @@ public sealed interface LlmAuthConfig {
         override val env: Map<String, String>? = null,
         override val oauth: OAuthConfig? = null,
     ) : LlmAuthConfig {
-        override val provider: String = "DeepSeek"
+        override val provider: String = PROVIDER_DEEP_SEEK
     }
 
     @Serializable
-    @SerialName("OpenAICompatible")
+    @SerialName(PROVIDER_OPEN_AI_COMPATIBLE)
     public data class OpenAICompatible(
         override val id: String,
         override val apiKey: String,

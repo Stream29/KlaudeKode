@@ -15,19 +15,19 @@ public object FileSystemLocations {
         get() = File(dataDir, "config.yaml")
 
     public fun resolveDataDir(path: String?): File {
-        val defaultDir = File(System.getProperty("user.home"), ".kode")
+        val homeDir = System.getProperty("user.home")
+        val defaultDir = File(homeDir, ".kode")
         val raw = path?.trim().orEmpty()
         if (raw.isBlank()) {
             return defaultDir
         }
 
-        val expanded = if (raw.startsWith("~")) {
-            val home = System.getProperty("user.home")
-            home + raw.removePrefix("~")
+        val expandedPath = if (raw.startsWith("~")) {
+            homeDir + raw.removePrefix("~")
         } else {
             raw
         }
-        return File(expanded).absoluteFile
+        return File(expandedPath).absoluteFile
     }
 }
 
@@ -35,25 +35,21 @@ public object FileSystemLocations {
  * Factory for creating pre-configured file system config manager.
  */
 public object FileSystemConfigFactory {
-    
+
     /**
      * Create a ConfigManager with default file system locations.
      */
-    public fun createDefault(): ConfigManager {
-        val provider = FileSystemConfigProvider(FileSystemLocations.configFile)
-        val source = FileSystemConfigSource(FileSystemLocations.configFile)
-        return ConfigManager(provider, source)
-    }
-    
+    public fun createDefault(): ConfigManager = create(configFile = FileSystemLocations.configFile)
+
     /**
      * Create a ConfigManager with custom config file.
      */
     public fun create(configFile: File): ConfigManager {
         val provider = FileSystemConfigProvider(configFile)
         val source = FileSystemConfigSource(configFile)
-        return ConfigManager(provider, source)
+        return ConfigManager(provider = provider, source = source)
     }
-    
+
     /**
      * Create and initialize with default template if needed.
      */

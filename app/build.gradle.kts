@@ -22,7 +22,9 @@ dependencies {
     // New modular architecture
     implementation(projects.kodeCore)
     implementation(projects.kodeTools)
-    implementation(projects.kodeConfig)
+    implementation(projects.kodeConfigApi)
+    implementation(projects.kodeConfigCore)
+    implementation(projects.kodeConfigFs)
     implementation(projects.kodeUiCore)
     implementation(projects.kodeSessionCore)
     

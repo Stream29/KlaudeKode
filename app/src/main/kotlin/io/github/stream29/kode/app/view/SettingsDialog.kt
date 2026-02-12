@@ -12,14 +12,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.stream29.kode.app.util.formatModelDisplayName
 import io.github.stream29.kode.app.viewmodel.AppUiState
 import io.github.stream29.kode.app.viewmodel.MainViewModel
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
-import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,6 +110,7 @@ public fun ModelsTab(viewModel: MainViewModel, ui: AppUiState) {
     var editingModel by remember { mutableStateOf<LlmModelConfig?>(null) }
     val models = ui.models
     val auths = ui.auths
+    val authById = remember(auths) { auths.associateBy { auth -> auth.id } }
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -169,10 +169,13 @@ public fun ModelsTab(viewModel: MainViewModel, ui: AppUiState) {
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(models) { model ->
+                items(
+                    items = models,
+                    key = { model -> model.id },
+                ) { model ->
                     ModelCard(
                         model = model,
-                        auth = auths.find { it.id == model.authId },
+                        auth = authById[model.authId],
                         isActive = model.id == ui.activeModelId,
                         onActivate = { viewModel.switchModel(model.id) },
                         onEdit = { editingModel = model },
@@ -462,6 +465,7 @@ public fun AuthTab(viewModel: MainViewModel, ui: AppUiState) {
     var deletingAuth by remember { mutableStateOf<LlmAuthConfig?>(null) }
     val auths = ui.auths
     val models = ui.models
+    val dependentModelsByAuthId = remember(models) { models.groupBy { model -> model.authId } }
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -499,8 +503,11 @@ public fun AuthTab(viewModel: MainViewModel, ui: AppUiState) {
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(auths) { auth ->
-                    val dependentModels = models.filter { it.authId == auth.id }
+                items(
+                    items = auths,
+                    key = { auth -> auth.id },
+                ) { auth ->
+                    val dependentModels = dependentModelsByAuthId[auth.id].orEmpty()
                     AuthCard(
                         auth = auth,
                         dependentModels = dependentModels,
@@ -538,7 +545,7 @@ public fun AuthTab(viewModel: MainViewModel, ui: AppUiState) {
     }
 
     deletingAuth?.let { auth ->
-        val dependentModels = models.filter { it.authId == auth.id }
+        val dependentModels = dependentModelsByAuthId[auth.id].orEmpty()
         AlertDialog(
             onDismissRequest = { deletingAuth = null },
             title = { Text("Delete Auth Provider") },
@@ -1002,7 +1009,6 @@ public fun PreferencesTab(viewModel: MainViewModel, ui: AppUiState) {
 
 @Composable
 public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
-    var approvalActionInput by remember { mutableStateOf("") }
     var appDataDirDraft by remember(ui.appDataDir) { mutableStateOf(ui.appDataDir) }
     val showDataDirChangeDialogState = remember { mutableStateOf(false) }
     val currentAppDataDirPath = remember(ui.appDataDir) { viewModel.resolveAppDataDirPath(ui.appDataDir) }
@@ -1162,7 +1168,7 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
         item {
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                "Approvals",
+                "Execution Mode",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.primary
@@ -1172,77 +1178,17 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
             ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Default YOLO",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                "Auto-approve tool calls by default",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = ui.approvalDefaultYolo,
-                            onCheckedChange = {
-                                viewModel.approvalDefaultYolo = it
-                                viewModel.yoloEnabled = it
-                            }
-                        )
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            "Auto-approve actions",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                        if (ui.approvalAutoApproveActions.isEmpty()) {
-                            Text(
-                                "No auto-approve actions configured",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                ui.approvalAutoApproveActions.forEach { action ->
-                                    AssistChip(
-                                        onClick = { viewModel.removeApprovalAction(action) },
-                                        label = { Text(action) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = approvalActionInput,
-                            onValueChange = { approvalActionInput = it },
-                            label = { Text("Add action") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
-                        )
-                        FilledTonalButton(
-                            onClick = {
-                                viewModel.addApprovalAction(approvalActionInput)
-                                approvalActionInput = ""
-                            }
-                        ) {
-                            Text("Add")
-                        }
-                    }
+                    Text(
+                        "YOLO mode is always enabled",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "Interactive tool approvals have been removed; all tool calls run directly.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -1537,13 +1483,6 @@ private fun DefaultModelSelectionSection(viewModel: MainViewModel, ui: AppUiStat
     val defaultId = ui.defaultModelId
     val defaultModel = models.find { it.id == defaultId }
 
-    fun getModelDisplayName(model: LlmModelConfig): String {
-        val auth = auths.find { it.id == model.authId }
-        val provider = auth?.provider ?: "Unknown"
-        val name = model.displayName ?: model.model
-        return "$provider - $name"
-    }
-
     if (models.isEmpty()) {
         Text(
             "No models configured. Go to the Models tab to add one.",
@@ -1556,7 +1495,7 @@ private fun DefaultModelSelectionSection(viewModel: MainViewModel, ui: AppUiStat
             onExpandedChange = { expanded = it }
         ) {
             OutlinedTextField(
-                value = defaultModel?.let { getModelDisplayName(it) } ?: "Select default model",
+                value = defaultModel?.let { formatModelDisplayName(it, auths) } ?: "Select default model",
                 onValueChange = {},
                 readOnly = true,
                 label = { Text("Default model") },
@@ -1574,7 +1513,7 @@ private fun DefaultModelSelectionSection(viewModel: MainViewModel, ui: AppUiStat
                     DropdownMenuItem(
                         text = {
                             Column {
-                                Text(getModelDisplayName(model))
+                                Text(formatModelDisplayName(model, auths))
                                 Text(
                                     "ID: ${model.id}",
                                     style = MaterialTheme.typography.bodySmall,
@@ -1724,13 +1663,6 @@ private fun ModelSelectionSection(viewModel: MainViewModel, ui: AppUiState) {
     val activeId = ui.activeModelId
     val activeModel = models.find { it.id == activeId }
 
-    fun getModelDisplayName(model: LlmModelConfig): String {
-        val auth = auths.find { it.id == model.authId }
-        val provider = auth?.provider ?: "Unknown"
-        val name = model.displayName ?: model.model
-        return "$provider - $name"
-    }
-
     if (models.isEmpty()) {
         Text(
             "No models configured. Go to the Models tab to add one.",
@@ -1743,7 +1675,7 @@ private fun ModelSelectionSection(viewModel: MainViewModel, ui: AppUiState) {
             onExpandedChange = { expanded = it }
         ) {
             OutlinedTextField(
-                value = activeModel?.let { getModelDisplayName(it) } ?: "Select a model",
+                value = activeModel?.let { formatModelDisplayName(it, auths) } ?: "Select a model",
                 onValueChange = {},
                 readOnly = true,
                 label = { Text("Model") },
@@ -1761,7 +1693,7 @@ private fun ModelSelectionSection(viewModel: MainViewModel, ui: AppUiState) {
                     DropdownMenuItem(
                         text = {
                             Column {
-                                Text(getModelDisplayName(model))
+                                Text(formatModelDisplayName(model, auths))
                                 Text(
                                     "ID: ${model.id}",
                                     style = MaterialTheme.typography.bodySmall,

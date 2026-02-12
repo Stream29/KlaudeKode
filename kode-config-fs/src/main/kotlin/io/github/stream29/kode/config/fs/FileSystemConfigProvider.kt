@@ -23,6 +23,8 @@ public class FileSystemConfigProvider(
     private val configFile: File
 ) : ConfigProvider {
 
+    private val ioDispatcher = Dispatchers.VirtualThread
+
     private val yaml = Yaml(
         configuration = YamlConfiguration(
             encodeDefaults = false,
@@ -32,7 +34,7 @@ public class FileSystemConfigProvider(
     )
 
     override suspend fun load(): AppConfig? {
-        return withContext(Dispatchers.VirtualThread) {
+        return withContext(ioDispatcher) {
             if (!configFile.exists()) {
                 return@withContext null
             }
@@ -42,19 +44,23 @@ public class FileSystemConfigProvider(
                 return@withContext AppConfig(auths = emptyList(), models = emptyList())
             }
 
-            try {
-                yaml.decodeFromString<AppConfig>(content)
-            } catch (e: Exception) {
-                throw IllegalStateException(
-                    "Failed to parse config file at ${configFile.absolutePath}: ${e.message}",
-                    e
-                )
-            }
+            return@withContext decodeConfig(content = content)
+        }
+    }
+
+    private fun decodeConfig(content: String): AppConfig {
+        return try {
+            yaml.decodeFromString<AppConfig>(content)
+        } catch (e: Exception) {
+            throw IllegalStateException(
+                "Failed to parse config file at ${configFile.absolutePath}: ${e.message}",
+                e
+            )
         }
     }
 
     override suspend fun save(config: AppConfig) {
-        withContext(Dispatchers.VirtualThread) {
+        withContext(ioDispatcher) {
             configFile.parentFile?.mkdirs()
             val content = yaml.encodeToString(config)
             configFile.writeText(content)
@@ -62,7 +68,7 @@ public class FileSystemConfigProvider(
     }
 
     override suspend fun exists(): Boolean {
-        return withContext(Dispatchers.VirtualThread) {
+        return withContext(ioDispatcher) {
             configFile.exists() && configFile.length() > 0
         }
     }
@@ -83,14 +89,19 @@ public class FileSystemConfigSource(
     private val configFile: File
 ) : ConfigSource {
 
+    private val ioDispatcher = Dispatchers.VirtualThread
+
     override suspend fun read(): String? {
-        return withContext(Dispatchers.VirtualThread) {
-            if (!configFile.exists()) null else configFile.readText()
+        return withContext(ioDispatcher) {
+            if (!configFile.exists()) {
+                return@withContext null
+            }
+            return@withContext configFile.readText()
         }
     }
 
     override suspend fun write(content: String) {
-        withContext(Dispatchers.VirtualThread) {
+        withContext(ioDispatcher) {
             configFile.parentFile?.mkdirs()
             configFile.writeText(content)
         }

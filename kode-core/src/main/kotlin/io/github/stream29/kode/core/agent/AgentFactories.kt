@@ -115,7 +115,7 @@ internal object ToolRegistryFactory {
             }
             if (!disabledTools.contains("shell")) {
                 tools(ShellTool(messageHandler, workingDir, logger))
-                tools(KotlinScriptTool(messageHandler, logger))
+                tools(KotlinScriptTool(messageHandler, workingDir, logger))
             }
             if (!disabledTools.contains("web")) {
                 tools(WebTools(messageHandler, logger))

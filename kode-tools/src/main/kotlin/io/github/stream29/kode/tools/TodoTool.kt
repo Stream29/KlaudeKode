@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicLong
 @LLMDescription("Manage a todo list for tracking tasks and their progress")
 public class TodoTool public constructor(
     private val messageHandler: MessageHandler,
-    private val logger: (String) -> Unit = { println(it) }
+    private val logger: (String) -> Unit = { println(it) },
 ) : ToolSet {
 
     private val todos = ConcurrentHashMap<Long, TodoItem>()
@@ -35,15 +35,10 @@ public class TodoTool public constructor(
         @LLMDescription("The title/description of the todo item")
         title: String,
         @LLMDescription("Optional parent todo ID for subtasks")
-        parentId: Long? = null
+        parentId: Long? = null,
     ): TodoOperationResult {
         val id = idGenerator.getAndIncrement()
-        val todo = TodoItem(
-            id = id,
-            title = title,
-            status = TodoStatus.PENDING,
-            parentId = parentId
-        )
+        val todo = TodoItem(id = id, title = title, status = TodoStatus.PENDING, parentId = parentId)
         todos[id] = todo
 
         val parentInfo = parentId?.let { " (parent: #$it)" } ?: ""
@@ -53,7 +48,7 @@ public class TodoTool public constructor(
         return TodoOperationResult(
             success = true,
             message = "Added todo #$id: $title",
-            todo = todo
+            todo = todo,
         )
     }
 
@@ -66,41 +61,29 @@ public class TodoTool public constructor(
         @LLMDescription("The ID of the todo item to update")
         id: Long,
         @LLMDescription("The new status: 'pending', 'in_progress', or 'done'")
-        status: String
+        status: String,
     ): TodoOperationResult {
-        val todoStatus = try {
-            TodoStatus.valueOf(status.uppercase())
-        } catch (e: IllegalArgumentException) {
-            return TodoOperationResult(
-                success = false,
-                message = "Invalid status: $status. Use 'pending', 'in_progress', or 'done'",
-                todo = null
-            )
-        }
+        val todoStatus = parseTodoStatus(status) ?: return TodoOperationResult(
+            success = false,
+            message = "Invalid status: $status. Use 'pending', 'in_progress', or 'done'",
+            todo = null,
+        )
 
-        val todo = todos[id]
-            ?: return TodoOperationResult(
-                success = false,
-                message = "Todo #$id not found",
-                todo = null
-            )
+        val todo = todos[id] ?: return todoNotFoundResult(id)
 
         val updatedTodo = todo.copy(status = todoStatus)
         todos[id] = updatedTodo
 
-        val statusEmoji = when (todoStatus) {
-            TodoStatus.PENDING -> "⏳"
-            TodoStatus.IN_PROGRESS -> "🔧"
-            TodoStatus.DONE -> "✅"
-        }
+        val statusLabel = todoStatus.name.lowercase()
+        val statusEmoji = todoStatus.emoji()
 
-        logger("$statusEmoji Updated todo #$id to ${todoStatus.name.lowercase()}: ${todo.title}")
+        logger("$statusEmoji Updated todo #$id to $statusLabel: ${todo.title}")
         messageHandler.addMessageToUser("$statusEmoji Updated todo #$id: ${todo.title}")
 
         return TodoOperationResult(
             success = true,
-            message = "Updated todo #$id to ${todoStatus.name.lowercase()}",
-            todo = updatedTodo
+            message = "Updated todo #$id to $statusLabel",
+            todo = updatedTodo,
         )
     }
 
@@ -108,14 +91,9 @@ public class TodoTool public constructor(
     @LLMDescription("Remove a todo item from the list")
     public fun removeTodo(
         @LLMDescription("The ID of the todo item to remove")
-        id: Long
+        id: Long,
     ): TodoOperationResult {
-        val todo = todos.remove(id)
-            ?: return TodoOperationResult(
-                success = false,
-                message = "Todo #$id not found",
-                todo = null
-            )
+        val todo = todos.remove(id) ?: return todoNotFoundResult(id)
 
         logger("🗑️ Removed todo #$id: ${todo.title}")
         messageHandler.addMessageToUser("🗑️ Removed todo #$id: ${todo.title}")
@@ -123,7 +101,7 @@ public class TodoTool public constructor(
         return TodoOperationResult(
             success = true,
             message = "Removed todo #$id: ${todo.title}",
-            todo = null
+            todo = null,
         )
     }
 
@@ -134,28 +112,23 @@ public class TodoTool public constructor(
     )
     public fun getTodoList(): TodoListResult {
         val allTodos = todos.values.sortedBy { it.id }
-        
+
         if (allTodos.isEmpty()) {
             return TodoListResult(
                 success = true,
                 message = "No todos yet. Use addTodo to create tasks.",
                 todos = emptyList(),
-                summary = TodoSummary(0, 0, 0, 0)
+                summary = EMPTY_SUMMARY,
             )
         }
 
-        val summary = TodoSummary(
-            total = allTodos.size,
-            pending = allTodos.count { it.status == TodoStatus.PENDING },
-            inProgress = allTodos.count { it.status == TodoStatus.IN_PROGRESS },
-            done = allTodos.count { it.status == TodoStatus.DONE }
-        )
+        val summary = buildSummary(allTodos)
 
         return TodoListResult(
             success = true,
             message = "Found ${allTodos.size} todos",
             todos = allTodos,
-            summary = summary
+            summary = summary,
         )
     }
 
@@ -189,6 +162,31 @@ public class TodoTool public constructor(
 
         return getTodoList()
     }
+
+    private fun parseTodoStatus(status: String): TodoStatus? {
+        return runCatching { TodoStatus.valueOf(status.trim().uppercase()) }.getOrNull()
+    }
+
+    private fun todoNotFoundResult(id: Long): TodoOperationResult {
+        return TodoOperationResult(
+            success = false,
+            message = "Todo #$id not found",
+            todo = null,
+        )
+    }
+
+    private fun buildSummary(todos: List<TodoItem>): TodoSummary {
+        return TodoSummary(
+            total = todos.size,
+            pending = todos.count { it.status == TodoStatus.PENDING },
+            inProgress = todos.count { it.status == TodoStatus.IN_PROGRESS },
+            done = todos.count { it.status == TodoStatus.DONE },
+        )
+    }
+
+    private companion object {
+        val EMPTY_SUMMARY: TodoSummary = TodoSummary(total = 0, pending = 0, inProgress = 0, done = 0)
+    }
 }
 
 /**
@@ -198,7 +196,7 @@ public class TodoTool public constructor(
 public enum class TodoStatus {
     PENDING,
     IN_PROGRESS,
-    DONE
+    DONE,
 }
 
 /**
@@ -209,7 +207,7 @@ public data class TodoItem(
     val id: Long,
     val title: String,
     val status: TodoStatus,
-    val parentId: Long? = null
+    val parentId: Long? = null,
 )
 
 /**
@@ -219,7 +217,7 @@ public data class TodoItem(
 public data class TodoOperationResult(
     val success: Boolean,
     val message: String,
-    val todo: TodoItem?
+    val todo: TodoItem?,
 )
 
 /**
@@ -230,7 +228,7 @@ public data class TodoSummary(
     val total: Int,
     val pending: Int,
     val inProgress: Int = 0,
-    val done: Int
+    val done: Int,
 )
 
 /**
@@ -250,14 +248,18 @@ public data class TodoListResult(
             appendLine()
             appendLine("Todos:")
             todos.forEach { todo ->
-                val statusEmoji = when (todo.status) {
-                    TodoStatus.PENDING -> "⏳"
-                    TodoStatus.IN_PROGRESS -> "🔧"
-                    TodoStatus.DONE -> "✅"
-                }
+                val statusEmoji = todo.status.emoji()
                 val indent = if (todo.parentId != null) "  " else ""
                 appendLine("$indent$statusEmoji #${todo.id}: ${todo.title}")
             }
         }
+    }
+}
+
+private fun TodoStatus.emoji(): String {
+    return when (this) {
+        TodoStatus.PENDING -> "⏳"
+        TodoStatus.IN_PROGRESS -> "🔧"
+        TodoStatus.DONE -> "✅"
     }
 }

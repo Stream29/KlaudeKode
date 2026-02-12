@@ -14,7 +14,7 @@ import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.ui.core.ApprovalHandler
+import io.github.stream29.kode.session.core.model.ConversationSession
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
 import io.github.stream29.kode.core.hooks.HookManager
@@ -29,7 +29,6 @@ public class SessionAwareAgentFactory(
     private val auths: List<LlmAuthConfig>,
     private val models: List<LlmModelConfig>,
     private val messageHandler: MessageHandler,
-    private val approvalHandler: ApprovalHandler?,
     private val disabledTools: Set<String>,
     private val mcpToolRegistry: ToolRegistry?,
     private val eventListener: AgentEventListener?,
@@ -37,6 +36,11 @@ public class SessionAwareAgentFactory(
     private val logger: (String) -> Unit,
     public val sessionManager: SessionManager,
 ) {
+    private data class SessionExecutionContext(
+        val conversationAgent: ConversationAgent,
+        val model: LLModel,
+    )
+
     public val sessionBridge: KoogSessionBridge by lazy {
         KoogSessionBridge(
             sessionManager = sessionManager,
@@ -62,13 +66,14 @@ public class SessionAwareAgentFactory(
     ): String {
         val modelConfig = models.find { it.id == modelId }
         val normalizedWorkDir = normalizeWorkingDir(workDir)
+        val resolvedSystemPrompt = systemPrompt ?: SYSTEM_PROMPT
         val session = sessionManager.createSession(
             title = title,
-            systemPrompt = systemPrompt ?: SYSTEM_PROMPT,
+            systemPrompt = resolvedSystemPrompt,
             tags = emptyList(),
             configuration = io.github.stream29.kode.session.core.model.SessionConfiguration(
                 preferredModel = modelConfig?.model,
-                systemPrompt = systemPrompt ?: SYSTEM_PROMPT,
+                systemPrompt = resolvedSystemPrompt,
                 workDir = normalizedWorkDir,
                 maxIterations = null,
                 temperature = null,
@@ -79,21 +84,13 @@ public class SessionAwareAgentFactory(
     }
 
     public suspend fun runWithSession(sessionId: String, userInput: String, modelId: String): String {
-        val session = sessionManager.getSession(sessionId)
-            ?: throw IllegalArgumentException("Session not found: $sessionId")
-        val workingDir = resolveWorkingDir(session)
-        val conversationAgent = createConversationAgent(sessionId, workingDir)
-        val model = ModelFactory.createModel(modelId, models, auths)
-        return conversationAgent.chat(sessionId, userInput, model)
+        val context = prepareExecutionContext(sessionId = sessionId, modelId = modelId)
+        return context.conversationAgent.chat(sessionId, userInput, context.model)
     }
 
     public suspend fun continueSession(sessionId: String, modelId: String): String {
-        val session = sessionManager.getSession(sessionId)
-            ?: throw IllegalArgumentException("Session not found: $sessionId")
-        val workingDir = resolveWorkingDir(session)
-        val conversationAgent = createConversationAgent(sessionId, workingDir)
-        val model = ModelFactory.createModel(modelId, models, auths)
-        return conversationAgent.continueSession(sessionId, model)
+        val context = prepareExecutionContext(sessionId = sessionId, modelId = modelId)
+        return context.conversationAgent.continueSession(sessionId, context.model)
     }
 
     public suspend fun generateSessionTitleFromConversation(sessionId: String, modelId: String): String? {
@@ -133,10 +130,7 @@ public class SessionAwareAgentFactory(
     }
 
     public fun buildToolRegistry(workingDir: File, sessionId: String, ownerAgentId: String? = null): ToolRegistry {
-        val scopedHandler = SessionScopedMessageHandler(
-            sessionId = sessionId,
-            delegate = messageHandler
-        )
+        val scopedHandler = scopedMessageHandler(sessionId)
         val baseRegistry = ToolRegistryFactory.create(
             workingDir = workingDir,
             messageHandler = scopedHandler,
@@ -147,11 +141,7 @@ public class SessionAwareAgentFactory(
             ownerAgentId = ownerAgentId,
             sessionManager = sessionManager,
         )
-        return if (mcpToolRegistry == null) {
-            baseRegistry
-        } else {
-            baseRegistry + mcpToolRegistry
-        }
+        return mergeMcpRegistry(baseRegistry)
     }
 
     private fun createConversationAgent(
@@ -165,9 +155,8 @@ public class SessionAwareAgentFactory(
             toolRegistry = toolRegistry,
             sessionManager = sessionManager,
             sessionBridge = sessionBridge,
-            messageHandler = SessionScopedMessageHandler(sessionId, messageHandler),
+            messageHandler = scopedMessageHandler(sessionId),
             hookManager = hookManager,
-            approvalHandler = approvalHandler,
             eventListener = eventListener,
             logger = logger,
             runtimeContext = runtimeContext,
@@ -206,10 +195,9 @@ public class SessionAwareAgentFactory(
                 if (mode.isBlank() && taskDescription.isBlank() && expectedResult.isBlank()) {
                     logger("Subagent context payload is empty")
                 }
-                val session = sessionManager.getSession(sessionId)
-                    ?: throw IllegalArgumentException("Session not found: $sessionId")
+                val session = requireSession(sessionId)
                 val workingDirectory = resolveWorkingDir(session)
-                val modelId = models.firstOrNull { it.model == session.configuration.preferredModel }?.id ?: models.first().id
+                val modelId = resolveModelIdForSession(session)
                 val model = ModelFactory.createModel(modelId, models, auths)
                 val subConversationAgent = createConversationAgent(
                     sessionId = sessionId,
@@ -226,8 +214,37 @@ public class SessionAwareAgentFactory(
         }
     }
 
+    private suspend fun prepareExecutionContext(sessionId: String, modelId: String): SessionExecutionContext {
+        val session = requireSession(sessionId)
+        val workingDir = resolveWorkingDir(session)
+        return SessionExecutionContext(
+            conversationAgent = createConversationAgent(sessionId, workingDir),
+            model = ModelFactory.createModel(modelId, models, auths),
+        )
+    }
+
+    private suspend fun requireSession(sessionId: String): ConversationSession {
+        return sessionManager.getSession(sessionId)
+            ?: throw IllegalArgumentException("Session not found: $sessionId")
+    }
+
+    private fun resolveModelIdForSession(session: ConversationSession): String {
+        return models.firstOrNull { it.model == session.configuration.preferredModel }?.id ?: models.first().id
+    }
+
+    private fun mergeMcpRegistry(baseRegistry: ToolRegistry): ToolRegistry {
+        return mcpToolRegistry?.let { registry -> baseRegistry + registry } ?: baseRegistry
+    }
+
+    private fun scopedMessageHandler(sessionId: String): MessageHandler {
+        return SessionScopedMessageHandler(
+            sessionId = sessionId,
+            delegate = messageHandler,
+        )
+    }
+
     private fun resolveWorkingDir(
-        session: io.github.stream29.kode.session.core.model.ConversationSession
+        session: ConversationSession
     ): File {
         val configured = normalizeWorkingDir(session.configuration.workDir)
         val fallback = defaultWorkingDir().absolutePath

@@ -43,22 +43,32 @@ import io.github.stream29.kode.app.model.isSayToUserToolCall
 import io.github.stream29.kode.app.model.isSayToUserToolResult
 import io.github.stream29.kode.app.model.isUiError
 import io.github.stream29.kode.app.model.isUiToolCallLike
+import io.github.stream29.kode.app.util.formatModelDisplayName
+import io.github.stream29.kode.app.util.parseKeyValueLines
 import io.github.stream29.kode.app.view.components.MessageBubble
 import io.github.stream29.kode.app.view.components.SystemMessage
+import io.github.stream29.kode.app.viewmodel.AcpPageUiState
 import io.github.stream29.kode.app.viewmodel.AppUiState
+import io.github.stream29.kode.app.viewmodel.ChatPageUiState
+import io.github.stream29.kode.app.viewmodel.InfoPageUiState
 import io.github.stream29.kode.app.viewmodel.MainViewModel
+import io.github.stream29.kode.app.viewmodel.McpPageUiState
 import io.github.stream29.kode.app.viewmodel.SessionUiState
+import io.github.stream29.kode.app.viewmodel.SessionsPageUiState
+import io.github.stream29.kode.app.viewmodel.TerminalPageUiState
+import io.github.stream29.kode.app.viewmodel.ToolsPageUiState
+import io.github.stream29.kode.app.viewmodel.WebPageUiState
 import io.github.stream29.kode.session.core.model.MessageRole
 import io.github.stream29.kode.session.core.model.SessionMessage
-import io.github.stream29.kode.ui.core.ToolApprovalDecision
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
 public fun MainScreen(state: MainViewModel) {
-    val ui by state.appUiState.collectAsStateWithLifecycle()
+    val chromeUi by state.mainChromeUiState.collectAsStateWithLifecycle()
+    val configEditorUi by state.configEditorUiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    val nextToast = ui.toasts.firstOrNull()
+    val nextToast = chromeUi.toasts.firstOrNull()
     LaunchedEffect(nextToast?.id) {
         val toast = nextToast ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(
@@ -69,59 +79,63 @@ public fun MainScreen(state: MainViewModel) {
         state.consumeToast(toast.id)
     }
 
-    val colorScheme = if (ui.uiTheme == "light") {
-        lightColorScheme()
-    } else {
-        darkColorScheme(
-            primary = md_theme_dark_primary,
-            onPrimary = md_theme_dark_onPrimary,
-            primaryContainer = md_theme_dark_primaryContainer,
-            onPrimaryContainer = md_theme_dark_onPrimaryContainer,
-            secondary = md_theme_dark_secondary,
-            onSecondary = md_theme_dark_onSecondary,
-            secondaryContainer = md_theme_dark_secondaryContainer,
-            onSecondaryContainer = md_theme_dark_onSecondaryContainer,
-            tertiary = md_theme_dark_tertiary,
-            onTertiary = md_theme_dark_onTertiary,
-            tertiaryContainer = md_theme_dark_tertiaryContainer,
-            onTertiaryContainer = md_theme_dark_onTertiaryContainer,
-            error = md_theme_dark_error,
-            errorContainer = md_theme_dark_errorContainer,
-            onError = md_theme_dark_onError,
-            onErrorContainer = md_theme_dark_onErrorContainer,
-            background = md_theme_dark_background,
-            onBackground = md_theme_dark_onBackground,
-            surface = md_theme_dark_surface,
-            onSurface = md_theme_dark_onSurface,
-            surfaceVariant = md_theme_dark_surfaceVariant,
-            onSurfaceVariant = md_theme_dark_onSurfaceVariant,
-            outline = md_theme_dark_outline,
-            inverseOnSurface = md_theme_dark_inverseOnSurface,
-            inverseSurface = md_theme_dark_inverseSurface,
-            inversePrimary = md_theme_dark_inversePrimary,
-            surfaceTint = md_theme_dark_surfaceTint,
-            outlineVariant = md_theme_dark_outlineVariant,
-            scrim = md_theme_dark_scrim,
-        )
+    val colorScheme = remember(chromeUi.uiTheme) {
+        if (chromeUi.uiTheme == "light") {
+            lightColorScheme()
+        } else {
+            darkColorScheme(
+                primary = md_theme_dark_primary,
+                onPrimary = md_theme_dark_onPrimary,
+                primaryContainer = md_theme_dark_primaryContainer,
+                onPrimaryContainer = md_theme_dark_onPrimaryContainer,
+                secondary = md_theme_dark_secondary,
+                onSecondary = md_theme_dark_onSecondary,
+                secondaryContainer = md_theme_dark_secondaryContainer,
+                onSecondaryContainer = md_theme_dark_onSecondaryContainer,
+                tertiary = md_theme_dark_tertiary,
+                onTertiary = md_theme_dark_onTertiary,
+                tertiaryContainer = md_theme_dark_tertiaryContainer,
+                onTertiaryContainer = md_theme_dark_onTertiaryContainer,
+                error = md_theme_dark_error,
+                errorContainer = md_theme_dark_errorContainer,
+                onError = md_theme_dark_onError,
+                onErrorContainer = md_theme_dark_onErrorContainer,
+                background = md_theme_dark_background,
+                onBackground = md_theme_dark_onBackground,
+                surface = md_theme_dark_surface,
+                onSurface = md_theme_dark_onSurface,
+                surfaceVariant = md_theme_dark_surfaceVariant,
+                onSurfaceVariant = md_theme_dark_onSurfaceVariant,
+                outline = md_theme_dark_outline,
+                inverseOnSurface = md_theme_dark_inverseOnSurface,
+                inverseSurface = md_theme_dark_inverseSurface,
+                inversePrimary = md_theme_dark_inversePrimary,
+                surfaceTint = md_theme_dark_surfaceTint,
+                outlineVariant = md_theme_dark_outlineVariant,
+                scrim = md_theme_dark_scrim,
+            )
+        }
     }
 
     MaterialTheme(colorScheme = colorScheme) {
-        LaunchedEffect(ui.currentPage) {
-            if (ui.currentPage == AppPage.Sessions) {
+        LaunchedEffect(chromeUi.currentPage) {
+            if (chromeUi.currentPage == AppPage.Sessions) {
                 state.loadSessionList()
             }
         }
 
-        if (ui.showConfigEditor) {
+        if (chromeUi.showConfigEditor) {
             ConfigEditorDialog(
-                viewModel = state,
+                ui = configEditorUi,
+                onConfigTextChange = { value -> state.configText = value },
+                onSave = { state.saveConfig() },
                 onDismiss = { state.showConfigEditor = false }
             )
         }
 
         Scaffold(
             topBar = {
-                AppTopBar(state = state, ui = ui)
+                AppTopBar(state = state, currentPage = chromeUi.currentPage)
             },
             snackbarHost = {
                 SnackbarHost(hostState = snackbarHostState)
@@ -135,7 +149,7 @@ public fun MainScreen(state: MainViewModel) {
             ) {
                 AppNavigationRail(
                     state = state,
-                    ui = ui,
+                    currentPage = chromeUi.currentPage,
                     modifier = Modifier.fillMaxHeight()
                 )
 
@@ -147,55 +161,124 @@ public fun MainScreen(state: MainViewModel) {
                         .fillMaxHeight()
                         .padding(16.dp)
                 ) {
-                    when (ui.currentPage) {
-                        AppPage.Chat -> ChatPage(state = state, sessionUi = ui.session, ui = ui)
-                        AppPage.Sessions -> SessionsPage(state = state, sessionUi = ui.session, ui = ui)
-                        AppPage.Models -> ModelsPage(state = state, ui = ui)
-                        AppPage.Settings -> SettingsPage(state = state, ui = ui)
-                        AppPage.Tools -> ToolsPage(state = state, ui = ui)
-                        AppPage.Mcp -> McpPage(state = state, ui = ui)
-                        AppPage.Acp -> AcpPage(state = state, ui = ui)
-                        AppPage.Terminal -> TerminalPage(state = state, ui = ui)
-                        AppPage.Web -> WebPage(state = state, ui = ui)
-                        AppPage.Info -> InfoPage(state = state, ui = ui)
+                    when (chromeUi.currentPage) {
+                        AppPage.Chat -> ChatRoute(state = state)
+                        AppPage.Sessions -> SessionsRoute(state = state)
+                        AppPage.Models -> ModelsRoute(state = state)
+                        AppPage.Settings -> SettingsRoute(state = state)
+                        AppPage.Tools -> ToolsRoute(state = state)
+                        AppPage.Mcp -> McpRoute(state = state)
+                        AppPage.Acp -> AcpRoute(state = state)
+                        AppPage.Terminal -> TerminalRoute(state = state)
+                        AppPage.Web -> WebRoute(state = state)
+                        AppPage.Info -> InfoRoute(state = state)
                     }
                 }
             }
         }
 
-        if (ui.session.showNewSessionDialog) {
-            NewSessionDirDialog(
-                value = ui.session.newSessionDirInput,
-                onValueChange = { state.newSessionDirInput = it },
-                onConfirm = { state.confirmNewSessionDir() },
-                onDismiss = { state.cancelNewSessionDir() }
-            )
-        }
+        SessionDialogs(state = state)
+    }
+}
 
-        if (ui.session.showSessionDirDialog) {
-            EditSessionDirDialog(
-                value = ui.session.sessionDirDraft,
-                onValueChange = { state.sessionDirDraft = it },
-                onConfirm = { state.confirmSessionDirDialog() },
-                onDismiss = { state.cancelSessionDirDialog() }
-            )
-        }
+@Composable
+private fun ChatRoute(state: MainViewModel) {
+    val chatUi by state.chatPageUiState.collectAsStateWithLifecycle()
+    val sessionUi by state.sessionUiState.collectAsStateWithLifecycle()
+    ChatPage(state = state, sessionUi = sessionUi, ui = chatUi)
+}
 
-        if (ui.session.showContinueRecoveryDialog) {
-            ContinueRecoveryDialog(
-                toolName = ui.session.continueRecoveryToolName,
-                toolCallId = ui.session.continueRecoveryToolCallId,
-                onRollbackAndContinue = { state.continueCurrentSessionAfterRollback() },
-                onContinueWithoutRollback = { state.continueCurrentSessionWithoutRollback() },
-                onDismiss = { state.dismissContinueRecoveryDialog() },
-            )
-        }
+@Composable
+private fun SessionsRoute(state: MainViewModel) {
+    val sessionsUi by state.sessionsPageUiState.collectAsStateWithLifecycle()
+    val sessionUi by state.sessionUiState.collectAsStateWithLifecycle()
+    SessionsPage(state = state, sessionUi = sessionUi, ui = sessionsUi)
+}
+
+@Composable
+private fun ModelsRoute(state: MainViewModel) {
+    val ui by state.appUiState.collectAsStateWithLifecycle()
+    ModelsPage(state = state, ui = ui)
+}
+
+@Composable
+private fun SettingsRoute(state: MainViewModel) {
+    val ui by state.appUiState.collectAsStateWithLifecycle()
+    SettingsPage(state = state, ui = ui)
+}
+
+@Composable
+private fun ToolsRoute(state: MainViewModel) {
+    val ui by state.toolsPageUiState.collectAsStateWithLifecycle()
+    ToolsPage(state = state, ui = ui)
+}
+
+@Composable
+private fun McpRoute(state: MainViewModel) {
+    val ui by state.mcpPageUiState.collectAsStateWithLifecycle()
+    McpPage(state = state, ui = ui)
+}
+
+@Composable
+private fun AcpRoute(state: MainViewModel) {
+    val ui by state.acpPageUiState.collectAsStateWithLifecycle()
+    AcpPage(state = state, ui = ui)
+}
+
+@Composable
+private fun TerminalRoute(state: MainViewModel) {
+    val ui by state.terminalPageUiState.collectAsStateWithLifecycle()
+    TerminalPage(state = state, ui = ui)
+}
+
+@Composable
+private fun WebRoute(state: MainViewModel) {
+    val ui by state.webPageUiState.collectAsStateWithLifecycle()
+    WebPage(state = state, ui = ui)
+}
+
+@Composable
+private fun InfoRoute(state: MainViewModel) {
+    val ui by state.infoPageUiState.collectAsStateWithLifecycle()
+    InfoPage(state = state, ui = ui)
+}
+
+@Composable
+private fun SessionDialogs(state: MainViewModel) {
+    val sessionUi by state.sessionUiState.collectAsStateWithLifecycle()
+
+    if (sessionUi.showNewSessionDialog) {
+        NewSessionDirDialog(
+            value = sessionUi.newSessionDirInput,
+            onValueChange = { state.newSessionDirInput = it },
+            onConfirm = { state.confirmNewSessionDir() },
+            onDismiss = { state.cancelNewSessionDir() }
+        )
+    }
+
+    if (sessionUi.showSessionDirDialog) {
+        EditSessionDirDialog(
+            value = sessionUi.sessionDirDraft,
+            onValueChange = { state.sessionDirDraft = it },
+            onConfirm = { state.confirmSessionDirDialog() },
+            onDismiss = { state.cancelSessionDirDialog() }
+        )
+    }
+
+    if (sessionUi.showContinueRecoveryDialog) {
+        ContinueRecoveryDialog(
+            toolName = sessionUi.continueRecoveryToolName,
+            toolCallId = sessionUi.continueRecoveryToolCallId,
+            onRollbackAndContinue = { state.continueCurrentSessionAfterRollback() },
+            onContinueWithoutRollback = { state.continueCurrentSessionWithoutRollback() },
+            onDismiss = { state.dismissContinueRecoveryDialog() },
+        )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppTopBar(state: MainViewModel, ui: AppUiState) {
+private fun AppTopBar(state: MainViewModel, currentPage: AppPage) {
     CenterAlignedTopAppBar(
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -205,7 +288,7 @@ private fun AppTopBar(state: MainViewModel, ui: AppUiState) {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = ui.currentPage.title,
+                    text = currentPage.title,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -242,26 +325,13 @@ private fun AppTopBar(state: MainViewModel, ui: AppUiState) {
 @Composable
 private fun AppNavigationRail(
     state: MainViewModel,
-    ui: AppUiState,
+    currentPage: AppPage,
     modifier: Modifier
 ) {
-    val pages = listOf(
-        AppPage.Chat,
-        AppPage.Sessions,
-        AppPage.Models,
-        AppPage.Settings,
-        AppPage.Tools,
-        AppPage.Mcp,
-        AppPage.Acp,
-        AppPage.Terminal,
-        AppPage.Web,
-        AppPage.Info,
-    )
-
     NavigationRail(modifier = modifier) {
-        pages.forEach { page ->
+        AppPage.entries.forEach { page ->
             NavigationRailItem(
-                selected = ui.currentPage == page,
+                selected = currentPage == page,
                 onClick = { state.currentPage = page },
                 icon = {
                     Icon(imageVector = page.icon, contentDescription = page.title)
@@ -273,30 +343,23 @@ private fun AppNavigationRail(
 }
 
 @Composable
-private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: AppUiState) {
+private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPageUiState) {
     LaunchedEffect(Unit) {
         state.loadSessionList()
         state.restoreLastSessionIfNeeded()
     }
+    val onForkFromMessage = remember(state) {
+        { index: Int -> state.forkFromMessage(index) }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        ApprovalControls(state = state, ui = ui)
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        if (ui.pendingApprovals.isNotEmpty()) {
-            ApprovalPanel(state = state, ui = ui)
-            Spacer(modifier = Modifier.height(12.dp))
-        }
-
         SessionControls(state = state, sessionUi = sessionUi, ui = ui)
 
         Spacer(modifier = Modifier.height(8.dp))
 
         MessageList(
             messages = sessionUi.messages,
-            onForkFromMessage = { index ->
-                state.forkFromMessage(index)
-            },
+            onForkFromMessage = onForkFromMessage,
             messageAlignment = ui.messageAlignment,
             messageMaxWidthRatio = ui.messageMaxWidthRatio,
             modifier = Modifier.weight(1f)
@@ -309,7 +372,7 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: AppUiS
 }
 
 @Composable
-private fun SessionsPage(state: MainViewModel, sessionUi: SessionUiState, ui: AppUiState) {
+private fun SessionsPage(state: MainViewModel, sessionUi: SessionUiState, ui: SessionsPageUiState) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
             text = "Sessions",
@@ -329,7 +392,10 @@ private fun SessionsPage(state: MainViewModel, sessionUi: SessionUiState, ui: Ap
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = { state.openSessionDirDialog() }) {
+                TextButton(
+                    onClick = { state.openSessionDirDialog() },
+                    enabled = !sessionUi.isRunning && !sessionUi.isWaitingForInput,
+                ) {
                     Text("Edit")
                 }
             }
@@ -338,6 +404,7 @@ private fun SessionsPage(state: MainViewModel, sessionUi: SessionUiState, ui: Ap
         SessionManagerContent(
             viewModel = state,
             ui = ui,
+            sessionUi = sessionUi,
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -380,7 +447,7 @@ private fun SettingsPage(state: MainViewModel, ui: AppUiState) {
 }
 
 @Composable
-private fun ToolsPage(state: MainViewModel, ui: AppUiState) {
+private fun ToolsPage(state: MainViewModel, ui: ToolsPageUiState) {
     val toolItems = listOf(
         ToolItem(key = "file", title = "File (read/list)", description = "Read and list files"),
         ToolItem(key = "file-edit", title = "File edit", description = "Edit files"),
@@ -475,9 +542,12 @@ private fun ToolsPage(state: MainViewModel, ui: AppUiState) {
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(ui.toolLogs.size) { index ->
+                        itemsIndexed(
+                            items = ui.toolLogs,
+                            key = { index, _ -> index },
+                        ) { _, log ->
                             Text(
-                                text = ui.toolLogs[index],
+                                text = log,
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -489,7 +559,7 @@ private fun ToolsPage(state: MainViewModel, ui: AppUiState) {
 }
 
 @Composable
-private fun McpPage(state: MainViewModel, ui: AppUiState) {
+private fun McpPage(state: MainViewModel, ui: McpPageUiState) {
     var showAddDialog by remember { mutableStateOf(false) }
     var timeoutText by remember { mutableStateOf(ui.mcpToolTimeoutMs.toString()) }
     var pendingDialogServer by remember { mutableStateOf<String?>(null) }
@@ -568,7 +638,10 @@ private fun McpPage(state: MainViewModel, ui: AppUiState) {
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(ui.mcpServers.entries.toList()) { entry ->
+                items(
+                    items = ui.mcpServers.entries.toList(),
+                    key = { entry -> entry.key },
+                ) { entry ->
                     val name = entry.key
                     val server = entry.value
                     val inFlight = ui.mcpTestsInFlight.contains(name)
@@ -837,7 +910,10 @@ private fun McpToolsDialog(
                         modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(tools) { tool ->
+                        items(
+                            items = tools,
+                            key = { tool -> tool.name },
+                        ) { tool ->
                             val expanded = expandedTools.contains(tool.name)
                             Column(
                                 modifier = Modifier
@@ -959,7 +1035,7 @@ private fun McpHealthBadge(status: MainViewModel.McpHealthStatus) {
 }
 
 @Composable
-private fun AcpPage(state: MainViewModel, ui: AppUiState) {
+private fun AcpPage(state: MainViewModel, ui: AcpPageUiState) {
     var portText by remember { mutableStateOf(ui.acpPort.toString()) }
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
@@ -1034,9 +1110,12 @@ private fun AcpPage(state: MainViewModel, ui: AppUiState) {
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(ui.acpLogs.size) { index ->
+                        itemsIndexed(
+                            items = ui.acpLogs,
+                            key = { index, _ -> index },
+                        ) { _, log ->
                             Text(
-                                text = ui.acpLogs[index],
+                                text = log,
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -1048,7 +1127,7 @@ private fun AcpPage(state: MainViewModel, ui: AppUiState) {
 }
 
 @Composable
-private fun TerminalPage(state: MainViewModel, ui: AppUiState) {
+private fun TerminalPage(state: MainViewModel, ui: TerminalPageUiState) {
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("Shell", "KTS")
 
@@ -1081,7 +1160,7 @@ private fun TerminalPage(state: MainViewModel, ui: AppUiState) {
 }
 
 @Composable
-private fun WebPage(state: MainViewModel, ui: AppUiState) {
+private fun WebPage(state: MainViewModel, ui: WebPageUiState) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
             text = "Web",
@@ -1128,7 +1207,7 @@ private fun WebPage(state: MainViewModel, ui: AppUiState) {
 }
 
 @Composable
-private fun InfoPage(state: MainViewModel, ui: AppUiState) {
+private fun InfoPage(state: MainViewModel, ui: InfoPageUiState) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
             text = "Diagnostics",
@@ -1145,9 +1224,9 @@ private fun InfoPage(state: MainViewModel, ui: AppUiState) {
                 InfoRow(label = "Config", value = io.github.stream29.kode.config.fs.FileSystemLocations.configFile.absolutePath)
                 InfoRow(label = "Preset spec", value = ui.presetSpecPath.ifBlank { "Not found" })
                 InfoRow(label = "Skills", value = if (ui.skillsPreview.isEmpty()) "None" else ui.skillsPreview.size.toString())
-                InfoRow(label = "Models", value = ui.models.size.toString())
-                InfoRow(label = "Auth Providers", value = ui.auths.size.toString())
-                InfoRow(label = "MCP Servers", value = ui.mcpServers.size.toString())
+                InfoRow(label = "Models", value = ui.modelsCount.toString())
+                InfoRow(label = "Auth Providers", value = ui.authCount.toString())
+                InfoRow(label = "MCP Servers", value = ui.mcpServerCount.toString())
                 InfoRow(label = "Disabled Tools", value = if (ui.disabledTools.isEmpty()) "None" else ui.disabledTools.joinToString(", "))
                 InfoRow(label = "ACP Running", value = ui.acpRunning.toString())
             }
@@ -1238,7 +1317,7 @@ private fun InfoRow(label: String, value: String) {
 }
 
 @Composable
-private fun ShellPanel(state: MainViewModel, ui: AppUiState) {
+private fun ShellPanel(state: MainViewModel, ui: TerminalPageUiState) {
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = ui.terminalCommand,
@@ -1268,7 +1347,7 @@ private fun ShellPanel(state: MainViewModel, ui: AppUiState) {
 }
 
 @Composable
-private fun ScriptPanel(state: MainViewModel, ui: AppUiState) {
+private fun ScriptPanel(state: MainViewModel, ui: TerminalPageUiState) {
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = ui.scriptContent,
@@ -1428,19 +1507,6 @@ private fun McpServerDialog(
     )
 }
 
-private fun parseKeyValueLines(input: String, separator: String): Map<String, String> {
-    if (input.isBlank()) {
-        return emptyMap()
-    }
-    return input.lines()
-        .map { it.trim() }
-        .filter { it.isNotBlank() && it.contains(separator) }
-        .associate {
-            val parts = it.split(separator, limit = 2)
-            parts[0].trim() to parts[1].trim()
-        }
-}
-
 private data class ToolItem(
     val key: String,
     val title: String,
@@ -1450,6 +1516,30 @@ private data class ToolItem(
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
+    var localTaskInput by rememberSaveable(sessionUi.currentSessionId) {
+        mutableStateOf(sessionUi.taskInput)
+    }
+
+    LaunchedEffect(sessionUi.currentSessionId) {
+        localTaskInput = sessionUi.taskInput
+    }
+
+    LaunchedEffect(sessionUi.taskInput, sessionUi.isRunning) {
+        if (sessionUi.taskInput.isBlank() && !sessionUi.isRunning) {
+            localTaskInput = ""
+        }
+    }
+
+    fun submitDraftInput() {
+        state.taskInput = localTaskInput
+        if (sessionUi.isWaitingForInput) {
+            state.submitInput()
+        } else {
+            state.runTask()
+        }
+        localTaskInput = ""
+    }
+
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large
@@ -1461,8 +1551,8 @@ private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedTextField(
-                value = sessionUi.taskInput,
-                onValueChange = { state.taskInput = it },
+                value = localTaskInput,
+                onValueChange = { localTaskInput = it },
                 label = {
                     Text(
                         if (sessionUi.isWaitingForInput) "Enter response..." 
@@ -1482,9 +1572,9 @@ private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
                             keyEvent.isCtrlPressed && 
                             keyEvent.key == Key.Enter) {
                             if (sessionUi.isWaitingForInput) {
-                                state.submitInput()
+                                submitDraftInput()
                             } else {
-                                state.runTask()
+                                submitDraftInput()
                             }
                             true
                         } else {
@@ -1506,7 +1596,7 @@ private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
             
             Spacer(modifier = Modifier.width(12.dp))
 
-            val isInputValid = sessionUi.taskInput.isNotBlank()
+            val isInputValid = localTaskInput.isNotBlank()
             val canClick = when {
                 sessionUi.isWaitingForInput -> isInputValid
                 sessionUi.isRunning -> true
@@ -1516,11 +1606,11 @@ private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
             FilledIconButton(
                 onClick = {
                     if (sessionUi.isWaitingForInput) {
-                        state.submitInput()
+                        submitDraftInput()
                     } else if (sessionUi.isRunning) {
                         state.stopCurrentSession()
                     } else {
-                        state.runTask()
+                        submitDraftInput()
                     }
                 },
                 enabled = canClick,
@@ -1555,7 +1645,9 @@ private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
 }
 
 @Composable
-private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui: AppUiState) {
+private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPageUiState) {
+    val canEditWorkDir = sessionUi.currentSessionId != null && !sessionUi.isRunning && !sessionUi.isWaitingForInput
+
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1586,7 +1678,20 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
                 )
             }
         )
-        
+
+        AssistChip(
+            onClick = { state.openSessionDirDialog() },
+            enabled = canEditWorkDir,
+            label = { Text("Work Dir") },
+            leadingIcon = {
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = null,
+                    Modifier.size(AssistChipDefaults.IconSize)
+                )
+            }
+        )
+
         SessionQuickSwitch(state = state, sessionUi = sessionUi, ui = ui)
 
         PresetQuickSwitch(state = state, ui = ui)
@@ -1596,7 +1701,7 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SessionQuickSwitch(state: MainViewModel, sessionUi: SessionUiState, ui: AppUiState) {
+private fun SessionQuickSwitch(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPageUiState) {
     val sessions = ui.sessionSummaries
     val activeId = sessionUi.currentSessionId
     val activeSession = sessions.firstOrNull { it.id == activeId }
@@ -1747,7 +1852,7 @@ private fun SessionQuickSwitch(state: MainViewModel, sessionUi: SessionUiState, 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PresetQuickSwitch(state: MainViewModel, ui: AppUiState) {
+private fun PresetQuickSwitch(state: MainViewModel, ui: ChatPageUiState) {
     val presets = ui.agentPresets
     var expanded by remember { mutableStateOf(false) }
     val activeName = ui.activePresetName
@@ -1797,7 +1902,7 @@ private fun PresetQuickSwitch(state: MainViewModel, ui: AppUiState) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ModelQuickSwitch(state: MainViewModel, ui: AppUiState) {
+private fun ModelQuickSwitch(state: MainViewModel, ui: ChatPageUiState) {
     val models = ui.models
     val auths = ui.auths
     var expanded by remember { mutableStateOf(false) }
@@ -1818,7 +1923,7 @@ private fun ModelQuickSwitch(state: MainViewModel, ui: AppUiState) {
     }
 
     val activeModel = models.find { it.id == ui.activeModelId } ?: models.first()
-    val displayName = getModelDisplayName(activeModel, auths)
+    val displayName = formatModelDisplayName(activeModel, auths)
 
     ExposedDropdownMenuBox(
         expanded = expanded,
@@ -1843,7 +1948,7 @@ private fun ModelQuickSwitch(state: MainViewModel, ui: AppUiState) {
                 DropdownMenuItem(
                     text = {
                         Column {
-                            Text(getModelDisplayName(model, auths))
+                            Text(formatModelDisplayName(model, auths))
                             Text(
                                 "ID: ${model.id}",
                                 style = MaterialTheme.typography.bodySmall,
@@ -1859,16 +1964,6 @@ private fun ModelQuickSwitch(state: MainViewModel, ui: AppUiState) {
             }
         }
     }
-}
-
-private fun getModelDisplayName(
-    model: io.github.stream29.kode.config.api.LlmModelConfig,
-    auths: List<io.github.stream29.kode.config.api.LlmAuthConfig>
-): String {
-    val auth = auths.find { it.id == model.authId }
-    val provider = auth?.provider ?: "Unknown"
-    val name = model.displayName ?: model.model
-    return "$provider - $name"
 }
 
 private sealed interface MessageListItem {
@@ -1977,8 +2072,7 @@ private fun buildToolGroupItem(run: List<IndexedMessage>): ToolGroupItem {
     val previewEntry = entries.lastOrNull()
     val previewText = previewEntry?.let { buildToolPreviewText(it) } ?: ""
     val firstId = run.firstOrNull()?.message?.id ?: "group"
-    val lastId = run.lastOrNull()?.message?.id ?: firstId
-    val groupId = "tool-group-$firstId-$lastId"
+    val groupId = "tool-group-$firstId"
     val sourceIndices = run.map { it.sourceIndex }
     return ToolGroupItem(
         groupId = groupId,
@@ -2457,129 +2551,6 @@ private fun collapsedMessagePreview(message: SessionMessage): String {
         normalized.take(120) + "..."
     } else {
         normalized
-    }
-}
-
-@Composable
-private fun ApprovalControls(state: MainViewModel, ui: AppUiState) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column {
-                Text(
-                    text = "Tool Approvals",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "Require confirmation before running tools",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "YOLO",
-                    style = MaterialTheme.typography.labelLarge
-                )
-                Switch(
-                    checked = ui.yoloEnabled,
-                    onCheckedChange = { state.yoloEnabled = it }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ApprovalPanel(state: MainViewModel, ui: AppUiState) {
-    val pending = ui.pendingApprovals.firstOrNull() ?: return
-    val request = pending.request
-
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = "Approval required",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            Text(
-                text = "Tool: ${request.toolName}",
-                style = MaterialTheme.typography.bodyMedium
-            )
-
-            Text(
-                text = "Session: ${pending.sessionId.take(8)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            ElevatedCard(
-                colors = CardDefaults.elevatedCardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Text(
-                    text = request.arguments,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(12.dp)
-                )
-            }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilledTonalButton(
-                    onClick = {
-                        state.approvePendingRequest(
-                            requestId = request.id,
-                            decision = ToolApprovalDecision.Approve
-                        )
-                    }
-                ) {
-                    Text("Approve")
-                }
-                FilledTonalButton(
-                    onClick = {
-                        state.approvePendingRequest(
-                            requestId = request.id,
-                            decision = ToolApprovalDecision.ApproveForSession
-                        )
-                    }
-                ) {
-                    Text("Approve for Session")
-                }
-                FilledTonalButton(
-                    onClick = {
-                        state.approvePendingRequest(
-                            requestId = request.id,
-                            decision = ToolApprovalDecision.Reject
-                        )
-                    },
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                ) {
-                    Text("Reject")
-                }
-            }
-        }
     }
 }
 

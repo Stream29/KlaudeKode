@@ -97,44 +97,60 @@ public class KoogSessionBridge(
         koogMessage: Message,
         messageId: String,
     ): SessionMessage {
-        if (koogMessage is Message.Tool.Call) {
-            val toolCallData = ToolCallData(
-                toolName = koogMessage.tool,
-                toolCallId = koogMessage.id ?: messageId,
-                arguments = parseJsonOrString(koogMessage.content),
-                displayName = null,
-            )
-            return SessionMessage.fromKoogMessage(
-                id = messageId,
-                message = koogMessage,
-                structuredData = json.encodeToJsonElement(ToolCallData.serializer(), toolCallData),
-                contentType = ContentType.TOOL_CALL,
-                metadata = null,
+        return when (koogMessage) {
+            is Message.Tool.Call -> convertToolCallMessage(messageId, koogMessage)
+            is Message.Tool.Result -> convertToolResultMessage(messageId, koogMessage)
+            else -> toSessionMessage(
+                messageId = messageId,
+                koogMessage = koogMessage,
+                structuredData = null,
+                contentType = ContentType.TEXT,
             )
         }
+    }
 
-        if (koogMessage is Message.Tool.Result) {
-            val toolResultData = ToolResultData(
-                toolCallId = koogMessage.id.orEmpty(),
-                toolName = koogMessage.tool,
-                result = parseJsonOrString(koogMessage.content),
-                isError = false,
-                errorMessage = null,
-            )
-            return SessionMessage.fromKoogMessage(
-                id = messageId,
-                message = koogMessage,
-                structuredData = json.encodeToJsonElement(ToolResultData.serializer(), toolResultData),
-                contentType = ContentType.TOOL_RESULT,
-                metadata = null,
-            )
-        }
+    private fun convertToolCallMessage(messageId: String, koogMessage: Message.Tool.Call): SessionMessage {
+        val toolCallData = ToolCallData(
+            toolName = koogMessage.tool,
+            toolCallId = koogMessage.id ?: messageId,
+            arguments = parseJsonOrString(koogMessage.content),
+            displayName = null,
+        )
+        return toSessionMessage(
+            messageId = messageId,
+            koogMessage = koogMessage,
+            structuredData = json.encodeToJsonElement(ToolCallData.serializer(), toolCallData),
+            contentType = ContentType.TOOL_CALL,
+        )
+    }
 
+    private fun convertToolResultMessage(messageId: String, koogMessage: Message.Tool.Result): SessionMessage {
+        val toolResultData = ToolResultData(
+            toolCallId = koogMessage.id.orEmpty(),
+            toolName = koogMessage.tool,
+            result = parseJsonOrString(koogMessage.content),
+            isError = false,
+            errorMessage = null,
+        )
+        return toSessionMessage(
+            messageId = messageId,
+            koogMessage = koogMessage,
+            structuredData = json.encodeToJsonElement(ToolResultData.serializer(), toolResultData),
+            contentType = ContentType.TOOL_RESULT,
+        )
+    }
+
+    private fun toSessionMessage(
+        messageId: String,
+        koogMessage: Message,
+        structuredData: JsonElement?,
+        contentType: ContentType,
+    ): SessionMessage {
         return SessionMessage.fromKoogMessage(
             id = messageId,
             message = koogMessage,
-            structuredData = null,
-            contentType = ContentType.TEXT,
+            structuredData = structuredData,
+            contentType = contentType,
             metadata = null,
         )
     }

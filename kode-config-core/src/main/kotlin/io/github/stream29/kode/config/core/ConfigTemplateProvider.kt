@@ -15,7 +15,7 @@ public object ConfigTemplateProvider {
         # 6. loop_control: Agent loop control limits
         # 7. services: External service config (web search/fetch)
         # 8. mcp: MCP client/servers config
-        # 9. skills/preset/ui/approvals/logging: UX and behavior settings
+        # 9. skills/preset/ui/logging: UX and behavior settings
         
         auths:
           - type: Anthropic
@@ -92,10 +92,6 @@ public object ConfigTemplateProvider {
           message_alignment: left
           message_max_width_ratio: 0.9
           last_opened_session_id: null
-
-        approvals:
-          yolo_default: false
-          auto_approve_actions: []
 
         logging:
           level: info

@@ -4,7 +4,7 @@ plugins {
 }
 
 dependencies {
-    implementation(projects.kodeConfig)
+    implementation(projects.kodeConfigFs)
     implementation(projects.virtualThreadDispatcher)
     implementation(libs.koogAgents)
     

@@ -7,6 +7,7 @@ import io.github.stream29.kode.session.core.SessionRepository
 import io.github.stream29.kode.session.core.model.ConversationSession
 import io.github.stream29.kode.session.core.model.Session
 import io.github.stream29.kode.session.core.model.SessionCheckpoint
+import io.github.stream29.kode.session.core.model.SessionConfig
 import io.github.stream29.kode.session.core.model.SessionDataSnapshot
 import io.github.stream29.kode.session.core.model.SessionMetadata
 import io.github.stream29.kode.session.core.model.SessionMetadataCsvRow
@@ -190,14 +191,7 @@ public class FileSessionStorage(
             parentSessionId = metadata.parentSessionId,
             forkedFromMessageId = metadata.forkedFromMessageId,
             version = metadata.version,
-            configuration = io.github.stream29.kode.session.core.model.SessionConfig(
-                preferredModel = null,
-                systemPrompt = null,
-                workDir = null,
-                maxIterations = null,
-                temperature = null,
-                customValues = null,
-            ),
+            configuration = emptySessionConfig(),
             tags = metadata.tags,
             childSessionIds = metadata.childSessionIds,
             runtimeState = SessionState.Suspended,
@@ -213,36 +207,53 @@ public class FileSessionStorage(
         if (content.isBlank()) {
             return emptyList()
         }
+        return decodeCurrentMetadataRows(content)
+            ?: decodeLegacyMetadataRows(content)
+            ?: emptyList()
+    }
+
+    private fun decodeCurrentMetadataRows(content: String): List<SessionMetadataCsvRow>? {
         return runCatching {
             CSVFormat.decodeFromString(
                 deserializer = ListSerializer(SessionMetadataCsvRow.serializer()),
                 string = content,
             )
-        }.getOrElse {
-            runCatching {
-                CSVFormat.decodeFromString(
-                    deserializer = ListSerializer(LegacySessionMetadataCsvRow.serializer()),
-                    string = content,
-                ).map { legacy ->
-                    SessionMetadataCsvRow(
-                        id = legacy.id,
-                        title = legacy.title,
-                        createdAtIso = legacy.createdAtIso,
-                        updatedAtIso = legacy.updatedAtIso,
-                        messageCount = 0,
-                        state = legacy.state,
-                        status = legacy.status,
-                        parentSessionId = legacy.parentSessionId,
-                        forkedFromMessageId = legacy.forkedFromMessageId,
-                        version = legacy.version,
-                        tags = legacy.tags,
-                        childSessionIds = legacy.childSessionIds,
-                    )
-                }
-            }.getOrElse {
-                emptyList()
+        }.getOrNull()
+    }
+
+    private fun decodeLegacyMetadataRows(content: String): List<SessionMetadataCsvRow>? {
+        return runCatching {
+            CSVFormat.decodeFromString(
+                deserializer = ListSerializer(LegacySessionMetadataCsvRow.serializer()),
+                string = content,
+            ).map { legacy ->
+                SessionMetadataCsvRow(
+                    id = legacy.id,
+                    title = legacy.title,
+                    createdAtIso = legacy.createdAtIso,
+                    updatedAtIso = legacy.updatedAtIso,
+                    messageCount = 0,
+                    state = legacy.state,
+                    status = legacy.status,
+                    parentSessionId = legacy.parentSessionId,
+                    forkedFromMessageId = legacy.forkedFromMessageId,
+                    version = legacy.version,
+                    tags = legacy.tags,
+                    childSessionIds = legacy.childSessionIds,
+                )
             }
-        }
+        }.getOrNull()
+    }
+
+    private fun emptySessionConfig(): SessionConfig {
+        return SessionConfig(
+            preferredModel = null,
+            systemPrompt = null,
+            workDir = null,
+            maxIterations = null,
+            temperature = null,
+            customValues = null,
+        )
     }
 
     private fun writeMetadataRows(rows: List<SessionMetadataCsvRow>) {

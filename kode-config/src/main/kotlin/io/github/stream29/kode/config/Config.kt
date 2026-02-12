@@ -10,17 +10,11 @@ import io.github.stream29.kode.config.fs.FileSystemLocations
     ReplaceWith("FileSystemConfigFactory.createDefault()", "io.github.stream29.kode.config.fs.FileSystemConfigFactory")
 )
 public object ConfigLoader {
-    private val manager: ConfigManager by lazy {
-        FileSystemConfigFactory.createDefault()
-    }
+    private val manager: ConfigManager by lazy(FileSystemConfigFactory::createDefault)
 
-    public suspend fun load(): AppConfig {
-        return manager.load()
-    }
-    
-    public suspend fun save(config: AppConfig) {
-        manager.save(config)
-    }
+    public suspend fun load(): AppConfig = manager.load()
+
+    public suspend fun save(config: AppConfig): Unit = manager.save(config)
 }
 
 @Deprecated("Use FileSystemLocations from kode-config-fs", ReplaceWith("FileSystemLocations", "io.github.stream29.kode.config.fs.FileSystemLocations"))

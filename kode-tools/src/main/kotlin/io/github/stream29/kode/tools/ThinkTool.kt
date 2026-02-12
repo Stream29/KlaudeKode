@@ -19,7 +19,7 @@ import kotlinx.serialization.Serializable
 )
 public class ThinkTool public constructor(
     private val messageHandler: MessageHandler,
-    private val logger: (String) -> Unit = { println(it) }
+    private val logger: (String) -> Unit = { println(it) },
 ) : ToolSet {
 
     @Tool
@@ -33,22 +33,18 @@ public class ThinkTool public constructor(
         @LLMDescription("Your thoughts, reasoning, or plan. Explain what you're thinking about and why.")
         thought: String,
         @LLMDescription("Optional: What you plan to do next based on this thinking")
-        nextAction: String? = null
+        nextAction: String? = null,
     ): ThinkResult {
         logger("💭 Agent thinking: ${thought.take(100)}${if (thought.length > 100) "..." else ""}")
-        
-        // Log the full thought for visibility
+
         messageHandler.addMessageToUser("💭 Thinking: $thought")
-        
-        if (nextAction != null) {
-            messageHandler.addMessageToUser("➡️ Next: $nextAction")
-        }
+        nextAction?.let { messageHandler.addMessageToUser("➡️ Next: $it") }
 
         return ThinkResult(
             success = true,
             thought = thought,
             nextAction = nextAction,
-            message = "Thought recorded successfully"
+            message = "Thought recorded successfully",
         )
     }
 
@@ -65,7 +61,7 @@ public class ThinkTool public constructor(
         @LLMDescription("Potential challenges or constraints")
         challenges: List<String>? = null,
         @LLMDescription("Possible approaches to solve the problem")
-        approaches: List<String>? = null
+        approaches: List<String>? = null,
     ): AnalysisResult {
         logger("🔍 Analyzing problem: $problem")
         messageHandler.addMessageToUser("🔍 Analyzing: $problem")
@@ -73,14 +69,14 @@ public class ThinkTool public constructor(
         val analysis = ProblemAnalysis(
             problem = problem,
             components = components,
-            challenges = challenges ?: emptyList(),
-            approaches = approaches ?: emptyList()
+            challenges = challenges.orEmpty(),
+            approaches = approaches.orEmpty(),
         )
 
         return AnalysisResult(
             success = true,
             analysis = analysis,
-            message = "Problem analysis complete"
+            message = "Problem analysis complete",
         )
     }
 
@@ -95,7 +91,7 @@ public class ThinkTool public constructor(
         @LLMDescription("The specific steps to achieve the goal")
         steps: List<String>,
         @LLMDescription("Optional estimated time or complexity for each step")
-        stepComplexity: List<String>? = null
+        stepComplexity: List<String>? = null,
     ): PlanResult {
         logger("📋 Creating plan for: $goal")
         messageHandler.addMessageToUser("📋 Planning: $goal")
@@ -104,21 +100,25 @@ public class ThinkTool public constructor(
             PlanStep(
                 number = index + 1,
                 description = step,
-                complexity = stepComplexity?.getOrNull(index) ?: "medium"
+                complexity = stepComplexity?.getOrNull(index) ?: DEFAULT_STEP_COMPLEXITY,
             )
         }
 
         val plan = ExecutionPlan(
             goal = goal,
             steps = planSteps,
-            totalSteps = steps.size
+            totalSteps = steps.size,
         )
 
         return PlanResult(
             success = true,
             plan = plan,
-            message = "Created plan with ${steps.size} steps for: $goal"
+            message = "Created plan with ${steps.size} steps for: $goal",
         )
+    }
+
+    private companion object {
+        const val DEFAULT_STEP_COMPLEXITY: String = "medium"
     }
 }
 
@@ -130,7 +130,7 @@ public data class ThinkResult(
     val success: Boolean,
     val thought: String,
     val nextAction: String?,
-    val message: String
+    val message: String,
 ) {
     override fun toString(): String = buildString {
         appendLine("Thought:")
@@ -151,7 +151,7 @@ public data class ProblemAnalysis(
     val problem: String,
     val components: List<String>,
     val challenges: List<String>,
-    val approaches: List<String>
+    val approaches: List<String>,
 )
 
 /**
@@ -161,7 +161,7 @@ public data class ProblemAnalysis(
 public data class AnalysisResult(
     val success: Boolean,
     val analysis: ProblemAnalysis,
-    val message: String
+    val message: String,
 ) {
     override fun toString(): String = buildString {
         appendLine("Problem: ${analysis.problem}")
@@ -188,7 +188,7 @@ public data class AnalysisResult(
 public data class PlanStep(
     val number: Int,
     val description: String,
-    val complexity: String
+    val complexity: String,
 )
 
 /**
@@ -198,7 +198,7 @@ public data class PlanStep(
 public data class ExecutionPlan(
     val goal: String,
     val steps: List<PlanStep>,
-    val totalSteps: Int
+    val totalSteps: Int,
 )
 
 /**
@@ -208,7 +208,7 @@ public data class ExecutionPlan(
 public data class PlanResult(
     val success: Boolean,
     val plan: ExecutionPlan,
-    val message: String
+    val message: String,
 ) {
     override fun toString(): String = buildString {
         appendLine("Goal: ${plan.goal}")

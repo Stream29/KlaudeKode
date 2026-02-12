@@ -29,7 +29,7 @@ public sealed interface AgentEvent {
      */
     public data class ToolCallStarting(
         val toolName: String,
-        val arguments: String
+        val arguments: String,
     ) : AgentEvent
 
     /**
@@ -37,14 +37,14 @@ public sealed interface AgentEvent {
      */
     public data class ToolCallCompleted(
         val toolName: String,
-        val result: String
+        val result: String,
     ) : AgentEvent
 
     /**
      * Agent is sending a message to the user.
      */
     public data class MessageToUser(
-        val message: String
+        val message: String,
     ) : AgentEvent
 
     /**
@@ -52,7 +52,7 @@ public sealed interface AgentEvent {
      */
     public data class Error(
         val message: String,
-        val exception: Throwable? = null
+        val exception: Throwable? = null,
     ) : AgentEvent
 }
 
@@ -62,7 +62,5 @@ public sealed interface AgentEvent {
 public interface AgentEventListener {
     public fun onEvent(event: AgentEvent)
 
-    public fun onEvent(event: AgentEvent, sessionId: String) {
-        onEvent(event)
-    }
+    public fun onEvent(event: AgentEvent, sessionId: String): Unit = onEvent(event)
 }

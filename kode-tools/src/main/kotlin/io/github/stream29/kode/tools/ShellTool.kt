@@ -5,6 +5,8 @@ import ai.koog.agents.core.tools.annotations.Tool
 import ai.koog.agents.core.tools.reflect.ToolSet
 import io.github.stream29.kode.ui.core.MessageHandler
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import java.io.File
@@ -24,6 +26,9 @@ public class ShellTool public constructor(
 
     public companion object {
         private const val MAX_TIMEOUT_SECONDS = 5 * 60L // 5 minutes max
+        private const val MAX_STDOUT_CHARS = 10_000
+        private const val MAX_STDERR_CHARS = 5_000
+        private const val TIMEOUT_STREAM_CHARS = 5_000
     }
 
     @Tool
@@ -36,7 +41,7 @@ public class ShellTool public constructor(
         @LLMDescription("The bash command to execute")
         command: String,
         @LLMDescription("Timeout in seconds (1-300, default 60)")
-        timeout: Int = 60
+        timeout: Int = 60,
     ): ShellResult = withContext(Dispatchers.IO) {
         if (command.isBlank()) {
             return@withContext ShellResult(
@@ -44,7 +49,7 @@ public class ShellTool public constructor(
                 exitCode = -1,
                 stdout = "",
                 stderr = "Command cannot be empty",
-                message = "Error: Command cannot be empty"
+                message = "Error: Command cannot be empty",
             )
         }
 
@@ -62,30 +67,51 @@ public class ShellTool public constructor(
 
             val process = processBuilder.start()
 
-            // Read stdout and stderr concurrently
-            val stdout = process.inputStream.bufferedReader().use { it.readText() }
-            val stderr = process.errorStream.bufferedReader().use { it.readText() }
+            val processResult = coroutineScope {
+                val stdoutDeferred = async { process.inputStream.bufferedReader().use { it.readText() } }
+                val stderrDeferred = async { process.errorStream.bufferedReader().use { it.readText() } }
 
-            // Wait for process with timeout
-            val finished = process.waitFor(actualTimeout.toLong(), TimeUnit.SECONDS)
+                val finished = process.waitFor(actualTimeout.toLong(), TimeUnit.SECONDS)
+                if (!finished) {
+                    process.destroyForcibly()
+                    process.waitFor(1, TimeUnit.SECONDS)
+                }
+
+                ProcessExecutionResult(
+                    stdout = stdoutDeferred.await(),
+                    stderr = stderrDeferred.await(),
+                    finished = finished,
+                )
+            }
+
+            val stdout = processResult.stdout
+            val stderr = processResult.stderr
+            val finished = processResult.finished
 
             if (!finished) {
-                process.destroyForcibly()
                 logger("⏱️ Command timed out after ${actualTimeout}s")
                 return@withContext ShellResult(
                     success = false,
                     exitCode = -1,
-                    stdout = stdout.take(5000),
-                    stderr = stderr.take(5000),
-                    message = "Error: Command timed out after ${actualTimeout} seconds"
+                    stdout = stdout.take(TIMEOUT_STREAM_CHARS),
+                    stderr = stderr.take(TIMEOUT_STREAM_CHARS),
+                    message = "Error: Command timed out after $actualTimeout seconds",
                 )
             }
 
             val exitCode = process.exitValue()
             val success = exitCode == 0
 
-            val truncatedStdout = if (stdout.length > 10000) stdout.take(10000) + "\n[Output truncated...]" else stdout
-            val truncatedStderr = if (stderr.length > 5000) stderr.take(5000) + "\n[Error output truncated...]" else stderr
+            val truncatedStdout = truncateOutput(
+                value = stdout,
+                maxLength = MAX_STDOUT_CHARS,
+                suffix = "\n[Output truncated...]",
+            )
+            val truncatedStderr = truncateOutput(
+                value = stderr,
+                maxLength = MAX_STDERR_CHARS,
+                suffix = "\n[Error output truncated...]",
+            )
 
             logger("✅ Command completed with exit code: $exitCode")
 
@@ -94,7 +120,7 @@ public class ShellTool public constructor(
                 exitCode = exitCode,
                 stdout = truncatedStdout,
                 stderr = truncatedStderr,
-                message = if (success) "Command executed successfully" else "Command failed with exit code: $exitCode"
+                message = if (success) "Command executed successfully" else "Command failed with exit code: $exitCode",
             )
         } catch (e: Exception) {
             logger("❌ Command execution failed: ${e.message}")
@@ -103,7 +129,7 @@ public class ShellTool public constructor(
                 exitCode = -1,
                 stdout = "",
                 stderr = e.message ?: "Unknown error",
-                message = "Error executing command: ${e.message}"
+                message = "Error executing command: ${e.message}",
             )
         }
     }
@@ -112,7 +138,7 @@ public class ShellTool public constructor(
     @LLMDescription("Execute a Gradle command using the wrapper")
     public suspend fun runGradleCommand(
         @LLMDescription("The Gradle arguments (e.g., 'build', 'test', 'run')")
-        args: String
+        args: String,
     ): ShellResult {
         val gradleCmd = if (System.getProperty("os.name").lowercase().contains("win")) {
             "./gradlew.bat"
@@ -121,6 +147,16 @@ public class ShellTool public constructor(
         }
         return executeShellCommand("$gradleCmd $args", timeout = 300)
     }
+
+    private fun truncateOutput(value: String, maxLength: Int, suffix: String): String {
+        return if (value.length > maxLength) value.take(maxLength) + suffix else value
+    }
+
+    private data class ProcessExecutionResult(
+        val stdout: String,
+        val stderr: String,
+        val finished: Boolean,
+    )
 }
 
 /**
@@ -132,7 +168,7 @@ public data class ShellResult(
     val exitCode: Int,
     val stdout: String,
     val stderr: String,
-    val message: String
+    val message: String,
 ) {
     override fun toString(): String = buildString {
         appendLine(message)

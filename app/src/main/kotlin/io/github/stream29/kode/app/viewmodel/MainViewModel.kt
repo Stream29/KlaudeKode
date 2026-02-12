@@ -18,6 +18,7 @@ import ai.koog.agents.features.acp.AcpAgent
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import io.github.stream29.kode.app.service.WebToolsProvider
+import io.github.stream29.kode.app.util.parseKeyValueLines
 import io.github.stream29.kode.app.model.extractToolCallPrimaryTextArg
 import io.github.stream29.kode.app.model.extractToolResultText
 import io.github.stream29.kode.app.model.isAwaitUserInputToolCall
@@ -39,10 +40,7 @@ import io.github.stream29.kode.session.core.storage.SortOrder
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.AgentState
-import io.github.stream29.kode.ui.core.ApprovalHandler
 import io.github.stream29.kode.ui.core.MessageHandler
-import io.github.stream29.kode.ui.core.ToolApprovalDecision
-import io.github.stream29.kode.ui.core.ToolApprovalRequest
 import com.agentclientprotocol.agent.Agent
 import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.agent.AgentSession
@@ -72,9 +70,12 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.withLock
 import java.awt.Desktop
@@ -88,7 +89,7 @@ public class MainViewModel(
     private val agentFactoryProvider: SessionAwareAgentFactoryProvider,
     private val webToolsProvider: WebToolsProvider,
     private val hookManager: HookManager,
-) : ViewModel(), MessageHandler, AgentState, AgentEventListener, ApprovalHandler {
+) : ViewModel(), MessageHandler, AgentState, AgentEventListener {
     private var autoSaveEnabled: Boolean = false
 
     private val defaultAgentPresets: List<AgentPreset> = listOf(
@@ -96,19 +97,16 @@ public class MainViewModel(
             name = "build",
             description = "Full access agent for development",
             disabledTools = emptySet(),
-            defaultYolo = false,
         ),
         AgentPreset(
             name = "plan",
             description = "Read-only planning agent",
             disabledTools = setOf("shell", "task", "file-edit"),
-            defaultYolo = false,
         ),
         AgentPreset(
             name = "explore",
             description = "Exploration agent (search-heavy)",
             disabledTools = setOf("shell", "task", "file-edit"),
-            defaultYolo = false,
         ),
     )
 
@@ -119,6 +117,171 @@ public class MainViewModel(
         AppUiState(agentPresets = defaultAgentPresets)
     )
     public val appUiState: StateFlow<AppUiState> = _appUiState.asStateFlow()
+
+    public val mainChromeUiState: StateFlow<MainChromeUiState> = _appUiState
+        .map { state ->
+            MainChromeUiState(
+                currentPage = state.currentPage,
+                showConfigEditor = state.showConfigEditor,
+                uiTheme = state.uiTheme,
+                toasts = state.toasts,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = MainChromeUiState(),
+        )
+
+    public val chatPageUiState: StateFlow<ChatPageUiState> = _appUiState
+        .map { state ->
+            ChatPageUiState(
+                sessionSummaries = state.sessionSummaries,
+                messageAlignment = state.messageAlignment,
+                messageMaxWidthRatio = state.messageMaxWidthRatio,
+                agentPresets = state.agentPresets,
+                activePresetName = state.activePresetName,
+                models = state.models,
+                auths = state.auths,
+                activeModelId = state.activeModelId,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = ChatPageUiState(),
+        )
+
+    public val sessionsPageUiState: StateFlow<SessionsPageUiState> = _appUiState
+        .map { state ->
+            SessionsPageUiState(
+                sessionSummaries = state.sessionSummaries,
+                sessionSearchQuery = state.sessionSearchQuery,
+                sessionStatusFilter = state.sessionStatusFilter,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = SessionsPageUiState(),
+        )
+
+    public val toolsPageUiState: StateFlow<ToolsPageUiState> = _appUiState
+        .map { state ->
+            ToolsPageUiState(
+                disabledTools = state.disabledTools,
+                toolLogs = state.toolLogs,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = ToolsPageUiState(),
+        )
+
+    public val mcpPageUiState: StateFlow<McpPageUiState> = _appUiState
+        .map { state ->
+            McpPageUiState(
+                mcpToolTimeoutMs = state.mcpToolTimeoutMs,
+                mcpServers = state.mcpServers,
+                mcpTestResults = state.mcpTestResults,
+                mcpTestsInFlight = state.mcpTestsInFlight,
+                mcpHealthResults = state.mcpHealthResults,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = McpPageUiState(),
+        )
+
+    public val acpPageUiState: StateFlow<AcpPageUiState> = _appUiState
+        .map { state ->
+            AcpPageUiState(
+                acpHost = state.acpHost,
+                acpPort = state.acpPort,
+                acpRunning = state.acpRunning,
+                acpLogs = state.acpLogs,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = AcpPageUiState(),
+        )
+
+    public val terminalPageUiState: StateFlow<TerminalPageUiState> = _appUiState
+        .map { state ->
+            TerminalPageUiState(
+                terminalCommand = state.terminalCommand,
+                terminalOutput = state.terminalOutput,
+                terminalRunning = state.terminalRunning,
+                scriptContent = state.scriptContent,
+                scriptOutput = state.scriptOutput,
+                scriptRunning = state.scriptRunning,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = TerminalPageUiState(),
+        )
+
+    public val webPageUiState: StateFlow<WebPageUiState> = _appUiState
+        .map { state ->
+            WebPageUiState(
+                webUrl = state.webUrl,
+                webContent = state.webContent,
+                webLoading = state.webLoading,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = WebPageUiState(),
+        )
+
+    public val infoPageUiState: StateFlow<InfoPageUiState> = _appUiState
+        .map { state ->
+            InfoPageUiState(
+                presetSpecPath = state.presetSpecPath,
+                presetSpecPreview = state.presetSpecPreview,
+                skillsPreview = state.skillsPreview,
+                modelsCount = state.models.size,
+                authCount = state.auths.size,
+                mcpServerCount = state.mcpServers.size,
+                disabledTools = state.disabledTools,
+                acpRunning = state.acpRunning,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = InfoPageUiState(),
+        )
+
+    public val configEditorUiState: StateFlow<ConfigEditorUiState> = _appUiState
+        .map { state ->
+            ConfigEditorUiState(
+                configText = state.configText,
+                configError = state.configError,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.Eagerly,
+            initialValue = ConfigEditorUiState(),
+        )
 
     // UI State
     public var taskInput: String
@@ -495,22 +658,6 @@ public class MainViewModel(
         get() = _appUiState.value.webLoading
         set(value) = updateAppUiState { it.copy(webLoading = value) }
 
-    public var yoloEnabled: Boolean
-        get() = _appUiState.value.yoloEnabled
-        set(value) = updateAppUiState { it.copy(yoloEnabled = value) }
-
-    public var approvalDefaultYolo: Boolean
-        get() = _appUiState.value.approvalDefaultYolo
-        set(value) = updateAppUiState { it.copy(approvalDefaultYolo = value) }
-
-    public var approvalAutoApproveActions: List<String>
-        get() = _appUiState.value.approvalAutoApproveActions
-        set(value) = updateAppUiState { it.copy(approvalAutoApproveActions = value) }
-
-    public var pendingApprovals: List<PendingApproval>
-        get() = _appUiState.value.pendingApprovals
-        set(value) = updateAppUiState { it.copy(pendingApprovals = value) }
-
     public var disabledTools: Set<String>
         get() = _appUiState.value.disabledTools
         set(value) = updateAppUiState { it.copy(disabledTools = value) }
@@ -555,9 +702,6 @@ public class MainViewModel(
     private var eventListener: AgentEventListener? = null
     private var agentFactory: SessionAwareAgentFactory? = null
     private var pendingTaskAfterSessionCreate: String? = null
-    private val approvalDeferreds: MutableMap<String, CompletableDeferred<ToolApprovalDecision>> = mutableMapOf()
-    private val autoApproveActions: MutableSet<String> = mutableSetOf()
-    private val autoApproveActionsBySession: MutableMap<String, MutableSet<String>> = mutableMapOf()
     private var acpProtocol: Protocol? = null
     private var acpTransport: StdioTransport? = null
     private var acpClientTransport: StdioTransport? = null
@@ -575,13 +719,7 @@ public class MainViewModel(
     }
 
     private fun updateSessionUiState(transform: (SessionUiState) -> SessionUiState) {
-        _sessionUiState.update { current ->
-            val updated = transform(current)
-            updateAppUiState { app ->
-                app.copy(session = updated)
-            }
-            updated
-        }
+        _sessionUiState.update(transform)
     }
 
     private fun enqueueToast(message: String) {
@@ -641,7 +779,6 @@ public class MainViewModel(
             auths = auths,
             models = models,
             messageHandler = this@MainViewModel,
-            approvalHandler = this@MainViewModel,
             disabledTools = disabledTools,
             mcpToolRegistry = mcpRegistry,
             eventListener = this@MainViewModel,
@@ -689,11 +826,6 @@ public class MainViewModel(
         lastOpenedSessionId = config.ui.lastOpenedSessionId
         messageAlignment = normalizeMessageAlignment(config.ui.messageAlignment)
         messageMaxWidthRatio = normalizeMessageWidthRatio(config.ui.messageMaxWidthRatio)
-        approvalDefaultYolo = config.approvals.yoloDefault
-        approvalAutoApproveActions = config.approvals.autoApproveActions
-        yoloEnabled = approvalDefaultYolo
-        autoApproveActions.clear()
-        autoApproveActions.addAll(approvalAutoApproveActions)
         applyAgentPresetFromConfig()
         val webSearch = config.services.webSearch
         webSearchProvider = webSearch?.provider ?: "none"
@@ -1378,8 +1510,6 @@ public class MainViewModel(
                 clearSessionRunState(sessionId)
                 setSessionTitleGenerating(sessionId = sessionId, isGenerating = false)
                 inputDeferreds.remove(sessionId)
-                pendingApprovals = pendingApprovals.filterNot { it.sessionId == sessionId }
-                autoApproveActionsBySession.remove(sessionId)
                 loadSessionList()
                 addSystemMessage("Session deleted")
             } catch (e: Exception) {
@@ -1448,6 +1578,10 @@ public class MainViewModel(
     }
 
     public fun updateCurrentSessionWorkDir(input: String) {
+        if (!canEditSessionWorkDir()) {
+            addSystemMessage("Session work directory can only be changed while suspended")
+            return
+        }
         val normalized = normalizeSessionDir(input)
         currentSessionWorkDir = normalized.orEmpty()
         val sessionId = currentSessionId ?: return
@@ -1558,11 +1692,20 @@ public class MainViewModel(
     }
 
     public fun openSessionDirDialog() {
+        if (!canEditSessionWorkDir()) {
+            addSystemMessage("Session work directory can only be changed while suspended")
+            return
+        }
         sessionDirDraft = currentSessionWorkDir
         showSessionDirDialog = true
     }
 
     public fun confirmSessionDirDialog() {
+        if (!canEditSessionWorkDir()) {
+            showSessionDirDialog = false
+            addSystemMessage("Session work directory can only be changed while suspended")
+            return
+        }
         updateCurrentSessionWorkDir(sessionDirDraft)
         showSessionDirDialog = false
     }
@@ -1573,6 +1716,11 @@ public class MainViewModel(
 
     private fun buildDefaultSessionDirInput(): String {
         return defaultSessionDir.trim().ifBlank { "." }
+    }
+
+    private fun canEditSessionWorkDir(): Boolean {
+        val session = _sessionUiState.value
+        return session.currentSessionId != null && !session.isRunning && !session.isWaitingForInput
     }
 
     private fun normalizeSessionDir(input: String): String? {
@@ -1800,10 +1948,6 @@ preset:
 ui:
   theme: dark
 
-approvals:
-  yolo_default: false
-  auto_approve_actions: []
-
 logging:
   level: info
   file: null"""
@@ -1869,7 +2013,6 @@ logging:
                         override fun log(message: String) {}
                         override suspend fun requestInput(): String = ""
                     },
-                    approvalHandler = null,
                     disabledTools = emptySet(),
                     mcpToolRegistry = null,
                     eventListener = null,
@@ -1913,8 +2056,6 @@ logging:
                 sessionRunStates = emptyMap()
                 sessionTitleGeneratingIds = emptySet()
                 inputDeferreds.clear()
-                pendingApprovals = emptyList()
-                autoApproveActionsBySession.clear()
                 loadSessionList()
                 addSystemMessage("All sessions cleared")
             } catch (e: Exception) {
@@ -2014,77 +2155,6 @@ logging:
         }
     }
 
-    override suspend fun requestApproval(request: ToolApprovalRequest): ToolApprovalDecision {
-        val sessionId = currentSessionId ?: return ToolApprovalDecision.Reject
-        return requestApproval(request, sessionId)
-    }
-
-    override suspend fun requestApproval(
-        request: ToolApprovalRequest,
-        sessionId: String
-    ): ToolApprovalDecision {
-        if (yoloEnabled) {
-            return ToolApprovalDecision.Approve
-        }
-        if (autoApproveActions.contains(request.toolName)) {
-            return ToolApprovalDecision.Approve
-        }
-        if (autoApproveActionsBySession[sessionId]?.contains(request.toolName) == true) {
-            return ToolApprovalDecision.Approve
-        }
-
-        val requestId = if (request.id.isBlank()) {
-            "${sessionId}_${java.util.UUID.randomUUID()}"
-        } else {
-            "${sessionId}_${request.id}"
-        }
-        val normalizedRequest = request.copy(id = requestId)
-        val deferred = CompletableDeferred<ToolApprovalDecision>()
-        approvalDeferreds[requestId] = deferred
-
-        withContext(Dispatchers.Main) {
-            pendingApprovals = pendingApprovals + PendingApproval(
-                sessionId = sessionId,
-                request = normalizedRequest
-            )
-        }
-
-        return deferred.await()
-    }
-
-    public fun approvePendingRequest(requestId: String, decision: ToolApprovalDecision) {
-        val deferred = approvalDeferreds.remove(requestId) ?: return
-        if (decision == ToolApprovalDecision.ApproveForSession) {
-            pendingApprovals.find { it.request.id == requestId }?.let { pending ->
-                val sessionSet = autoApproveActionsBySession
-                    .getOrPut(pending.sessionId) { mutableSetOf() }
-                sessionSet.add(pending.request.toolName)
-            }
-        }
-        pendingApprovals = pendingApprovals.filterNot { it.request.id == requestId }
-        deferred.complete(
-            if (decision == ToolApprovalDecision.ApproveForSession) {
-                ToolApprovalDecision.Approve
-            } else {
-                decision
-            }
-        )
-    }
-
-    public fun addApprovalAction(action: String) {
-        val trimmed = action.trim()
-        if (trimmed.isBlank()) {
-            return
-        }
-        autoApproveActions.add(trimmed)
-        approvalAutoApproveActions = autoApproveActions.toList().sorted()
-    }
-
-    public fun removeApprovalAction(action: String) {
-        autoApproveActions.remove(action)
-        approvalAutoApproveActions = autoApproveActions.toList().sorted()
-    }
-
     public fun switchModel(modelId: String) {
         val modelConfig = models.find { it.id == modelId }
         if (modelConfig != null) {
@@ -2177,10 +2247,6 @@ logging:
                     messageMaxWidthRatio = messageMaxWidthRatio,
                     lastOpenedSessionId = lastOpenedSessionId,
                 ),
-                approvals = current.approvals.copy(
-                    yoloDefault = approvalDefaultYolo,
-                    autoApproveActions = approvalAutoApproveActions
-                ),
                 tools = current.tools.copy(
                     disabled = disabledTools.toList()
                 ),
@@ -2231,8 +2297,6 @@ logging:
         activePresetName = preset.name
         presetBuiltin = preset.name
         disabledTools = preset.disabledTools
-        approvalDefaultYolo = preset.defaultYolo
-        yoloEnabled = preset.defaultYolo
         currentSessionId?.let { sessionId ->
             bindPresetForSession(sessionId = sessionId)
         }
@@ -2572,7 +2636,10 @@ logging:
         scriptRunning = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val result = io.github.stream29.kode.scripting.eval(script)
+                val result = io.github.stream29.kode.scripting.eval(
+                    script = script,
+                    workingDir = resolveSessionWorkingDir(currentSessionWorkDir).absolutePath,
+                )
                 scriptOutput = when (result) {
                     is io.github.stream29.kode.scripting.EvalResult.Success -> {
                         "Return: ${result.returnValue}\n\nStdout:\n${result.stdout}"
@@ -2790,19 +2857,6 @@ logging:
         )
     }
 
-    private fun parseKeyValueLines(input: String, separator: String): Map<String, String> {
-        if (input.isBlank()) {
-            return emptyMap()
-        }
-        return input.lines()
-            .map { it.trim() }
-            .filter { it.isNotBlank() && it.contains(separator) }
-            .associate {
-                val parts = it.split(separator, limit = 2)
-                parts[0].trim() to parts[1].trim()
-            }
-    }
-
     private fun mapToLines(map: Map<String, String>?, separator: String): String {
         if (map.isNullOrEmpty()) {
             return ""
@@ -2841,8 +2895,6 @@ logging:
             lastOpenedSessionId = lastOpenedSessionId,
             messageAlignment = messageAlignment,
             messageMaxWidthRatio = messageMaxWidthRatio,
-            approvalDefaultYolo = approvalDefaultYolo,
-            approvalAutoApproveActions = approvalAutoApproveActions,
             disabledTools = disabledTools,
             webSearchProvider = webSearchProvider,
             webSearchApiKey = webSearchApiKey,
@@ -3417,7 +3469,6 @@ public data class AgentPreset(
     val name: String,
     val description: String,
     val disabledTools: Set<String>,
-    val defaultYolo: Boolean
 )
 
 public data class SessionUiState(
@@ -3438,8 +3489,82 @@ public data class SessionUiState(
     val isGeneratingSessionTitle: Boolean = false,
 )
 
+public data class MainChromeUiState(
+    val currentPage: io.github.stream29.kode.app.view.AppPage = io.github.stream29.kode.app.view.AppPage.Chat,
+    val showConfigEditor: Boolean = false,
+    val uiTheme: String = "dark",
+    val toasts: List<UiToast> = emptyList(),
+)
+
+public data class ChatPageUiState(
+    val sessionSummaries: List<SessionSummary> = emptyList(),
+    val messageAlignment: String = "left",
+    val messageMaxWidthRatio: Float = 0.9f,
+    val agentPresets: List<AgentPreset> = emptyList(),
+    val activePresetName: String = "build",
+    val models: List<LlmModelConfig> = emptyList(),
+    val auths: List<LlmAuthConfig> = emptyList(),
+    val activeModelId: String? = null,
+)
+
+public data class SessionsPageUiState(
+    val sessionSummaries: List<SessionSummary> = emptyList(),
+    val sessionSearchQuery: String = "",
+    val sessionStatusFilter: SessionStatusFilter = SessionStatusFilter.ALL,
+)
+
+public data class ToolsPageUiState(
+    val disabledTools: Set<String> = emptySet(),
+    val toolLogs: List<String> = emptyList(),
+)
+
+public data class McpPageUiState(
+    val mcpToolTimeoutMs: Int = 60000,
+    val mcpServers: Map<String, io.github.stream29.kode.config.api.McpServerConfig> = emptyMap(),
+    val mcpTestResults: Map<String, MainViewModel.McpTestResult> = emptyMap(),
+    val mcpTestsInFlight: Set<String> = emptySet(),
+    val mcpHealthResults: Map<String, MainViewModel.McpHealthResult> = emptyMap(),
+)
+
+public data class AcpPageUiState(
+    val acpHost: String = "127.0.0.1",
+    val acpPort: Int = 5494,
+    val acpRunning: Boolean = false,
+    val acpLogs: List<String> = emptyList(),
+)
+
+public data class TerminalPageUiState(
+    val terminalCommand: String = "",
+    val terminalOutput: String = "",
+    val terminalRunning: Boolean = false,
+    val scriptContent: String = "",
+    val scriptOutput: String = "",
+    val scriptRunning: Boolean = false,
+)
+
+public data class WebPageUiState(
+    val webUrl: String = "",
+    val webContent: String = "",
+    val webLoading: Boolean = false,
+)
+
+public data class InfoPageUiState(
+    val presetSpecPath: String = "",
+    val presetSpecPreview: String = "",
+    val skillsPreview: List<String> = emptyList(),
+    val modelsCount: Int = 0,
+    val authCount: Int = 0,
+    val mcpServerCount: Int = 0,
+    val disabledTools: Set<String> = emptySet(),
+    val acpRunning: Boolean = false,
+)
+
+public data class ConfigEditorUiState(
+    val configText: String = "",
+    val configError: String? = null,
+)
+
 public data class AppUiState(
-    val session: SessionUiState = SessionUiState(),
     val currentPage: io.github.stream29.kode.app.view.AppPage = io.github.stream29.kode.app.view.AppPage.Chat,
     val showSessionManager: Boolean = false,
     val showConfigEditor: Boolean = false,
@@ -3502,10 +3627,6 @@ public data class AppUiState(
     val webUrl: String = "",
     val webContent: String = "",
     val webLoading: Boolean = false,
-    val yoloEnabled: Boolean = false,
-    val approvalDefaultYolo: Boolean = false,
-    val approvalAutoApproveActions: List<String> = emptyList(),
-    val pendingApprovals: List<PendingApproval> = emptyList(),
     val toasts: List<UiToast> = emptyList(),
     val disabledTools: Set<String> = emptySet(),
     val toolLogs: List<String> = emptyList(),
@@ -3522,11 +3643,6 @@ private data class SessionRunState(
     val isRunning: Boolean = false,
     val isWaitingForInput: Boolean = false,
     val currentTask: String = "",
-)
-
-public data class PendingApproval(
-    val sessionId: String,
-    val request: ToolApprovalRequest
 )
 
 private data class SessionSearchHit(
@@ -3548,8 +3664,6 @@ private data class PreferencesSnapshot(
     val lastOpenedSessionId: String?,
     val messageAlignment: String,
     val messageMaxWidthRatio: Float,
-    val approvalDefaultYolo: Boolean,
-    val approvalAutoApproveActions: List<String>,
     val disabledTools: Set<String>,
     val webSearchProvider: String,
     val webSearchApiKey: String,

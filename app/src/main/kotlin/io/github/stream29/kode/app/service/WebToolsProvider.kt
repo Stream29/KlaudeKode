@@ -14,10 +14,8 @@ public class DefaultWebToolsProvider : WebToolsProvider {
     override fun create(
         messageHandler: MessageHandler,
         logger: (String) -> Unit,
-    ): WebTools {
-        return WebTools(
-            messageHandler = messageHandler,
-            logger = logger,
-        )
-    }
+    ): WebTools = WebTools(
+        messageHandler = messageHandler,
+        logger = logger,
+    )
 }
