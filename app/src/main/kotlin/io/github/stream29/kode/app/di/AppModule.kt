@@ -8,6 +8,14 @@ import io.github.stream29.kode.config.fs.FileSystemConfigFactory
 import io.github.stream29.kode.config.fs.FileSystemLocations
 import io.github.stream29.kode.core.agent.SessionAwareAgentFactoryProvider
 import io.github.stream29.kode.core.hooks.HookManager
+import io.github.stream29.kode.oauth.core.DefaultOAuthAuthCodePkceClient
+import io.github.stream29.kode.oauth.core.DefaultOAuthCredentialManager
+import io.github.stream29.kode.oauth.core.DefaultOAuthDeviceFlowClient
+import io.github.stream29.kode.oauth.core.FileOAuthTokenStore
+import io.github.stream29.kode.oauth.core.OAuthAuthCodePkceClient
+import io.github.stream29.kode.oauth.core.OAuthCredentialManager
+import io.github.stream29.kode.oauth.core.OAuthDeviceFlowClient
+import io.github.stream29.kode.oauth.core.OAuthTokenStore
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.SessionRepository
 import io.github.stream29.kode.session.core.storage.FileSessionStorage
@@ -26,9 +34,7 @@ public val sessionModule: Module = module {
     single<FileSessionStorage> {
         val configManager = get<ConfigManager>()
         val configuredDataDir = runBlocking {
-            runCatching {
-                configManager.load().storage.dataDir
-            }.getOrNull()
+            configManager.load().storage.dataDir
         }
         FileSessionStorage(dataDir = FileSystemLocations.resolveDataDir(path = configuredDataDir))
     }
@@ -56,6 +62,31 @@ public val coreModule: Module = module {
             hookManager = get(),
         )
     }
+
+    single<OAuthAuthCodePkceClient> {
+        DefaultOAuthAuthCodePkceClient()
+    }
+
+    single<OAuthDeviceFlowClient> {
+        DefaultOAuthDeviceFlowClient()
+    }
+
+    single<OAuthTokenStore> {
+        val configManager = get<ConfigManager>()
+        val configuredDataDir = runBlocking {
+            configManager.load().storage.dataDir
+        }
+        val oauthDir = FileSystemLocations.resolveDataDir(path = configuredDataDir).resolve("oauth")
+        FileOAuthTokenStore(baseDir = oauthDir)
+    }
+
+    single<OAuthCredentialManager> {
+        DefaultOAuthCredentialManager(
+            authCodePkceClient = get(),
+            deviceFlowClient = get(),
+            tokenStore = get(),
+        )
+    }
 }
 
 public val viewModelModule: Module = module {
@@ -66,6 +97,7 @@ public val viewModelModule: Module = module {
             agentFactoryProvider = get(),
             webToolsProvider = get(),
             hookManager = get(),
+            oauthCredentialManager = get(),
         )
     }
 }

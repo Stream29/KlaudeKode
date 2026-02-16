@@ -39,6 +39,7 @@ public class SessionAwareAgentFactory(
     private data class SessionExecutionContext(
         val conversationAgent: ConversationAgent,
         val model: LLModel,
+        val modelParams: LLMParams?,
     )
 
     public val sessionBridge: KoogSessionBridge by lazy {
@@ -77,7 +78,7 @@ public class SessionAwareAgentFactory(
                 workDir = normalizedWorkDir,
                 maxIterations = null,
                 temperature = null,
-                customValues = null
+                customValues = mapOf(SESSION_CONFIG_MODEL_ID_KEY to modelId)
             )
         )
         return session.id
@@ -85,12 +86,21 @@ public class SessionAwareAgentFactory(
 
     public suspend fun runWithSession(sessionId: String, userInput: String, modelId: String): String {
         val context = prepareExecutionContext(sessionId = sessionId, modelId = modelId)
-        return context.conversationAgent.chat(sessionId, userInput, context.model)
+        return context.conversationAgent.chat(
+            sessionId = sessionId,
+            userInput = userInput,
+            model = context.model,
+            modelParams = context.modelParams,
+        )
     }
 
     public suspend fun continueSession(sessionId: String, modelId: String): String {
         val context = prepareExecutionContext(sessionId = sessionId, modelId = modelId)
-        return context.conversationAgent.continueSession(sessionId, context.model)
+        return context.conversationAgent.continueSession(
+            sessionId = sessionId,
+            model = context.model,
+            modelParams = context.modelParams,
+        )
     }
 
     public suspend fun generateSessionTitleFromConversation(sessionId: String, modelId: String): String? {
@@ -198,7 +208,7 @@ public class SessionAwareAgentFactory(
                 val session = requireSession(sessionId)
                 val workingDirectory = resolveWorkingDir(session)
                 val modelId = resolveModelIdForSession(session)
-                val model = ModelFactory.createModel(modelId, models, auths)
+                val modelRuntime = ModelFactory.resolveModelRuntime(modelId, models, auths)
                 val subConversationAgent = createConversationAgent(
                     sessionId = sessionId,
                     workingDir = workingDirectory,
@@ -209,7 +219,11 @@ public class SessionAwareAgentFactory(
                         canCreateSubagents = false,
                     ),
                 )
-                return subConversationAgent.runSubAgent(sessionId, model)
+                return subConversationAgent.runSubAgent(
+                    sessionId = sessionId,
+                    model = modelRuntime.model,
+                    modelParams = modelRuntime.params,
+                )
             }
         }
     }
@@ -217,9 +231,11 @@ public class SessionAwareAgentFactory(
     private suspend fun prepareExecutionContext(sessionId: String, modelId: String): SessionExecutionContext {
         val session = requireSession(sessionId)
         val workingDir = resolveWorkingDir(session)
+        val modelRuntime = ModelFactory.resolveModelRuntime(modelId, models, auths)
         return SessionExecutionContext(
             conversationAgent = createConversationAgent(sessionId, workingDir),
-            model = ModelFactory.createModel(modelId, models, auths),
+            model = modelRuntime.model,
+            modelParams = modelRuntime.params,
         )
     }
 
@@ -229,7 +245,19 @@ public class SessionAwareAgentFactory(
     }
 
     private fun resolveModelIdForSession(session: ConversationSession): String {
-        return models.firstOrNull { it.model == session.configuration.preferredModel }?.id ?: models.first().id
+        val preferredModelId = session.configuration.customValues
+            ?.get(SESSION_CONFIG_MODEL_ID_KEY)
+            ?.trim()
+            .orEmpty()
+        if (preferredModelId.isNotBlank()) {
+            val byId = models.firstOrNull { it.id == preferredModelId }
+            if (byId != null) {
+                return byId.id
+            }
+        }
+
+        val preferredModelName = session.configuration.preferredModel?.trim().orEmpty()
+        return models.firstOrNull { it.model == preferredModelName }?.id ?: models.first().id
     }
 
     private fun mergeMcpRegistry(baseRegistry: ToolRegistry): ToolRegistry {
@@ -326,6 +354,7 @@ public class SessionAwareAgentFactory(
         public val SYSTEM_PROMPT: String = ConversationAgent.DEFAULT_SYSTEM_PROMPT
         private const val SESSION_TITLE_TOOL_NAME: String = "output_title"
         private const val SESSION_TITLE_TOOL_ARG: String = "title"
+        private const val SESSION_CONFIG_MODEL_ID_KEY: String = "preferred_model_id"
         private const val SESSION_TITLE_USER_INSTRUCTION: String =
             "请为当前对话总结一个简洁标题。标题语言必须与对话主要语言保持一致。只需调用 output_title 工具返回标题。"
     }

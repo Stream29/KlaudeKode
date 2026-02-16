@@ -209,13 +209,13 @@ public class TaskTool public constructor(
         @LLMDescription("Target agent ID")
         agentId: String,
     ): AgentPollResult {
-        val taskInfo = when (val resolvedTask = resolveAgentTask(agentId)) {
-            is ResolvedAgentTask.Missing -> {
-                return missingAgentPollResult(agentId = agentId, reason = resolvedTask.reason)
-            }
-
-            is ResolvedAgentTask.Found -> resolvedTask.taskInfo
-        }
+        val resolvedTask = resolveAgentTask(agentId)
+        val foundTask = resolvedTask.foundOrNull()
+            ?: return missingAgentPollResult(
+                agentId = agentId,
+                reason = resolvedTask.missingReasonOrUnknown(),
+            )
+        val taskInfo = foundTask.taskInfo
 
         val sessionId = taskInfo.sessionId
         val manager = sessionManager
@@ -223,9 +223,7 @@ public class TaskTool public constructor(
             val polled = manager.pollSubAgentResult(sessionId, agentId)
             return fromSessionPollResult(
                 agentId = agentId,
-                pollStatus = polled.status,
-                result = polled.result,
-                error = polled.error,
+                pollResult = polled,
                 timeoutAsPending = false,
             )
         }
@@ -254,13 +252,12 @@ public class TaskTool public constructor(
         @LLMDescription("Timeout in seconds")
         timeout: Int = 300,
     ): AgentPollResult {
-        val foundTask = when (val resolvedTask = resolveAgentTask(agentId)) {
-            is ResolvedAgentTask.Missing -> {
-                return missingAgentPollResult(agentId = agentId, reason = resolvedTask.reason)
-            }
-
-            is ResolvedAgentTask.Found -> resolvedTask
-        }
+        val resolvedTask = resolveAgentTask(agentId)
+        val foundTask = resolvedTask.foundOrNull()
+            ?: return missingAgentPollResult(
+                agentId = agentId,
+                reason = resolvedTask.missingReasonOrUnknown(),
+            )
         val taskId = foundTask.taskId
         val taskInfo = foundTask.taskInfo
 
@@ -270,9 +267,7 @@ public class TaskTool public constructor(
             val awaited = manager.awaitSubAgentResult(sessionId, agentId, timeout)
             return fromSessionPollResult(
                 agentId = agentId,
-                pollStatus = awaited.status,
-                result = awaited.result,
-                error = awaited.error,
+                pollResult = awaited,
                 timeoutAsPending = true,
             )
         }
@@ -413,28 +408,23 @@ public class TaskTool public constructor(
     }
 
     private fun missingAgentPollResult(agentId: String, reason: AgentTaskMissingReason): AgentPollResult {
-        val message = when (reason) {
-            AgentTaskMissingReason.Unknown -> "Unknown agentId: $agentId"
-            AgentTaskMissingReason.Cleaned -> "Agent already cleaned: $agentId"
-        }
         return createAgentPollResult(
             success = false,
             status = "missing",
             agentId = agentId,
             result = null,
-            message = message,
+            message = reason.messageFor(agentId),
         )
     }
 
     private fun fromSessionPollResult(
         agentId: String,
-        pollStatus: SessionManager.SubAgentPollStatus,
-        result: String?,
-        error: String?,
+        pollResult: SessionManager.SubAgentPollResult,
         timeoutAsPending: Boolean,
     ): AgentPollResult {
-        return when (pollStatus) {
-            SessionManager.SubAgentPollStatus.Pending -> {
+        return when (pollResult) {
+            is SessionManager.SubAgentPollResult.Pending -> {
+                val error = pollResult.error
                 if (!timeoutAsPending) {
                     agentPendingPollResult(
                         agentId = agentId,
@@ -458,28 +448,28 @@ public class TaskTool public constructor(
                 }
             }
 
-            SessionManager.SubAgentPollStatus.Completed -> createAgentPollResult(
+            is SessionManager.SubAgentPollResult.Completed -> createAgentPollResult(
                 success = true,
                 status = "completed",
                 agentId = agentId,
-                result = result,
-                message = result ?: "completed",
+                result = pollResult.result,
+                message = pollResult.result,
             )
 
-            SessionManager.SubAgentPollStatus.Failed -> createAgentPollResult(
-                success = false,
-                status = "failed",
-                agentId = agentId,
-                result = null,
-                message = error ?: "failed",
-            )
-
-            SessionManager.SubAgentPollStatus.Missing -> createAgentPollResult(
+            is SessionManager.SubAgentPollResult.Missing -> createAgentPollResult(
                 success = false,
                 status = "missing",
                 agentId = agentId,
                 result = null,
-                message = "Target agent is already dead.",
+                message = pollResult.error,
+            )
+
+            is SessionManager.SubAgentPollResult.Failed -> createAgentPollResult(
+                success = false,
+                status = "failed",
+                agentId = agentId,
+                result = null,
+                message = pollResult.error ?: "failed",
             )
         }
     }
@@ -692,12 +682,7 @@ public class TaskTool public constructor(
     }
 
     private fun TaskStatus.toAgentStatus(): String {
-        return when (this) {
-            TaskStatus.TIMEOUT -> "timeout"
-            TaskStatus.FAILED -> "failed"
-            TaskStatus.COMPLETED -> "completed"
-            else -> "pending"
-        }
+        return agentStatus
     }
 
     private companion object {
@@ -754,22 +739,44 @@ private data class AgentTaskLookup(
 )
 
 private sealed interface ResolvedAgentTask {
+    fun foundOrNull(): Found? {
+        return this as? Found
+    }
+
+    fun missingReasonOrUnknown(): AgentTaskMissingReason {
+        return (this as? Missing)?.reason ?: AgentTaskMissingReason.Unknown
+    }
+
     data class Found(val taskId: Long, val taskInfo: TaskInfo) : ResolvedAgentTask
+
     data class Missing(val reason: AgentTaskMissingReason) : ResolvedAgentTask
 }
 
 private enum class AgentTaskMissingReason {
-    Unknown,
-    Cleaned,
+    Unknown {
+        override fun messageFor(agentId: String): String {
+            return "Unknown agentId: $agentId"
+        }
+    },
+    Cleaned {
+        override fun messageFor(agentId: String): String {
+            return "Agent already cleaned: $agentId"
+        }
+    },
+    ;
+
+    abstract fun messageFor(agentId: String): String
 }
 
 @Serializable
-public enum class TaskStatus {
-    RUNNING,
-    COMPLETED,
-    FAILED,
-    TIMEOUT,
-    NOT_FOUND,
+public enum class TaskStatus(
+    public val agentStatus: String,
+) {
+    RUNNING(agentStatus = "pending"),
+    COMPLETED(agentStatus = "completed"),
+    FAILED(agentStatus = "failed"),
+    TIMEOUT(agentStatus = "timeout"),
+    NOT_FOUND(agentStatus = "pending"),
 }
 
 @Serializable

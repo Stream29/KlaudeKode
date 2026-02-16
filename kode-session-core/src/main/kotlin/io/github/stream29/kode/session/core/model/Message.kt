@@ -92,27 +92,105 @@ public enum class MessageRole {
     /**
      * Human user.
      */
-    USER,
+    USER {
+        override fun toKoogMessage(
+            content: String,
+            timestamp: Instant,
+            structuredData: JsonElement?,
+        ): Message {
+            return Message.User(
+                content = content,
+                metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+            )
+        }
+    },
 
     /**
      * AI assistant/agent.
      */
-    ASSISTANT,
+    ASSISTANT {
+        override fun toKoogMessage(
+            content: String,
+            timestamp: Instant,
+            structuredData: JsonElement?,
+        ): Message {
+            return Message.Assistant(
+                content = content,
+                metaInfo = ResponseMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+            )
+        }
+    },
 
     /**
      * System prompt/instruction.
      */
-    SYSTEM,
+    SYSTEM {
+        override fun toKoogMessage(
+            content: String,
+            timestamp: Instant,
+            structuredData: JsonElement?,
+        ): Message {
+            return Message.System(
+                content = content,
+                metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+            )
+        }
+    },
 
     /**
      * Tool call request from the agent.
      */
-    TOOL_CALL,
+    TOOL_CALL {
+        override fun toKoogMessage(
+            content: String,
+            timestamp: Instant,
+            structuredData: JsonElement?,
+        ): Message {
+            val data = structuredData?.let { element ->
+                runCatching {
+                    Json.decodeFromJsonElement(ToolCallData.serializer(), element)
+                }.getOrNull()
+            }
+            return Message.Tool.Call(
+                id = data?.toolCallId,
+                tool = data?.toolName ?: "",
+                content = data?.arguments?.toString() ?: content,
+                metaInfo = ResponseMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+            )
+        }
+    },
 
     /**
      * Tool execution result.
      */
-    TOOL_RESULT,
+    TOOL_RESULT {
+        override fun toKoogMessage(
+            content: String,
+            timestamp: Instant,
+            structuredData: JsonElement?,
+        ): Message {
+            val data = structuredData?.let { element ->
+                runCatching {
+                    Json.decodeFromJsonElement(ToolResultData.serializer(), element)
+                }.getOrNull()
+            }
+            return Message.Tool.Result(
+                id = data?.toolCallId,
+                tool = data?.toolName ?: "",
+                content = data?.result?.toMessageContent() ?: content,
+                metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+            )
+        }
+    },
+
+    ;
+
+    @Suppress("DEPRECATION")
+    public abstract fun toKoogMessage(
+        content: String,
+        timestamp: Instant,
+        structuredData: JsonElement?,
+    ): Message
 }
 
 /**
@@ -166,58 +244,6 @@ public fun Message.toSessionDisplayContent(): String {
     return when (this) {
         is Message.Tool.Call -> "Calling tool: ${this.tool}"
         else -> this.content
-    }
-}
-
-@Suppress("DEPRECATION")
-public fun MessageRole.toKoogMessage(
-    content: String,
-    timestamp: Instant,
-    structuredData: JsonElement?,
-): Message {
-    return when (this) {
-        MessageRole.USER -> Message.User(
-            content = content,
-            metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
-        )
-
-        MessageRole.ASSISTANT -> Message.Assistant(
-            content = content,
-            metaInfo = ResponseMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
-        )
-
-        MessageRole.SYSTEM -> Message.System(
-            content = content,
-            metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
-        )
-
-        MessageRole.TOOL_CALL -> {
-            val data = structuredData?.let { element ->
-                runCatching {
-                    Json.decodeFromJsonElement(ToolCallData.serializer(), element)
-                }.getOrNull()
-            }
-            Message.Tool.Call(
-                id = data?.toolCallId,
-                tool = data?.toolName ?: "",
-                content = data?.arguments?.toString() ?: content,
-                metaInfo = ResponseMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
-            )
-        }
-
-        MessageRole.TOOL_RESULT -> {
-            val data = structuredData?.let { element ->
-                runCatching {
-                    Json.decodeFromJsonElement(ToolResultData.serializer(), element)
-                }.getOrNull()
-            }
-            Message.Tool.Result(
-                id = data?.toolCallId,
-                tool = data?.toolName ?: "",
-                content = data?.result?.toMessageContent() ?: content,
-                metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
-            )
-        }
     }
 }
 

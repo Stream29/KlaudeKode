@@ -21,6 +21,7 @@ markdownRenderer = "0.39.2"
 kotlinxCollectionsImmutable = "0.4.0"
 kotlinxSerializationCsv = "0.0.23"
 koin = "4.1.0"
+composeRemoteLayout = "0.2.0-alpha01"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -44,10 +45,13 @@ koinCompose = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
 koogAgents = { module = "ai.koog:koog-agents", version.ref = "koog" }
 koogAgentsFeaturesAcp = { module = "ai.koog:agents-features-acp", version.ref = "koog" }
 koogAgentsMcp = { module = "ai.koog:agents-mcp", version.ref = "koog" }
+koogAnthropicClient = { module = "ai.koog:prompt-executor-anthropic-client", version.ref = "koog" }
 koogOpenAiClient = { module = "ai.koog:prompt-executor-openai-client", version.ref = "koog" }
 koogGoogleClient = { module = "ai.koog:prompt-executor-google-client", version.ref = "koog" }
 koogDeepseekClient = { module = "ai.koog:prompt-executor-deepseek-client", version.ref = "koog" }
 ktorClientCio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktorServerCore = { module = "io.ktor:ktor-server-core-jvm", version.ref = "ktor" }
+ktorServerCio = { module = "io.ktor:ktor-server-cio-jvm", version.ref = "ktor" }
 
 # Kotlin scripting
 kotlinScriptingJvmHost = { module = "org.jetbrains.kotlin:kotlin-scripting-jvm-host", version.ref = "kotlin" }
@@ -72,12 +76,14 @@ javafxMedia = { module = "org.openjfx:javafx-media", version.ref = "javafx" }
 javafxWeb = { module = "org.openjfx:javafx-web", version.ref = "javafx" }
 javafxSwing = { module = "org.openjfx:javafx-swing", version.ref = "javafx" }
 markdownRendererM3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdownRenderer" }
+composeRemoteLayoutJvm = { module = "io.github.utsmannn:compose-remote-layout-jvm", version.ref = "composeRemoteLayout" }
 
 [bundles]
 koog = [
     "koogAgents",
     "koogAgentsFeaturesAcp",
     "koogAgentsMcp",
+    "koogAnthropicClient",
     "koogOpenAiClient",
     "koogGoogleClient",
     "koogDeepseekClient",

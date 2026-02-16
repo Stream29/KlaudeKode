@@ -34,10 +34,24 @@ include(":kode-ui-core")
 include(":kode-config-api")
 include(":kode-config-core")
 include(":kode-config-fs")
+include(":kode-oauth-core")
 // Legacy config module (deprecated, kept for compatibility)
 include(":kode-config")
 
 // Session management module (independent from Koog)
 include(":kode-session-core")
+
+// Provider preset modules
+include(":providers:provider-api")
+include(":providers:provider-builtin")
+include(":providers:provider-anthropic")
+include(":providers:provider-openai")
+include(":providers:provider-gemini")
+include(":providers:provider-deepseek")
+include(":providers:provider-moonshot")
+include(":providers:provider-openrouter")
+include(":providers:provider-groq")
+include(":providers:provider-mistral")
+include(":providers:provider-xai")
 
 rootProject.name = "Kode"

@@ -36,6 +36,9 @@ import io.github.stream29.kode.app.model.extractToolCallId
 import io.github.stream29.kode.app.model.extractToolCallPrimaryTextArg
 import io.github.stream29.kode.app.model.extractToolName
 import io.github.stream29.kode.app.model.extractToolResultText
+import io.github.stream29.kode.app.model.SendKeyModePreference
+import io.github.stream29.kode.app.model.collapsedPreviewUi
+import io.github.stream29.kode.app.model.collapsedTitleUi
 import io.github.stream29.kode.app.model.isAssistantToolPlan
 import io.github.stream29.kode.app.model.isAwaitUserInputToolCall
 import io.github.stream29.kode.app.model.isAwaitUserInputToolResult
@@ -43,6 +46,12 @@ import io.github.stream29.kode.app.model.isSayToUserToolCall
 import io.github.stream29.kode.app.model.isSayToUserToolResult
 import io.github.stream29.kode.app.model.isUiError
 import io.github.stream29.kode.app.model.isUiToolCallLike
+import io.github.stream29.kode.app.model.isSystemRoleUi
+import io.github.stream29.kode.app.model.isToolRoleUi
+import io.github.stream29.kode.app.model.isUserRoleUi
+import io.github.stream29.kode.app.model.shouldExpandByDefaultUi
+import io.github.stream29.kode.app.model.ToolGroupPayload
+import io.github.stream29.kode.app.model.toolGroupPayloadOrNull
 import io.github.stream29.kode.app.util.formatModelDisplayName
 import io.github.stream29.kode.app.util.parseKeyValueLines
 import io.github.stream29.kode.app.view.components.MessageBubble
@@ -58,6 +67,8 @@ import io.github.stream29.kode.app.viewmodel.SessionsPageUiState
 import io.github.stream29.kode.app.viewmodel.TerminalPageUiState
 import io.github.stream29.kode.app.viewmodel.ToolsPageUiState
 import io.github.stream29.kode.app.viewmodel.WebPageUiState
+import io.github.stream29.kode.config.api.McpTransportType
+import io.github.stream29.kode.config.api.supportsBrowserOAuth
 import io.github.stream29.kode.session.core.model.MessageRole
 import io.github.stream29.kode.session.core.model.SessionMessage
 
@@ -367,7 +378,11 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        InputSection(state = state, sessionUi = sessionUi)
+        InputSection(
+            state = state,
+            sessionUi = sessionUi,
+            sendKeyMode = ui.sendKeyMode,
+        )
     }
 }
 
@@ -708,7 +723,7 @@ private fun McpPage(state: MainViewModel, ui: McpPageUiState) {
                                 ) {
                                     Text(if (inFlight) "Testing..." else "Test")
                                 }
-                                if (server.transport == "http" && server.auth == "oauth") {
+                                if (server.supportsBrowserOAuth()) {
                                     FilledTonalButton(onClick = { state.authMcpServer(name) }) {
                                         Text("Auth")
                                     }
@@ -1012,11 +1027,11 @@ private fun ToolParameterSection(
 
 @Composable
 private fun McpHealthBadge(status: MainViewModel.McpHealthStatus) {
-    val (label, color) = when (status) {
-        MainViewModel.McpHealthStatus.Healthy -> "Healthy" to MaterialTheme.colorScheme.primary
-        MainViewModel.McpHealthStatus.Unhealthy -> "Unhealthy" to MaterialTheme.colorScheme.error
-        MainViewModel.McpHealthStatus.Checking -> "Checking" to MaterialTheme.colorScheme.onSurfaceVariant
-        MainViewModel.McpHealthStatus.Unknown -> "Unknown" to MaterialTheme.colorScheme.outline
+    val color = when (status) {
+        MainViewModel.McpHealthStatus.Healthy -> MaterialTheme.colorScheme.primary
+        MainViewModel.McpHealthStatus.Unhealthy -> MaterialTheme.colorScheme.error
+        MainViewModel.McpHealthStatus.Checking -> MaterialTheme.colorScheme.onSurfaceVariant
+        MainViewModel.McpHealthStatus.Unknown -> MaterialTheme.colorScheme.outline
     }
 
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1027,7 +1042,7 @@ private fun McpHealthBadge(status: MainViewModel.McpHealthStatus) {
         )
         Spacer(modifier = Modifier.width(6.dp))
         Text(
-            text = label,
+            text = status.label,
             style = MaterialTheme.typography.bodySmall,
             color = color
         )
@@ -1382,7 +1397,7 @@ private fun McpServerDialog(
     onConfirm: (String, io.github.stream29.kode.config.api.McpServerConfig) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-    var transport by remember { mutableStateOf("stdio") }
+    var transportType by remember { mutableStateOf(McpTransportType.Stdio) }
     var urlOrCommand by remember { mutableStateOf("") }
     var args by remember { mutableStateOf("") }
     var headers by remember { mutableStateOf("") }
@@ -1408,7 +1423,7 @@ private fun McpServerDialog(
                     onExpandedChange = { expanded = it }
                 ) {
                     OutlinedTextField(
-                        value = transport,
+                        value = transportType.configValue,
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("Transport") },
@@ -1422,11 +1437,11 @@ private fun McpServerDialog(
                         onDismissRequest = { expanded = false }
                     ) {
                         DropdownMenuItem(text = { Text("stdio") }, onClick = {
-                            transport = "stdio"
+                            transportType = McpTransportType.Stdio
                             expanded = false
                         })
                         DropdownMenuItem(text = { Text("http") }, onClick = {
-                            transport = "http"
+                            transportType = McpTransportType.Http
                             expanded = false
                         })
                     }
@@ -1435,12 +1450,12 @@ private fun McpServerDialog(
                 OutlinedTextField(
                     value = urlOrCommand,
                     onValueChange = { urlOrCommand = it },
-                    label = { Text(if (transport == "http") "URL" else "Command") },
+                    label = { Text(if (transportType.usesUrlTransport()) "URL" else "Command") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
 
-                if (transport == "stdio") {
+                if (transportType.usesCommandProcess()) {
                     OutlinedTextField(
                         value = args,
                         onValueChange = { args = it },
@@ -1478,20 +1493,34 @@ private fun McpServerDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val server = if (transport == "http") {
-                        io.github.stream29.kode.config.api.McpServerConfig(
-                            transport = "http",
-                            url = urlOrCommand.takeIf { it.isNotBlank() },
-                            headers = parseKeyValueLines(headers, separator = ":"),
-                            auth = auth.takeIf { it.isNotBlank() }
-                        )
-                    } else {
-                        io.github.stream29.kode.config.api.McpServerConfig(
-                            transport = "stdio",
-                            command = urlOrCommand.takeIf { it.isNotBlank() },
-                            args = args.split(" ").filter { it.isNotBlank() },
-                            env = parseKeyValueLines(env, separator = "=")
-                        )
+                    val server = when (transportType) {
+                        McpTransportType.Http,
+                        McpTransportType.Sse,
+                        -> {
+                            if (transportType == McpTransportType.Http) {
+                                io.github.stream29.kode.config.api.McpServerConfig.Http(
+                                    url = urlOrCommand.takeIf { it.isNotBlank() },
+                                    headers = parseKeyValueLines(headers, separator = ":"),
+                                    auth = auth.takeIf { it.isNotBlank() },
+                                )
+                            } else {
+                                io.github.stream29.kode.config.api.McpServerConfig.Sse(
+                                    url = urlOrCommand.takeIf { it.isNotBlank() },
+                                    headers = parseKeyValueLines(headers, separator = ":"),
+                                    auth = auth.takeIf { it.isNotBlank() },
+                                )
+                            }
+                        }
+
+                        McpTransportType.Stdio,
+                        McpTransportType.Unsupported,
+                        -> {
+                            io.github.stream29.kode.config.api.McpServerConfig.Stdio(
+                                command = urlOrCommand.takeIf { it.isNotBlank() },
+                                args = args.split(" ").filter { it.isNotBlank() },
+                                env = parseKeyValueLines(env, separator = "="),
+                            )
+                        }
                     }
                     if (name.isNotBlank()) {
                         onConfirm(name, server)
@@ -1515,7 +1544,11 @@ private data class ToolItem(
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
+private fun InputSection(
+    state: MainViewModel,
+    sessionUi: SessionUiState,
+    sendKeyMode: String,
+) {
     var localTaskInput by rememberSaveable(sessionUi.currentSessionId) {
         mutableStateOf(sessionUi.taskInput)
     }
@@ -1530,6 +1563,8 @@ private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
         }
     }
 
+    val normalizedSendKeyMode = SendKeyModePreference.fromValue(sendKeyMode)
+
     fun submitDraftInput() {
         state.taskInput = localTaskInput
         if (sessionUi.isWaitingForInput) {
@@ -1538,6 +1573,17 @@ private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
             state.runTask()
         }
         localTaskInput = ""
+    }
+
+    fun shouldHandleSubmitShortcut(keyEvent: KeyEvent): Boolean {
+        if (keyEvent.type != KeyEventType.KeyDown || keyEvent.key != Key.Enter) {
+            return false
+        }
+        return normalizedSendKeyMode.shouldSubmitShortcut(
+            isCtrlPressed = keyEvent.isCtrlPressed,
+            isMetaPressed = keyEvent.isMetaPressed,
+            isShiftPressed = keyEvent.isShiftPressed,
+        )
     }
 
     ElevatedCard(
@@ -1555,7 +1601,7 @@ private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
                 onValueChange = { localTaskInput = it },
                 label = {
                     Text(
-                        if (sessionUi.isWaitingForInput) "Enter response..." 
+                        if (sessionUi.isWaitingForInput) "Enter response..."
                         else "What would you like me to do?"
                     )
                 },
@@ -1567,33 +1613,35 @@ private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
                 },
                 modifier = Modifier
                     .weight(1f)
-                    .onKeyEvent { keyEvent ->
-                        if (keyEvent.type == KeyEventType.KeyDown && 
-                            keyEvent.isCtrlPressed && 
-                            keyEvent.key == Key.Enter) {
-                            if (sessionUi.isWaitingForInput) {
-                                submitDraftInput()
-                            } else {
-                                submitDraftInput()
-                            }
-                            true
-                        } else {
-                            false
+                    .onPreviewKeyEvent { keyEvent ->
+                        if (!shouldHandleSubmitShortcut(keyEvent)) {
+                            return@onPreviewKeyEvent false
                         }
+                        val canSubmitFromKeyboard = when {
+                            sessionUi.isWaitingForInput -> localTaskInput.isNotBlank()
+                            sessionUi.isRunning -> false
+                            else -> localTaskInput.isNotBlank()
+                        }
+                        if (canSubmitFromKeyboard) {
+                            submitDraftInput()
+                        }
+                        true
                     },
                 enabled = !sessionUi.isRunning || sessionUi.isWaitingForInput,
-                singleLine = true,
+                singleLine = false,
+                minLines = 1,
+                maxLines = 8,
                 shape = MaterialTheme.shapes.medium,
                 leadingIcon = {
                     Icon(
-                        imageVector = if (sessionUi.isWaitingForInput) 
+                        imageVector = if (sessionUi.isWaitingForInput)
                             Icons.AutoMirrored.Filled.Chat else Icons.AutoMirrored.Filled.Send,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
             )
-            
+
             Spacer(modifier = Modifier.width(12.dp))
 
             val isInputValid = localTaskInput.isNotBlank()
@@ -1616,13 +1664,13 @@ private fun InputSection(state: MainViewModel, sessionUi: SessionUiState) {
                 enabled = canClick,
                 modifier = Modifier.size(56.dp),
                 colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = if (canClick) 
-                        MaterialTheme.colorScheme.primaryContainer 
-                    else 
+                    containerColor = if (canClick)
+                        MaterialTheme.colorScheme.primaryContainer
+                    else
                         MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = if (canClick) 
-                        MaterialTheme.colorScheme.onPrimaryContainer 
-                    else 
+                    contentColor = if (canClick)
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    else
                         MaterialTheme.colorScheme.onSurfaceVariant
                 )
             ) {
@@ -2045,13 +2093,11 @@ private fun buildMessageListItems(messages: List<SessionMessage>): List<MessageL
     var cursor = 0
     while (cursor < projected.size) {
         val current = projected[cursor]
-        val role = current.message.role
-        if (role == MessageRole.TOOL_CALL || role == MessageRole.TOOL_RESULT) {
+        if (current.message.isToolRoleUi()) {
             val run = mutableListOf<IndexedMessage>()
             while (cursor < projected.size) {
                 val candidate = projected[cursor]
-                val candidateRole = candidate.message.role
-                if (candidateRole != MessageRole.TOOL_CALL && candidateRole != MessageRole.TOOL_RESULT) {
+                if (!candidate.message.isToolRoleUi()) {
                     break
                 }
                 run += candidate
@@ -2096,30 +2142,27 @@ private fun buildToolGroupEntries(run: List<IndexedMessage>): List<ToolGroupEntr
 
     run.forEach { item ->
         val message = item.message
-        val callId = message.extractToolCallId()
-        when (message.role) {
-            MessageRole.TOOL_CALL -> {
-                val argumentsText = message.extractToolCallArgumentsText()?.takeIf { it.isNotBlank() }
-                    ?: message.content
+        val payload = message.toolGroupPayloadOrNull() ?: return@forEach
+        when (payload) {
+            is ToolGroupPayload.Call -> {
                 appendEntry(
                     ToolGroupEntry(
-                        toolName = message.extractToolName(),
-                        argumentsText = argumentsText,
+                        toolName = payload.toolName,
+                        argumentsText = payload.argumentsText,
                         resultText = null,
-                        callId = callId,
-                        callMessageId = message.id,
+                        callId = payload.callId,
+                        callMessageId = payload.messageId,
                         resultMessageId = null,
                         callSourceIndex = item.sourceIndex,
                         resultSourceIndex = null,
                     )
                 )
             }
-            MessageRole.TOOL_RESULT -> {
-                val resultText = message.extractToolResultText()?.takeIf { it.isNotBlank() }
-                    ?: message.content
+
+            is ToolGroupPayload.Result -> {
                 val matchIndex = entries.indexOfLast { entry ->
                     entry.resultMessageId == null && (
-                        (callId != null && entry.callId == callId) || callId == null
+                        (payload.callId != null && entry.callId == payload.callId) || payload.callId == null
                     )
                 }
                 if (matchIndex >= 0) {
@@ -2127,29 +2170,28 @@ private fun buildToolGroupEntries(run: List<IndexedMessage>): List<ToolGroupEntr
                     updateEntry(
                         matchIndex,
                         existing.copy(
-                            resultText = resultText,
-                            resultMessageId = message.id,
+                            resultText = payload.resultText,
+                            resultMessageId = payload.messageId,
                             resultSourceIndex = item.sourceIndex,
-                            toolName = existing.toolName ?: message.extractToolName(),
-                            callId = existing.callId ?: callId,
+                            toolName = existing.toolName ?: payload.toolName,
+                            callId = existing.callId ?: payload.callId,
                         )
                     )
                 } else {
                     appendEntry(
                         ToolGroupEntry(
-                            toolName = message.extractToolName(),
+                            toolName = payload.toolName,
                             argumentsText = null,
-                            resultText = resultText,
-                            callId = callId,
+                            resultText = payload.resultText,
+                            callId = payload.callId,
                             callMessageId = null,
-                            resultMessageId = message.id,
+                            resultMessageId = payload.messageId,
                             callSourceIndex = null,
                             resultSourceIndex = item.sourceIndex,
                         )
                     )
                 }
             }
-            else -> Unit
         }
     }
 
@@ -2222,7 +2264,7 @@ private fun MessageList(
                                 message.isUiToolCallLike(),
                                 message.isUiError(),
                             ) {
-                                shouldExpandByDefault(message)
+                                message.shouldExpandByDefaultUi()
                             }
                             var expanded by rememberSaveable(message.id) { mutableStateOf(defaultExpanded) }
 
@@ -2234,14 +2276,15 @@ private fun MessageList(
                                 return@itemsIndexed
                             }
 
-                            when (message.role) {
-                                MessageRole.SYSTEM -> SystemMessage(content = message.content)
-                                else -> MessageBubble(
+                            if (message.isSystemRoleUi()) {
+                                SystemMessage(content = message.content)
+                            } else {
+                                MessageBubble(
                                     message = message,
-                                    isCurrentUser = message.role == MessageRole.USER,
+                                    isCurrentUser = message.isUserRoleUi(),
                                     messageAlignment = messageAlignment,
                                     messageMaxWidthRatio = messageMaxWidthRatio,
-                                    onForkFromHere = if (sourceMessage?.role == MessageRole.SYSTEM) {
+                                    onForkFromHere = if (sourceMessage?.isSystemRoleUi() == true) {
                                         null
                                     } else {
                                         { onForkFromMessage(item.sourceIndex) }
@@ -2305,12 +2348,12 @@ private fun CollapsedMessageRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = collapsedMessageTitle(message),
+                    text = message.collapsedTitleUi(),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = collapsedMessagePreview(message),
+                    text = message.collapsedPreviewUi(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -2504,53 +2547,6 @@ private fun ToolGroupEntryRow(
                 }
             }
         }
-    }
-}
-
-private fun shouldExpandByDefault(message: SessionMessage): Boolean {
-    return when (message.role) {
-        MessageRole.USER -> true
-        MessageRole.ASSISTANT -> !message.isUiToolCallLike() && !message.isUiError()
-        MessageRole.SYSTEM,
-        MessageRole.TOOL_CALL,
-        MessageRole.TOOL_RESULT,
-        -> false
-    }
-}
-
-private fun collapsedMessageTitle(message: SessionMessage): String {
-    val toolSuffix = message.extractToolName()?.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
-    return when (message.role) {
-        MessageRole.SYSTEM -> "System message"
-        MessageRole.TOOL_CALL -> "Tool call$toolSuffix"
-        MessageRole.TOOL_RESULT -> if (message.isUiError()) {
-            "Tool error$toolSuffix"
-        } else {
-            "Tool result$toolSuffix"
-        }
-        MessageRole.ASSISTANT -> if (message.isAssistantToolPlan()) {
-            "Assistant tool plan"
-        } else {
-            "Assistant message"
-        }
-        MessageRole.USER -> "User message"
-    }
-}
-
-private fun collapsedMessagePreview(message: SessionMessage): String {
-    val content = when (message.role) {
-        MessageRole.TOOL_CALL -> message.extractToolCallArgumentsText() ?: message.content
-        MessageRole.TOOL_RESULT -> message.extractToolResultText() ?: message.content
-        else -> message.content
-    }
-    val normalized = content.replace(Regex("\\s+"), " ").trim()
-    if (normalized.isBlank()) {
-        return "(empty)"
-    }
-    return if (normalized.length > 120) {
-        normalized.take(120) + "..."
-    } else {
-        normalized
     }
 }
 

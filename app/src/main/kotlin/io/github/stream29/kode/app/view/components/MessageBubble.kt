@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.github.stream29.kode.app.model.MessageAlignmentPreference
 import io.github.stream29.kode.app.model.extractToolCallArgumentsText
 import io.github.stream29.kode.app.model.extractToolName
 import io.github.stream29.kode.app.model.extractToolResultText
@@ -62,8 +63,8 @@ public fun MessageBubble(
     val timeFormat = message.timestamp.toLocalDateTime(TimeZone.currentSystemDefault())
     val timeText = "${timeFormat.hour.toString().padStart(2, '0')}:${timeFormat.minute.toString().padStart(2, '0')}"
     val copyText = toolDetailText?.takeIf { it.isNotBlank() } ?: message.content
-    val alignmentMode = messageAlignment.trim().lowercase()
-    val bubbleAlignment = if (alignmentMode == "split" && isUser) {
+    val alignmentMode = MessageAlignmentPreference.fromValue(messageAlignment)
+    val bubbleAlignment = if (alignmentMode.userAlignsToEnd() && isUser) {
         Alignment.End
     } else {
         Alignment.Start

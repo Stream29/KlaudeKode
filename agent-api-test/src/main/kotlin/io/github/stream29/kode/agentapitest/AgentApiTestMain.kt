@@ -14,41 +14,33 @@ import kotlinx.coroutines.runBlocking
 
 public fun main() {
     runBlocking {
-        validateConfigMigrationFromLegacyAgentField()
+        validateConfigLoadFromPresetField()
         validatePresetBoundHookExecution()
     }
     println("agent-api-test: all checks passed")
 }
 
-private suspend fun validateConfigMigrationFromLegacyAgentField() {
-    val legacyYaml = """
-        agent:
+private suspend fun validateConfigLoadFromPresetField() {
+    val yaml = """
+        preset:
           builtin: explore
           file: /tmp/preset.md
     """.trimIndent()
 
     val provider = InMemoryConfigProvider(initialConfig = null)
-    val source = InMemoryConfigSource(initialContent = legacyYaml)
+    val source = InMemoryConfigSource(initialContent = yaml)
     val configManager = ConfigManager(provider = provider, source = source)
 
     val loadedConfig = configManager.load()
 
     ensure(loadedConfig.preset.builtin == "explore") {
-        "expected preset.builtin to migrate from legacy agent.builtin"
+        "expected preset.builtin to be loaded"
     }
     ensure(loadedConfig.preset.file == "/tmp/preset.md") {
-        "expected preset.file to migrate from legacy agent.file"
-    }
-    ensure(loadedConfig.agent.builtin == null && loadedConfig.agent.file == null) {
-        "expected legacy agent field to be normalized to empty content"
+        "expected preset.file to be loaded"
     }
 
-    val rewritten = source.currentContent().orEmpty()
-    ensure(rewritten.contains("preset:")) {
-        "expected normalized config source to contain preset section"
-    }
-
-    println("config migration check passed")
+    println("config preset load check passed")
 }
 
 private fun validatePresetBoundHookExecution() {

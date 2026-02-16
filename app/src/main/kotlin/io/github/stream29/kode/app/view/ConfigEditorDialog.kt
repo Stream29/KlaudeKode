@@ -76,7 +76,11 @@ models:
 
 defaults:
   model_id: claude-sonnet
-  thinking: false""".trimIndent()
+  thinking: false
+
+ui:
+  theme: dark
+  send_key_mode: ctrl_or_cmd_enter_send""".trimIndent()
                         )
                     }
                 )
@@ -130,7 +134,11 @@ defaults:
 models:
   - id: claude-sonnet
     auth_id: anthropic-main
-    model: claude-sonnet-4-5-20250929""".trimIndent(),
+    model: claude-sonnet-4-5-20250929
+
+ui:
+  theme: dark
+  send_key_mode: ctrl_or_cmd_enter_send""".trimIndent(),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace

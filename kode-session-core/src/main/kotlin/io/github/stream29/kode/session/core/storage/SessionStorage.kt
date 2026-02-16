@@ -2,6 +2,7 @@ package io.github.stream29.kode.session.core.storage
 
 import io.github.stream29.kode.session.core.model.ConversationSession
 import io.github.stream29.kode.session.core.model.SessionCheckpoint
+import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
 import kotlin.time.Instant
 
@@ -80,9 +81,24 @@ public data class SessionFilter(
 )
 
 public enum class SessionStatusFilter {
-    ACTIVE,
-    ARCHIVED,
-    ALL
+    ACTIVE {
+        override fun matches(status: SessionStatus): Boolean {
+            return status == SessionStatus.ACTIVE
+        }
+    },
+    ARCHIVED {
+        override fun matches(status: SessionStatus): Boolean {
+            return status == SessionStatus.ARCHIVED
+        }
+    },
+    ALL {
+        override fun matches(status: SessionStatus): Boolean {
+            return true
+        }
+    },
+    ;
+
+    public abstract fun matches(status: SessionStatus): Boolean
 }
 
 public enum class SortBy {
@@ -93,5 +109,14 @@ public enum class SortBy {
 
 public enum class SortOrder {
     ASCENDING,
-    DESCENDING
+    DESCENDING,
+    ;
+
+    public fun <T> applyTo(sortedAscending: Sequence<T>): Sequence<T> {
+        return if (this == ASCENDING) {
+            sortedAscending
+        } else {
+            sortedAscending.toList().asReversed().asSequence()
+        }
+    }
 }

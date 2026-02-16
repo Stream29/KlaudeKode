@@ -5,8 +5,12 @@ import androidx.lifecycle.viewModelScope
 import androidx.compose.runtime.snapshotFlow
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
+import io.github.stream29.kode.config.api.LlmModelParamsConfig
+import io.github.stream29.kode.config.api.McpTransportType
+import io.github.stream29.kode.config.api.OpenAiEndpoint
 import io.github.stream29.kode.config.api.AppConfig
 import io.github.stream29.kode.config.api.ServiceConfig
+import io.github.stream29.kode.config.api.transportType
 import ai.koog.agents.mcp.McpToolRegistryProvider
 import ai.koog.agents.mcp.defaultStdioTransport
 import ai.koog.agents.core.agent.AIAgent
@@ -19,16 +23,23 @@ import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import io.github.stream29.kode.app.service.WebToolsProvider
 import io.github.stream29.kode.app.util.parseKeyValueLines
-import io.github.stream29.kode.app.model.extractToolCallPrimaryTextArg
-import io.github.stream29.kode.app.model.extractToolResultText
-import io.github.stream29.kode.app.model.isAwaitUserInputToolCall
-import io.github.stream29.kode.app.model.isAwaitUserInputToolResult
-import io.github.stream29.kode.app.model.isSayToUserToolCall
+import io.github.stream29.kode.app.model.MessageAlignmentPreference
+import io.github.stream29.kode.app.model.SendKeyModePreference
+import io.github.stream29.kode.app.model.isSystemRoleUi
+import io.github.stream29.kode.app.model.projectedTextForSessionSummary
 import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemLocations
 import io.github.stream29.kode.core.agent.SessionAwareAgentFactory
 import io.github.stream29.kode.core.agent.SessionAwareAgentFactoryProvider
 import io.github.stream29.kode.core.hooks.HookManager
+import io.github.stream29.kode.providers.api.ProviderAuthMode
+import io.github.stream29.kode.providers.api.ProviderOAuthAuthCodePkcePreset
+import io.github.stream29.kode.providers.api.ProviderOAuthDeviceFlowPreset
+import io.github.stream29.kode.providers.api.ProviderPreset
+import io.github.stream29.kode.providers.builtin.BuiltinLlmProviderRegistry
+import io.github.stream29.kode.providers.builtin.BuiltinProviderPresetRegistry
+import io.github.stream29.kode.oauth.core.OAuthCredentialStatus
+import io.github.stream29.kode.oauth.core.OAuthCredentialManager
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.model.ConversationSession
 import io.github.stream29.kode.session.core.model.SessionMessage
@@ -59,6 +70,7 @@ import kotlinx.io.asSink
 import kotlinx.io.asSource
 import kotlinx.io.buffered
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -89,6 +101,7 @@ public class MainViewModel(
     private val agentFactoryProvider: SessionAwareAgentFactoryProvider,
     private val webToolsProvider: WebToolsProvider,
     private val hookManager: HookManager,
+    private val oauthCredentialManager: OAuthCredentialManager,
 ) : ViewModel(), MessageHandler, AgentState, AgentEventListener {
     private var autoSaveEnabled: Boolean = false
 
@@ -109,6 +122,7 @@ public class MainViewModel(
             disabledTools = setOf("shell", "task", "file-edit"),
         ),
     )
+    private val providerPresets: List<ProviderPreset> = BuiltinProviderPresetRegistry.listPresets()
 
     private val _sessionUiState: MutableStateFlow<SessionUiState> = MutableStateFlow(SessionUiState())
     public val sessionUiState: StateFlow<SessionUiState> = _sessionUiState.asStateFlow()
@@ -140,6 +154,7 @@ public class MainViewModel(
                 sessionSummaries = state.sessionSummaries,
                 messageAlignment = state.messageAlignment,
                 messageMaxWidthRatio = state.messageMaxWidthRatio,
+                sendKeyMode = state.sendKeyMode,
                 agentPresets = state.agentPresets,
                 activePresetName = state.activePresetName,
                 models = state.models,
@@ -457,6 +472,10 @@ public class MainViewModel(
         get() = _appUiState.value.models
         set(value) = updateAppUiState { it.copy(models = value) }
 
+    public var oauthStatusByAuthId: Map<String, OAuthStatusUi>
+        get() = _appUiState.value.oauthStatusByAuthId
+        set(value) = updateAppUiState { it.copy(oauthStatusByAuthId = value) }
+
     public var activeModelId: String?
         get() = _appUiState.value.activeModelId
         set(value) = updateAppUiState { it.copy(activeModelId = value) }
@@ -528,6 +547,10 @@ public class MainViewModel(
     public var messageMaxWidthRatio: Float
         get() = _appUiState.value.messageMaxWidthRatio
         set(value) = updateAppUiState { it.copy(messageMaxWidthRatio = normalizeMessageWidthRatio(value)) }
+
+    public var sendKeyMode: String
+        get() = _appUiState.value.sendKeyMode
+        set(value) = updateAppUiState { it.copy(sendKeyMode = normalizeSendKeyMode(value)) }
 
     public var mcpToolTimeoutMs: Int
         get() = _appUiState.value.mcpToolTimeoutMs
@@ -678,6 +701,7 @@ public class MainViewModel(
     private var sessionTitleGeneratingIds: Set<String> = emptySet()
     private val inputDeferreds: MutableMap<String, CompletableDeferred<String>> = mutableMapOf()
     private val sessionJobs: MutableMap<String, Job> = mutableMapOf()
+    private val oauthJobs: MutableMap<String, Job> = mutableMapOf()
     private var sessionBindingJob: Job? = null
     private var boundSessionId: String? = null
     private var lastSessionRestoreAttempted: Boolean = false
@@ -752,15 +776,11 @@ public class MainViewModel(
     }
     
     private suspend fun initializeAgentFactory() {
-        try {
-            val config = configManager.load()
-            loadConfigToState(config)
-            refreshAgentFactoryForConversation()
-            restoreLastSessionIfNeeded()
-        } catch (e: Exception) {
-            addSystemMessage("Failed to initialize: ${e.message}")
-            e.printStackTrace()
-        }
+        val config = configManager.load()
+        loadConfigToState(config)
+        refreshAgentFactoryForConversation()
+        refreshOAuthStatusSnapshot()
+        restoreLastSessionIfNeeded()
     }
 
     private suspend fun refreshAgentFactoryForConversation(): Boolean {
@@ -768,6 +788,8 @@ public class MainViewModel(
             agentFactory = null
             return false
         }
+
+        ensureOAuthCredentialsUpToDate()
 
         val mcpRegistry = buildMcpToolRegistry()
         buildAgentFactory(mcpRegistry)
@@ -786,7 +808,6 @@ public class MainViewModel(
         )
     }
     
-    @Suppress("DEPRECATION")
     private fun loadConfigToState(config: AppConfig) {
         auths = config.auths
         models = config.models
@@ -805,8 +826,8 @@ public class MainViewModel(
         maxRalphIterations = config.loopControl.maxRalphIterations
         reservedContextSize = config.loopControl.reservedContextSize
         skillsDir = config.skills.dir ?: ""
-        presetBuiltin = config.preset.builtin ?: config.agent.builtin ?: ""
-        presetFile = config.preset.file ?: config.agent.file ?: ""
+        presetBuiltin = config.preset.builtin ?: ""
+        presetFile = config.preset.file ?: ""
         logLevel = config.logging.level
         logFile = config.logging.file ?: ""
         disabledTools = config.tools.disabled.toSet()
@@ -826,6 +847,7 @@ public class MainViewModel(
         lastOpenedSessionId = config.ui.lastOpenedSessionId
         messageAlignment = normalizeMessageAlignment(config.ui.messageAlignment)
         messageMaxWidthRatio = normalizeMessageWidthRatio(config.ui.messageMaxWidthRatio)
+        sendKeyMode = normalizeSendKeyMode(config.ui.sendKeyMode)
         applyAgentPresetFromConfig()
         val webSearch = config.services.webSearch
         webSearchProvider = webSearch?.provider ?: "none"
@@ -906,7 +928,10 @@ public class MainViewModel(
                     return@launch
                 }
 
-                val sessionId = currentSessionId!!
+                val sessionId = currentSessionId ?: run {
+                    addSystemMessage("No active session. Please create a session first.")
+                    return@launch
+                }
                 if (sessionRunStates[sessionId]?.isRunning == true) {
                     addSystemMessage("Session is already running", sessionId)
                     return@launch
@@ -931,6 +956,7 @@ public class MainViewModel(
                     force = false,
                 )
             } catch (e: Exception) {
+                e.printStackTrace()
                 val message = e.message ?: "Unknown error"
                 val targetSessionId = runningSessionId ?: currentSessionId
                 if (targetSessionId != null) {
@@ -1058,6 +1084,7 @@ public class MainViewModel(
 
                 factory.continueSession(sessionId, modelId)
             } catch (e: Exception) {
+                e.printStackTrace()
                 addSystemMessage("Error: ${e.message}", sessionId)
                 log("continueCurrentSession failed: ${e.stackTraceToString()}", sessionId)
             } finally {
@@ -1191,6 +1218,8 @@ public class MainViewModel(
         try {
             val generatedTitle = runCatching {
                 factory.generateSessionTitleFromConversation(sessionId = sessionId, modelId = modelId)
+            }.onFailure { error ->
+                log("Failed to auto-generate title for session $sessionId: ${error.message}")
             }.getOrNull()
             val fallbackTitle = buildFallbackSessionTitleFromSession(session)
             val resolvedTitle = generatedTitle?.takeIf { it.isNotBlank() } ?: fallbackTitle
@@ -1203,6 +1232,8 @@ public class MainViewModel(
                 sessionManager.updateTitle(sessionId, resolvedTitle)
             }.onSuccess {
                 loadSessionList()
+            }.onFailure { error ->
+                addSystemMessage("Failed to update title: ${error.message}", sessionId)
             }
         } finally {
             setSessionTitleGenerating(sessionId = sessionId, isGenerating = false)
@@ -1239,29 +1270,7 @@ public class MainViewModel(
     }
 
     private fun buildFallbackSessionTitleFromSession(session: ConversationSession): String {
-        val projected = session.messages.firstNotNullOfOrNull { message ->
-            when (message.role) {
-                io.github.stream29.kode.session.core.model.MessageRole.USER,
-                io.github.stream29.kode.session.core.model.MessageRole.ASSISTANT -> {
-                    message.content.trim().takeIf { it.isNotBlank() }
-                }
-                io.github.stream29.kode.session.core.model.MessageRole.TOOL_CALL -> {
-                    if (message.isSayToUserToolCall() || message.isAwaitUserInputToolCall()) {
-                        message.extractToolCallPrimaryTextArg()?.trim()?.takeIf { it.isNotBlank() }
-                    } else {
-                        null
-                    }
-                }
-                io.github.stream29.kode.session.core.model.MessageRole.TOOL_RESULT -> {
-                    if (message.isAwaitUserInputToolResult()) {
-                        message.extractToolResultText()?.trim()?.takeIf { it.isNotBlank() }
-                    } else {
-                        null
-                    }
-                }
-                else -> null
-            }
-        }
+        val projected = session.messages.firstNotNullOfOrNull { message -> message.projectedTextForSessionSummary() }
         val normalized = projected.orEmpty().replace(Regex("\\s+"), " ").trim()
         if (normalized.isBlank()) {
             return autoSessionTitlePlaceholder
@@ -1286,7 +1295,7 @@ public class MainViewModel(
         }
 
         val selected = messages.getOrNull(messageIndex)
-        if (selected == null || selected.role == io.github.stream29.kode.session.core.model.MessageRole.SYSTEM) {
+        if (selected == null || selected.isSystemRoleUi()) {
             addSystemMessage("Cannot fork from system message")
             return
         }
@@ -1297,7 +1306,7 @@ public class MainViewModel(
                     ?: throw IllegalArgumentException("Session not found: $sessionId")
 
                 val nonSystemMessages = messages.filter {
-                    it.role != io.github.stream29.kode.session.core.model.MessageRole.SYSTEM
+                    !it.isSystemRoleUi()
                 }
                 val nonSystemIndex = nonSystemMessages.indexOfFirst { it.id == selected.id }
                 if (nonSystemIndex == -1) {
@@ -1376,32 +1385,7 @@ public class MainViewModel(
     private suspend fun buildSessionSearchCorpus(summary: SessionSummary): String {
         val session = sessionManager.getSession(summary.id) ?: return summary.title
 
-        val projectedTexts = session.messages.mapNotNull { message ->
-            when (message.role) {
-                io.github.stream29.kode.session.core.model.MessageRole.USER,
-                io.github.stream29.kode.session.core.model.MessageRole.ASSISTANT -> {
-                    message.content.trim().takeIf { it.isNotBlank() }
-                }
-
-                io.github.stream29.kode.session.core.model.MessageRole.TOOL_CALL -> {
-                    if (message.isSayToUserToolCall() || message.isAwaitUserInputToolCall()) {
-                        message.extractToolCallPrimaryTextArg()?.trim()?.takeIf { it.isNotBlank() }
-                    } else {
-                        null
-                    }
-                }
-
-                io.github.stream29.kode.session.core.model.MessageRole.TOOL_RESULT -> {
-                    if (message.isAwaitUserInputToolResult()) {
-                        message.extractToolResultText()?.trim()?.takeIf { it.isNotBlank() }
-                    } else {
-                        null
-                    }
-                }
-
-                else -> null
-            }
-        }
+        val projectedTexts = session.messages.mapNotNull { message -> message.projectedTextForSessionSummary() }
 
         return buildString {
             append(summary.title)
@@ -1455,10 +1439,8 @@ public class MainViewModel(
                 sessionSummaries = summaries
                 val preferredSessionId = lastOpenedSessionId
                 if (!preferredSessionId.isNullOrBlank()) {
-                    val preferredExists = runCatching {
-                        sessionManager.getSession(preferredSessionId)
-                    }.getOrNull() != null
-                    if (preferredExists) {
+                    val preferredSession = sessionManager.getSession(preferredSessionId)
+                    if (preferredSession != null) {
                         switchToSessionInternal(sessionId = preferredSessionId, announce = false)
                         return@launch
                     }
@@ -1898,10 +1880,37 @@ public class MainViewModel(
                     configFile.readText()
                 } else {
                     """auths:
-  - type: Anthropic
-    id: anthropic-main
-    api_key: your-api-key-here
-    base_url: null
+  - id: anthropic-main
+    provider_id: anthropic
+    auth:
+      type: api_key
+      api_key: your-api-key-here
+      env_keys: []
+      base_url: null
+      custom_headers: {}
+  - id: openai-subscription
+    provider_id: openai-subscription-browser
+    auth:
+      type: oauth
+      oauth:
+        storage: file
+        key: ~/.kode/oauth/openai-subscription.oauth.json
+        authorization_endpoint: https://auth.openai.com/oauth/authorize
+        token_endpoint: https://auth.openai.com/oauth/token
+        client_id: app_EMoamEEZ73f0CkXaXp7hrann
+        scopes:
+          - openid
+          - profile
+          - email
+          - offline_access
+        callback_uri: http://localhost:1455/auth/callback
+        authorization_additional_params:
+          id_token_add_organizations: "true"
+          codex_cli_simplified_flow: "true"
+          originator: opencode
+        token_additional_params: {}
+      base_url: https://api.openai.com/v1
+      custom_headers: {}
 
 models:
   - id: claude-sonnet
@@ -1947,6 +1956,9 @@ preset:
 
 ui:
   theme: dark
+  message_alignment: left
+  message_max_width_ratio: 0.9
+  send_key_mode: ctrl_or_cmd_enter_send
 
 logging:
   level: info
@@ -1963,17 +1975,23 @@ logging:
     public fun saveConfig() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val parsedConfig = configManager.parse(configText)
+                validateAuthClientProviderScope(parsedConfig.auths)
+                validateModelProviderSupport(authConfigs = parsedConfig.auths, modelConfigs = parsedConfig.models)
                 val configFile = FileSystemLocations.configFile
+                configFile.parentFile?.mkdirs()
                 configFile.writeText(configText)
-                
-                val config = configManager.load()
-                if (config.models.isEmpty()) {
+
+                loadConfigToState(parsedConfig)
+                refreshAgentFactoryForConversation()
+                refreshOAuthStatusSnapshot()
+
+                if (parsedConfig.models.isEmpty()) {
                     configError = "Config is valid but no models configured"
                 } else {
                     configError = null
                     showConfigEditor = false
                     addSystemMessage("Config saved successfully")
-                    initializeAgentFactory()
                 }
             } catch (e: Exception) {
                 configError = "Failed to save config: ${e.message}"
@@ -1986,6 +2004,8 @@ logging:
     public fun saveConfig(config: AppConfig) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                validateAuthClientProviderScope(config.auths)
+                validateModelProviderSupport(authConfigs = config.auths, modelConfigs = config.models)
                 configManager.save(config)
                 auths = config.auths
                 models = config.models
@@ -2143,14 +2163,22 @@ logging:
             is AgentEvent.ToolCallStarting -> {
                 addSystemMessage("Tool call: ${event.toolName}", sessionId)
             }
+
             is AgentEvent.ToolCallCompleted -> {
                 addSystemMessage("Tool completed: ${event.toolName}", sessionId)
             }
+
             is AgentEvent.MessageToUser -> {
                 addSystemMessage(event.message, sessionId)
             }
+
             is AgentEvent.Error -> {
                 addSystemMessage("Error: ${event.message}", sessionId)
+                log("Agent error: ${event.message}", sessionId)
+                event.exception?.let { throwable ->
+                    log("Agent error stacktrace: ${throwable.stackTraceToString()}", sessionId)
+                    throwable.printStackTrace()
+                }
             }
         }
     }
@@ -2245,6 +2273,7 @@ logging:
                     theme = uiTheme,
                     messageAlignment = messageAlignment,
                     messageMaxWidthRatio = messageMaxWidthRatio,
+                    sendKeyMode = sendKeyMode,
                     lastOpenedSessionId = lastOpenedSessionId,
                 ),
                 tools = current.tools.copy(
@@ -2408,7 +2437,7 @@ logging:
             val server = mcpServers[name] ?: return@launch
             try {
                 val url = server.url
-                if (server.transport == "http" && !url.isNullOrBlank()) {
+                if (server.transportType() == McpTransportType.Http && !url.isNullOrBlank()) {
                     if (Desktop.isDesktopSupported()) {
                         Desktop.getDesktop().browse(java.net.URI.create(url))
                         addSystemMessage("Opened browser for MCP auth: $name")
@@ -2428,8 +2457,8 @@ logging:
         name: String,
         server: io.github.stream29.kode.config.api.McpServerConfig,
     ): McpTestResult {
-        return when (server.transport.lowercase()) {
-            "stdio" -> {
+        return when (server.transportType()) {
+            McpTransportType.Stdio -> {
                 val command = server.command
                 if (command.isNullOrBlank()) {
                     buildMcpTestError("MCP test (${name}): missing command")
@@ -2437,23 +2466,22 @@ logging:
                     var process: Process? = null
                     try {
                         process = startMcpTestProcess(server = server, command = command)
-                        if (process == null) {
-                            buildMcpTestError("MCP test (${name}): failed to start process")
-                        } else {
-                            val transport = McpToolRegistryProvider.defaultStdioTransport(process)
-                            val registry = McpToolRegistryProvider.fromTransport(
-                                transport = transport,
-                                name = name,
-                                version = "1.0.0",
-                            )
-                            buildMcpTestSuccess(registry = registry)
-                        }
+                        val transport = McpToolRegistryProvider.defaultStdioTransport(process)
+                        val registry = McpToolRegistryProvider.fromTransport(
+                            transport = transport,
+                            name = name,
+                            version = "1.0.0",
+                        )
+                        buildMcpTestSuccess(registry = registry)
                     } finally {
                         process?.destroy()
                     }
                 }
             }
-            "http", "sse" -> {
+
+            McpTransportType.Http,
+            McpTransportType.Sse,
+            -> {
                 val url = server.url
                 if (url.isNullOrBlank()) {
                     buildMcpTestError("MCP test (${name}): missing url")
@@ -2467,27 +2495,26 @@ logging:
                     buildMcpTestSuccess(registry = registry)
                 }
             }
-            else -> buildMcpTestError("MCP test (${name}): unsupported transport ${server.transport}")
+
+            McpTransportType.Unsupported -> {
+                buildMcpTestError("MCP test (${name}): unsupported transport ${server.transport}")
+            }
         }
     }
 
     private fun startMcpTestProcess(
         server: io.github.stream29.kode.config.api.McpServerConfig,
         command: String,
-    ): Process? {
-        return try {
-            val args = server.args
-            val processBuilder = ProcessBuilder(listOf(command) + args)
-                .directory(resolveSessionWorkingDir(currentSessionWorkDir))
-                .redirectErrorStream(true)
-                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-            server.env?.forEach { (key, value) ->
-                processBuilder.environment()[key] = value
-            }
-            processBuilder.start()
-        } catch (_: Exception) {
-            null
+    ): Process {
+        val args = server.args
+        val processBuilder = ProcessBuilder(listOf(command) + args)
+            .directory(resolveSessionWorkingDir(currentSessionWorkDir))
+            .redirectErrorStream(true)
+            .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+        server.env?.forEach { (key, value) ->
+            processBuilder.environment()[key] = value
         }
+        return processBuilder.start()
     }
 
     private fun buildMcpTestSuccess(registry: ToolRegistry): McpTestResult {
@@ -2527,16 +2554,7 @@ logging:
     }
 
     private fun buildMcpHealthFromTest(result: McpTestResult): McpHealthResult {
-        return when (result.status) {
-            McpTestStatus.Success -> McpHealthResult(
-                status = McpHealthStatus.Healthy,
-                message = result.message,
-            )
-            McpTestStatus.Error -> McpHealthResult(
-                status = McpHealthStatus.Unhealthy,
-                message = result.message,
-            )
-        }
+        return result.status.toHealthResult(message = result.message)
     }
 
     private suspend fun updateMcpHealth(name: String, result: McpHealthResult) {
@@ -2640,14 +2658,7 @@ logging:
                     script = script,
                     workingDir = resolveSessionWorkingDir(currentSessionWorkDir).absolutePath,
                 )
-                scriptOutput = when (result) {
-                    is io.github.stream29.kode.scripting.EvalResult.Success -> {
-                        "Return: ${result.returnValue}\n\nStdout:\n${result.stdout}"
-                    }
-                    is io.github.stream29.kode.scripting.EvalResult.Failure -> {
-                        "Error: ${result.message}\n\nStdout:\n${result.stdout}"
-                    }
-                }
+                scriptOutput = result.toUiScriptOutput()
             } catch (e: Exception) {
                 scriptOutput = "Script failed: ${e.message}"
             } finally {
@@ -2737,8 +2748,8 @@ logging:
         var combined: ToolRegistry? = null
         mcpServers.forEach { (name, server) ->
             try {
-                val registry = when (server.transport.lowercase()) {
-                    "stdio" -> {
+                val registry = when (server.transportType()) {
+                    McpTransportType.Stdio -> {
                         val command = server.command
                         if (command.isNullOrBlank()) {
                             addSystemMessage("MCP server $name missing command")
@@ -2761,7 +2772,10 @@ logging:
                             }
                         }
                     }
-                    "http", "sse" -> {
+
+                    McpTransportType.Http,
+                    McpTransportType.Sse,
+                    -> {
                         val url = server.url
                         if (url.isNullOrBlank()) {
                             addSystemMessage("MCP server $name missing url")
@@ -2778,7 +2792,8 @@ logging:
                             result
                         }
                     }
-                    else -> {
+
+                    McpTransportType.Unsupported -> {
                         addSystemMessage("MCP server $name has unsupported transport ${server.transport}")
                         updateMcpHealth(
                             name,
@@ -2865,12 +2880,11 @@ logging:
     }
 
     private fun normalizeMessageAlignment(value: String): String {
-        val normalized = value.trim().lowercase()
-        return if (normalized == "split") {
-            "split"
-        } else {
-            "left"
-        }
+        return MessageAlignmentPreference.fromValue(value).value
+    }
+
+    private fun normalizeSendKeyMode(value: String): String {
+        return SendKeyModePreference.fromValue(value).value
     }
 
     private fun normalizeMessageWidthRatio(value: Float): Float {
@@ -2895,6 +2909,7 @@ logging:
             lastOpenedSessionId = lastOpenedSessionId,
             messageAlignment = messageAlignment,
             messageMaxWidthRatio = messageMaxWidthRatio,
+            sendKeyMode = sendKeyMode,
             disabledTools = disabledTools,
             webSearchProvider = webSearchProvider,
             webSearchApiKey = webSearchApiKey,
@@ -3018,16 +3033,22 @@ logging:
         return generateUniqueId(base, models.map { it.id }.toSet())
     }
 
+    public fun getProviderPresets(): List<ProviderPreset> {
+        return providerPresets
+    }
+
     public enum class McpTestStatus {
         Success,
         Error,
     }
 
-    public enum class McpHealthStatus {
-        Unknown,
-        Checking,
-        Healthy,
-        Unhealthy,
+    public enum class McpHealthStatus(
+        public val label: String,
+    ) {
+        Unknown(label = "Unknown"),
+        Checking(label = "Checking"),
+        Healthy(label = "Healthy"),
+        Unhealthy(label = "Unhealthy"),
     }
 
     public data class McpToolSummary(
@@ -3053,6 +3074,29 @@ logging:
         val status: McpHealthStatus,
         val message: String,
     )
+
+    private fun McpTestStatus.toHealthResult(message: String): McpHealthResult {
+        val healthStatus = when (this) {
+            McpTestStatus.Success -> McpHealthStatus.Healthy
+            McpTestStatus.Error -> McpHealthStatus.Unhealthy
+        }
+        return McpHealthResult(
+            status = healthStatus,
+            message = message,
+        )
+    }
+
+    private fun io.github.stream29.kode.scripting.EvalResult.toUiScriptOutput(): String {
+        return when (this) {
+            is io.github.stream29.kode.scripting.EvalResult.Success -> {
+                "Return: ${returnValue}\n\nStdout:\n${stdout}"
+            }
+
+            is io.github.stream29.kode.scripting.EvalResult.Failure -> {
+                "Error: ${message}\n\nStdout:\n${stdout}"
+            }
+        }
+    }
 
 
     private fun generateUniqueId(base: String, existing: Set<String>): String {
@@ -3363,14 +3407,691 @@ logging:
         return File(normalized)
     }
 
+    public fun quickSetupProvider(
+        providerId: String,
+        authMode: String,
+        apiKey: String,
+        baseUrlInput: String,
+        addRecommendedModels: Boolean,
+        connectOAuthNow: Boolean,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val preset = providerPresets.firstOrNull { it.id == providerId }
+                    ?: throw IllegalArgumentException("Provider preset not found: $providerId")
+
+                val normalizedAuthMode = normalizeAuthMode(authMode)
+                if (!isAuthModeSupported(preset = preset, authMode = normalizedAuthMode)) {
+                    throw IllegalArgumentException(
+                        "Provider ${preset.displayName} does not support auth mode: $normalizedAuthMode"
+                    )
+                }
+
+                val normalizedApiKey = apiKey.trim()
+                if (normalizedAuthMode == AUTH_MODE_API_KEY && normalizedApiKey.isBlank()) {
+                    throw IllegalArgumentException("API key is required for ${preset.displayName}")
+                }
+
+                val authId = generateUniqueId(preset.id, auths.map { it.id }.toSet())
+                if (authId.isBlank()) {
+                    throw IllegalArgumentException("Failed to generate auth id for ${preset.displayName}")
+                }
+
+                val authConfig = buildAuthFromPreset(
+                    preset = preset,
+                    authId = authId,
+                    authMode = normalizedAuthMode,
+                    apiKey = normalizedApiKey,
+                    baseUrlInput = baseUrlInput,
+                )
+
+                val modelsToAdd = buildModelsFromPreset(
+                    preset = preset,
+                    authId = authId,
+                    addRecommendedModels = addRecommendedModels,
+                )
+                val newAuths = auths + authConfig
+                val newModels = models + modelsToAdd
+                saveAuthAndModelConfig(newAuths = newAuths, newModels = newModels)
+
+                auths = newAuths
+                models = newModels
+                if (activeModelId == null) {
+                    activeModelId = modelsToAdd.firstOrNull()?.id
+                }
+                val addedModelCount = modelsToAdd.size
+                addSystemMessage(
+                    "Quick setup completed: ${preset.displayName} ($authId), added $addedModelCount model(s)"
+                )
+                if (connectOAuthNow && authConfig.auth is io.github.stream29.kode.config.api.LlmAuth.OAuth) {
+                    startOAuthConnectJob(authId = authId, authOverride = authConfig)
+                } else {
+                    initializeAgentFactory()
+                }
+            } catch (e: Exception) {
+                addSystemMessage("Quick setup failed: ${e.message}")
+            }
+        }
+    }
+
+    private fun isAuthModeSupported(preset: ProviderPreset, authMode: String): Boolean {
+        return preset.authModes.any { mode -> providerAuthModeToConfigValue(mode) == authMode }
+    }
+
+    private fun buildAuthFromPreset(
+        preset: ProviderPreset,
+        authId: String,
+        authMode: String,
+        apiKey: String,
+        baseUrlInput: String,
+    ): LlmAuthConfig {
+        val resolvedBaseUrl = normalizeBaseUrlInput(baseUrlInput, preset.defaultBaseUrl)
+        val oauthAuthCodePreset = resolveOAuthAuthCodePresetForAuthMode(
+            preset = preset,
+            authMode = authMode,
+        )
+        val oauthDevicePreset = resolveOAuthDevicePresetForAuthMode(
+            preset = preset,
+            authMode = authMode,
+        )
+        val oauthConfig = if (authMode == AUTH_MODE_API_KEY) {
+            null
+        } else {
+            if (oauthAuthCodePreset == null && oauthDevicePreset == null) {
+                throw IllegalArgumentException(
+                    "Provider ${preset.displayName} does not define OAuth preset for mode: $authMode"
+                )
+            }
+            if (oauthDevicePreset != null) {
+                io.github.stream29.kode.config.api.OAuthConfig.DeviceFlow(
+                    storage = "file",
+                    key = buildOAuthTokenStorageKey(authId = authId),
+                    tokenEndpoint = oauthDevicePreset.tokenEndpoint,
+                    clientId = oauthDevicePreset.clientId,
+                    scopes = oauthDevicePreset.scopes,
+                    tokenAdditionalParams = emptyMap(),
+                    deviceFlowStrategy = oauthDevicePreset.strategy,
+                    deviceAuthorizationEndpoint = oauthDevicePreset.deviceAuthorizationEndpoint,
+                    deviceTokenEndpoint = oauthDevicePreset.deviceTokenEndpoint,
+                    deviceVerificationUri = oauthDevicePreset.verificationUri,
+                    deviceRedirectUri = oauthDevicePreset.redirectUri,
+                )
+            } else {
+                requireNotNull(oauthAuthCodePreset) {
+                    "Provider ${preset.displayName} does not define auth-code OAuth preset for mode: $authMode"
+                }
+                io.github.stream29.kode.config.api.OAuthConfig.AuthCodePkce(
+                    storage = "file",
+                    key = buildOAuthTokenStorageKey(authId = authId),
+                    authorizationEndpoint = oauthAuthCodePreset.authorizationEndpoint,
+                    tokenEndpoint = oauthAuthCodePreset.tokenEndpoint,
+                    clientId = oauthAuthCodePreset.clientId,
+                    scopes = oauthAuthCodePreset.scopes,
+                    callbackUri = oauthAuthCodePreset.callbackUri,
+                    authorizationAdditionalParams = oauthAuthCodePreset.authorizationAdditionalParams,
+                    tokenAdditionalParams = oauthAuthCodePreset.tokenAdditionalParams,
+                )
+            }
+        }
+
+        val providerId = resolveProviderIdForPreset(presetId = preset.id)
+        val auth = if (authMode == AUTH_MODE_API_KEY) {
+            io.github.stream29.kode.config.api.LlmAuth.ApiKey(
+                apiKey = apiKey,
+                envKeys = preset.envKeys,
+                baseUrl = resolvedBaseUrl,
+                customHeaders = emptyMap(),
+            )
+        } else {
+            io.github.stream29.kode.config.api.LlmAuth.OAuth(
+                oauth = requireNotNull(oauthConfig) { "oauthConfig is null for authMode=$authMode" },
+                baseUrl = resolvedBaseUrl,
+                customHeaders = emptyMap(),
+            )
+        }
+
+        return LlmAuthConfig(
+            id = authId,
+            providerId = providerId,
+            name = preset.displayName.takeIf {
+                shouldKeepPresetDisplayName(
+                    providerId = providerId,
+                    presetId = preset.id,
+                )
+            },
+            auth = auth,
+        )
+    }
+
+    private fun shouldKeepPresetDisplayName(providerId: String, presetId: String): Boolean {
+        val normalizedProviderId = providerId.trim().lowercase()
+        val normalizedPresetId = presetId.trim().lowercase()
+        if (normalizedProviderId !in CUSTOM_NAMED_PROVIDER_IDS) {
+            return false
+        }
+        return normalizedPresetId !in CUSTOM_NAMED_PROVIDER_IDS
+    }
+
+    private fun resolveProviderIdForPreset(presetId: String): String {
+        val normalizedPresetId = presetId.trim()
+        require(normalizedPresetId.isNotBlank()) { "Provider preset id is blank" }
+        return normalizedPresetId
+    }
+
+    private fun resolveOAuthAuthCodePresetForAuthMode(
+        preset: ProviderPreset,
+        authMode: String,
+    ): ProviderOAuthAuthCodePkcePreset? {
+        return preset.oauthAuthCodePkceByMode.entries
+            .firstOrNull { entry -> providerAuthModeToConfigValue(entry.key) == authMode }
+            ?.value
+    }
+
+    private fun resolveOAuthDevicePresetForAuthMode(
+        preset: ProviderPreset,
+        authMode: String,
+    ): ProviderOAuthDeviceFlowPreset? {
+        return preset.oauthDeviceFlowByMode.entries
+            .firstOrNull { entry -> providerAuthModeToConfigValue(entry.key) == authMode }
+            ?.value
+    }
+
+    private fun buildOAuthTokenStorageKey(authId: String): String {
+        return resolveAppDataDir()
+            .resolve("oauth")
+            .resolve("${authId.trim()}.oauth.json")
+            .absolutePath
+    }
+
+    public fun generateDefaultOAuthTokenStorageKey(authId: String): String {
+        val normalized = authId.trim().ifBlank { "auth" }
+        return buildOAuthTokenStorageKey(authId = normalized)
+    }
+
+    private fun buildModelsFromPreset(
+        preset: ProviderPreset,
+        authId: String,
+        addRecommendedModels: Boolean,
+    ): List<LlmModelConfig> {
+        val selectedModels = selectPresetModels(preset = preset, addRecommendedModels = addRecommendedModels)
+        val existingIds = models.map { model -> model.id }.toMutableSet()
+        return selectedModels.map { presetModel ->
+            val suggestedId = generateUniqueId("$authId-${presetModel.id}", existingIds)
+            val resolvedId = suggestedId.ifBlank {
+                generateUniqueId("${preset.id}-${presetModel.id}", existingIds)
+            }
+            if (resolvedId.isBlank()) {
+                throw IllegalArgumentException("Failed to generate model id for ${presetModel.id}")
+            }
+            existingIds += resolvedId
+            LlmModelConfig(
+                id = resolvedId,
+                authId = authId,
+                model = presetModel.id,
+                displayName = null,
+                maxContextSize = null,
+                capabilities = null,
+            )
+        }
+    }
+
+    private fun selectPresetModels(
+        preset: ProviderPreset,
+        addRecommendedModels: Boolean,
+    ): List<LLModel> {
+        if (preset.models.isEmpty()) {
+            return emptyList()
+        }
+        if (!addRecommendedModels) {
+            return listOf(preset.models.first())
+        }
+        return preset.models.take(2)
+    }
+
+    private fun normalizeBaseUrlInput(input: String, defaultValue: String?): String? {
+        return input.trim().ifBlank { defaultValue.orEmpty() }.takeIf { value -> value.isNotBlank() }
+    }
+
+    private fun normalizeAuthMode(mode: String): String {
+        val normalized = mode.trim().lowercase()
+        return if (normalized.isBlank()) {
+            AUTH_MODE_API_KEY
+        } else {
+            normalized
+        }
+    }
+
+    private fun providerAuthModeToConfigValue(mode: ProviderAuthMode): String {
+        return PROVIDER_AUTH_MODE_TO_CONFIG_VALUE[mode] ?: AUTH_MODE_API_KEY
+    }
+
+    private suspend fun saveAuthAndModelConfig(newAuths: List<LlmAuthConfig>, newModels: List<LlmModelConfig>) {
+        validateAuthClientProviderScope(newAuths)
+        validateModelProviderSupport(authConfigs = newAuths, modelConfigs = newModels)
+        val current = configManager.load()
+        val updated = current.copy(
+            auths = newAuths,
+            models = newModels,
+        )
+        configManager.save(updated)
+    }
+
+    private fun validateModelProviderSupport(authConfigs: List<LlmAuthConfig>, modelConfigs: List<LlmModelConfig>) {
+        val authById = authConfigs.associateBy { auth -> auth.id }
+        modelConfigs.forEach { modelConfig ->
+            val auth = authById[modelConfig.authId]
+                ?: throw IllegalArgumentException("Model '${modelConfig.id}' references missing auth '${modelConfig.authId}'")
+            val providerId = auth.providerId.trim().lowercase()
+            val params = modelConfig.params ?: return@forEach
+
+            if (!params.supportsProvider(providerId)) {
+                throw IllegalArgumentException(
+                    "Model '${modelConfig.id}' params '${params.summaryText()}' do not match provider '$providerId'"
+                )
+            }
+
+            if (params is LlmModelParamsConfig.OpenAiFamily) {
+                val endpointSupport = resolveOpenAiEndpointSupport(
+                    providerId = providerId,
+                    modelConfig = modelConfig,
+                )
+                if (endpointSupport.constrained && !endpointSupport.supports(params.endpoint)) {
+                    throw IllegalArgumentException(
+                        "Model '${modelConfig.id}' (${modelConfig.model}) does not support ${params.endpoint.asConfigValue()} endpoint"
+                    )
+                }
+            }
+        }
+    }
+
+    private fun resolveOpenAiEndpointSupport(
+        providerId: String,
+        modelConfig: LlmModelConfig,
+    ): OpenAiEndpointSupport {
+        val fromConfiguredCapabilities = resolveOpenAiEndpointSupportFromConfiguredCapabilities(
+            capabilities = modelConfig.capabilities,
+        )
+        if (fromConfiguredCapabilities != null) {
+            return fromConfiguredCapabilities
+        }
+
+        val preset = providerPresets.firstOrNull { it.id == providerId }
+            ?: return OpenAiEndpointSupport.unspecified()
+        val presetModel = preset.models.firstOrNull { model -> model.id == modelConfig.model }
+            ?: return OpenAiEndpointSupport.unspecified()
+
+        val supportsChat = presetModel.capabilities.contains(ai.koog.prompt.llm.LLMCapability.OpenAIEndpoint.Completions)
+        val supportsResponses = presetModel.capabilities.contains(ai.koog.prompt.llm.LLMCapability.OpenAIEndpoint.Responses)
+        val hasEndpointCapability = supportsChat || supportsResponses
+        if (!hasEndpointCapability) {
+            return OpenAiEndpointSupport.unspecified()
+        }
+
+        return OpenAiEndpointSupport(
+            supportsChat = supportsChat,
+            supportsResponses = supportsResponses,
+            constrained = true,
+        )
+    }
+
+    private fun resolveOpenAiEndpointSupportFromConfiguredCapabilities(capabilities: List<String>?): OpenAiEndpointSupport? {
+        val normalized = capabilities
+            ?.map { capability -> capability.trim().lowercase() }
+            ?.filter { capability -> capability.isNotBlank() }
+            ?.toSet()
+            ?: return null
+        if (normalized.isEmpty()) {
+            return null
+        }
+
+        val supportsChat = normalized.any { capability -> capability in OPENAI_CHAT_CAPABILITY_ALIASES }
+        val supportsResponses = normalized.any { capability -> capability in OPENAI_RESPONSES_CAPABILITY_ALIASES }
+        if (!supportsChat && !supportsResponses) {
+            return null
+        }
+
+        return OpenAiEndpointSupport(
+            supportsChat = supportsChat,
+            supportsResponses = supportsResponses,
+            constrained = true,
+        )
+    }
+
+    private data class OpenAiEndpointSupport(
+        val supportsChat: Boolean,
+        val supportsResponses: Boolean,
+        val constrained: Boolean,
+    ) {
+        fun supports(endpoint: OpenAiEndpoint): Boolean {
+            return when (endpoint) {
+                OpenAiEndpoint.Chat -> supportsChat
+                OpenAiEndpoint.Responses -> supportsResponses
+            }
+        }
+
+        companion object {
+            fun unspecified(): OpenAiEndpointSupport {
+                return OpenAiEndpointSupport(
+                    supportsChat = true,
+                    supportsResponses = true,
+                    constrained = false,
+                )
+            }
+        }
+    }
+
+    private fun OpenAiEndpoint.asConfigValue(): String {
+        return when (this) {
+            OpenAiEndpoint.Chat -> "chat"
+            OpenAiEndpoint.Responses -> "responses"
+        }
+    }
+
+    private fun validateAuthClientProviderScope(authConfigs: List<LlmAuthConfig>) {
+        val authByProviderKey = linkedMapOf<ai.koog.prompt.llm.LLMProvider, LlmAuthConfig>()
+        authConfigs.forEach { auth ->
+            val providerId = auth.providerId.trim()
+            require(providerId.isNotBlank()) { "providerId is blank for auth '${auth.id}'" }
+            val provider = BuiltinLlmProviderRegistry.findProvider(providerId)
+                ?: throw IllegalArgumentException("Provider not found: $providerId (authId=${auth.id})")
+
+            val existing = authByProviderKey[provider.llmProvider]
+            if (existing != null && existing.id != auth.id) {
+                throw IllegalArgumentException(
+                    "Auth '${auth.id}' conflicts with '${existing.id}': " +
+                            "${providerId} and ${existing.providerId} share the same runtime client scope (${provider.llmProvider.id}). " +
+                            "Use only one auth per provider scope."
+                )
+            }
+            authByProviderKey[provider.llmProvider] = auth
+        }
+    }
+
+    private suspend fun ensureOAuthCredentialsUpToDate() {
+        auths.forEach { auth ->
+            val oauth = auth.auth.oauthConfigOrNull()
+                ?: return@forEach
+            oauthCredentialManager.ensureValidAccessToken(authId = auth.id, oauth = oauth)
+        }
+    }
+
+    private suspend fun refreshOAuthStatusSnapshot() {
+        oauthStatusByAuthId = auths
+            .mapNotNull { auth ->
+                val oauth = auth.auth.oauthConfigOrNull()
+                    ?: return@mapNotNull null
+                val status = runCatching {
+                    oauthCredentialManager.inspectStatus(
+                        authId = auth.id,
+                        oauth = oauth,
+                    )
+                }.onFailure { error ->
+                    log("Failed to inspect OAuth status for ${auth.id}: ${error.message}")
+                }.getOrNull()
+                auth.id to mapOAuthStatusUi(status)
+            }
+            .toMap()
+    }
+
+    private fun mapOAuthStatusUi(status: OAuthCredentialStatus?): OAuthStatusUi {
+        if (status == null) {
+            return OAuthStatusUi(
+                connected = false,
+                expired = false,
+                hasRefreshToken = false,
+                expiresAtEpochSecond = null,
+                summary = "unknown",
+                inProgress = false,
+            )
+        }
+
+        val summary = when {
+            !status.connected -> "not connected"
+            status.expired && status.hasRefreshToken -> "expired (refresh available)"
+            status.expired -> "expired"
+            status.expiresAtEpochSecond == null -> "connected"
+            else -> "connected (exp=${status.expiresAtEpochSecond})"
+        }
+        return OAuthStatusUi(
+            connected = status.connected,
+            expired = status.expired,
+            hasRefreshToken = status.hasRefreshToken,
+            expiresAtEpochSecond = status.expiresAtEpochSecond,
+            summary = summary,
+            inProgress = false,
+        )
+    }
+
+    private fun markOAuthProgress(authId: String, summary: String) {
+        val normalized = summary.trim().ifBlank { "processing" }
+        val current = oauthStatusByAuthId[authId]
+        val next = if (current == null) {
+            OAuthStatusUi(
+                connected = false,
+                expired = false,
+                hasRefreshToken = false,
+                expiresAtEpochSecond = null,
+                summary = normalized,
+                inProgress = true,
+            )
+        } else {
+            current.copy(
+                summary = normalized,
+                inProgress = true,
+            )
+        }
+        oauthStatusByAuthId = oauthStatusByAuthId + (authId to next)
+    }
+
+    private fun markOAuthFailure(authId: String, summary: String) {
+        val normalized = summary.trim().ifBlank { "failed" }
+        val current = oauthStatusByAuthId[authId]
+        val next = if (current == null) {
+            OAuthStatusUi(
+                connected = false,
+                expired = false,
+                hasRefreshToken = false,
+                expiresAtEpochSecond = null,
+                summary = normalized,
+                inProgress = false,
+            )
+        } else {
+            current.copy(
+                summary = normalized,
+                inProgress = false,
+            )
+        }
+        oauthStatusByAuthId = oauthStatusByAuthId + (authId to next)
+    }
+
+    public fun connectOAuth(authId: String) {
+        startOAuthConnectJob(authId = authId, authOverride = null)
+    }
+
+    private fun startOAuthConnectJob(authId: String, authOverride: LlmAuthConfig?) {
+        val existing = oauthJobs[authId]
+        if (existing?.isActive == true) {
+            addSystemMessage("OAuth is already running for $authId")
+            return
+        }
+        val job = viewModelScope.launch(Dispatchers.IO) {
+            markOAuthProgress(authId = authId, summary = "connecting")
+            try {
+                val auth = authOverride ?: auths.firstOrNull { config -> config.id == authId }
+                    ?: throw IllegalArgumentException("Auth not found: $authId")
+                connectOAuthInternal(auth = auth)
+                initializeAgentFactory()
+            } catch (e: CancellationException) {
+                addSystemMessage("OAuth connect cancelled for $authId")
+                markOAuthFailure(authId = authId, summary = "cancelled")
+            } catch (e: Exception) {
+                addSystemMessage("OAuth connect failed: ${e.message}")
+                markOAuthFailure(authId = authId, summary = "connect failed: ${e.message}")
+            } finally {
+                oauthJobs.remove(authId)
+            }
+        }
+        oauthJobs[authId] = job
+    }
+
+    public fun cancelOAuth(authId: String) {
+        val job = oauthJobs[authId]
+        if (job == null || !job.isActive) {
+            addSystemMessage("No running OAuth operation for $authId")
+            return
+        }
+        markOAuthProgress(authId = authId, summary = "cancelling")
+        job.cancel(cause = CancellationException("Cancelled by user"))
+    }
+
+    private suspend fun connectOAuthInternal(auth: LlmAuthConfig) {
+        val rawOauth = auth.auth.oauthConfigOrNull()
+            ?: throw IllegalArgumentException("Auth ${auth.id} does not have OAuth config")
+        val oauth = normalizeOAuthConfigForConnect(auth = auth, oauth = rawOauth)
+        if (!oauth.canInteractiveConnect(providerId = auth.providerId)) {
+            throw IllegalArgumentException("OAuth config for ${auth.id} is incomplete")
+        }
+        val authMode = resolveOAuthConnectAuthMode(auth)
+        val token = oauthCredentialManager.connect(
+            authId = auth.id,
+            authMode = authMode,
+            oauth = oauth,
+            openBrowser = { url ->
+                if (Desktop.isDesktopSupported()) {
+                    runCatching {
+                        Desktop.getDesktop().browse(java.net.URI.create(url))
+                    }.onFailure {
+                        addSystemMessage("Failed to open browser automatically: ${it.message}")
+                        addSystemMessage("Open this URL in your browser to continue OAuth: $url")
+                    }
+                } else {
+                    addSystemMessage("Open this URL in your browser to continue OAuth: $url")
+                }
+            },
+            onProgress = { message ->
+                addSystemMessage("OAuth ${auth.id}: $message")
+                markOAuthProgress(authId = auth.id, summary = message)
+            },
+        )
+        val expiresAt = token.expiresAtEpochSecond
+        val expiresHint = if (expiresAt == null) {
+            "no expiry"
+        } else {
+            "expires at epoch=$expiresAt"
+        }
+        addSystemMessage("OAuth connected for ${resolveProviderDisplayName(auth.providerId)} (${auth.id}), $expiresHint")
+        refreshOAuthStatusSnapshot()
+    }
+
+    private fun resolveOAuthConnectAuthMode(auth: LlmAuthConfig): String {
+        val providerId = auth.providerId.trim()
+        val oauth = auth.auth.oauthConfigOrNull()
+        if (oauth?.isDeviceFlow(providerId = providerId) == true) {
+            return "oauth_device"
+        }
+        return OAUTH_CONNECT_AUTH_MODE_BY_PROVIDER_ID[providerId] ?: "oauth_subscription"
+    }
+
+    private fun resolveProviderDisplayName(providerId: String): String {
+        val normalized = providerId.trim()
+        return providerPresets.firstOrNull { preset -> preset.id == normalized }?.displayName ?: normalized
+    }
+
+    private fun normalizeOAuthConfigForConnect(
+        auth: LlmAuthConfig,
+        oauth: io.github.stream29.kode.config.api.OAuthConfig,
+    ): io.github.stream29.kode.config.api.OAuthConfig {
+        if (!OPENAI_SUBSCRIPTION_BROWSER_PROVIDER_IDS.contains(auth.providerId.trim())) {
+            return oauth
+        }
+
+        if (oauth !is io.github.stream29.kode.config.api.OAuthConfig.AuthCodePkce) {
+            return oauth
+        }
+
+        val callbackUri = normalizeOpenAiSubscriptionCallbackUri(oauth.callbackUri)
+        val authorizationAdditionalParams = if (oauth.authorizationAdditionalParams.isNotEmpty()) {
+            oauth.authorizationAdditionalParams
+        } else {
+            OPENAI_SUBSCRIPTION_AUTHORIZATION_ADDITIONAL_PARAMS
+        }
+        return oauth.copy(
+            callbackUri = callbackUri,
+            authorizationAdditionalParams = authorizationAdditionalParams,
+        )
+    }
+
+    private fun normalizeOpenAiSubscriptionCallbackUri(current: String?): String {
+        val normalized = current?.trim().orEmpty()
+        if (normalized.isBlank()) {
+            return OPENAI_SUBSCRIPTION_CALLBACK_URI
+        }
+        if (normalized.contains("{port}") || normalized.contains("/oauth/callback")) {
+            return OPENAI_SUBSCRIPTION_CALLBACK_URI
+        }
+        if (normalized.startsWith("http://127.0.0.1:1455/auth/callback")) {
+            return normalized.replace("http://127.0.0.1", "http://localhost")
+        }
+        return normalized
+    }
+
+    public fun disconnectOAuth(authId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            markOAuthProgress(authId = authId, summary = "disconnecting")
+            try {
+                val auth = auths.firstOrNull { config -> config.id == authId }
+                    ?: throw IllegalArgumentException("Auth not found: $authId")
+                val running = oauthJobs[authId]
+                if (running?.isActive == true) {
+                    running.cancel(cause = CancellationException("Cancelled due to disconnect"))
+                    oauthJobs.remove(authId)
+                }
+                val oauth = auth.auth.oauthConfigOrNull()
+                    ?: throw IllegalArgumentException("Auth $authId does not have OAuth config")
+                oauthCredentialManager.disconnect(oauth = oauth)
+                addSystemMessage("OAuth token removed for ${resolveProviderDisplayName(auth.providerId)} (${auth.id})")
+                refreshOAuthStatusSnapshot()
+                initializeAgentFactory()
+            } catch (e: Exception) {
+                addSystemMessage("OAuth disconnect failed: ${e.message}")
+                markOAuthFailure(authId = authId, summary = "disconnect failed: ${e.message}")
+            }
+        }
+    }
+
+    public fun refreshOAuth(authId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            markOAuthProgress(authId = authId, summary = "refreshing")
+            try {
+                val auth = auths.firstOrNull { config -> config.id == authId }
+                    ?: throw IllegalArgumentException("Auth not found: $authId")
+                val oauth = auth.auth.oauthConfigOrNull()
+                    ?: throw IllegalArgumentException("Auth $authId does not have OAuth config")
+                val token = oauthCredentialManager.ensureValidAccessToken(
+                    authId = auth.id,
+                    oauth = oauth,
+                )
+                if (token.isNullOrBlank()) {
+                    addSystemMessage("OAuth token unavailable for ${resolveProviderDisplayName(auth.providerId)} (${auth.id})")
+                } else {
+                    addSystemMessage("OAuth token ready for ${resolveProviderDisplayName(auth.providerId)} (${auth.id})")
+                }
+                refreshOAuthStatusSnapshot()
+                initializeAgentFactory()
+            } catch (e: Exception) {
+                addSystemMessage("OAuth refresh failed: ${e.message}")
+                markOAuthFailure(authId = authId, summary = "refresh failed: ${e.message}")
+            }
+        }
+    }
+
     public fun addAuth(auth: LlmAuthConfig) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val newAuths = auths + auth
-                val config = AppConfig(auths = newAuths, models = models)
-                configManager.save(config)
+                saveAuthAndModelConfig(newAuths = newAuths, newModels = models)
                 auths = newAuths
-                addSystemMessage("Added auth provider: ${auth.provider} (${auth.id})")
+                addSystemMessage("Added auth provider: ${resolveProviderDisplayName(auth.providerId)} (${auth.id})")
                 initializeAgentFactory()
             } catch (e: Exception) {
                 addSystemMessage("Failed to add auth: ${e.message}")
@@ -3382,10 +4103,9 @@ logging:
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val newAuths = auths.map { if (it.id == id) auth else it }
-                val config = AppConfig(auths = newAuths, models = models)
-                configManager.save(config)
+                saveAuthAndModelConfig(newAuths = newAuths, newModels = models)
                 auths = newAuths
-                addSystemMessage("Updated auth provider: ${auth.provider} (${auth.id})")
+                addSystemMessage("Updated auth provider: ${resolveProviderDisplayName(auth.providerId)} (${auth.id})")
                 initializeAgentFactory()
             } catch (e: Exception) {
                 addSystemMessage("Failed to update auth: ${e.message}")
@@ -3397,8 +4117,7 @@ logging:
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val newAuths = auths.filter { it.id != id }
-                val config = AppConfig(auths = newAuths, models = models)
-                configManager.save(config)
+                saveAuthAndModelConfig(newAuths = newAuths, newModels = models)
                 auths = newAuths
                 addSystemMessage("Deleted auth provider: $id")
                 initializeAgentFactory()
@@ -3412,8 +4131,7 @@ logging:
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val newModels = models + model
-                val config = AppConfig(auths = auths, models = newModels)
-                configManager.save(config)
+                saveAuthAndModelConfig(newAuths = auths, newModels = newModels)
                 models = newModels
                 if (activeModelId == null) {
                     activeModelId = model.id
@@ -3430,8 +4148,7 @@ logging:
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val newModels = models.map { if (it.id == id) model else it }
-                val config = AppConfig(auths = auths, models = newModels)
-                configManager.save(config)
+                saveAuthAndModelConfig(newAuths = auths, newModels = newModels)
                 models = newModels
                 addSystemMessage("Updated model: ${model.displayName ?: model.model}")
                 initializeAgentFactory()
@@ -3445,8 +4162,7 @@ logging:
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val newModels = models.filter { it.id != id }
-                val config = AppConfig(auths = auths, models = newModels)
-                configManager.save(config)
+                saveAuthAndModelConfig(newAuths = auths, newModels = newModels)
                 models = newModels
                 if (activeModelId == id) {
                     activeModelId = newModels.firstOrNull()?.id
@@ -3457,6 +4173,41 @@ logging:
                 addSystemMessage("Failed to delete model: ${e.message}")
             }
         }
+    }
+
+    private companion object {
+        private const val AUTH_MODE_API_KEY: String = "api_key"
+        private val PROVIDER_AUTH_MODE_TO_CONFIG_VALUE: Map<ProviderAuthMode, String> = mapOf(
+            ProviderAuthMode.ApiKey to AUTH_MODE_API_KEY,
+            ProviderAuthMode.OAuthSubscription to "oauth_subscription",
+            ProviderAuthMode.OAuthDevice to "oauth_device",
+            ProviderAuthMode.CloudCredentialChain to "cloud_credential_chain",
+            ProviderAuthMode.WellKnown to "well_known",
+        )
+        private val OAUTH_CONNECT_AUTH_MODE_BY_PROVIDER_ID: Map<String, String> = mapOf(
+            "openai-subscription-device" to "oauth_device",
+            "openai-subscription-browser" to "oauth_subscription",
+        )
+        private val OPENAI_SUBSCRIPTION_BROWSER_PROVIDER_IDS: Set<String> = setOf(
+            "openai-subscription-browser",
+        )
+        private val CUSTOM_NAMED_PROVIDER_IDS: Set<String> = setOf(
+            "openai-compatible",
+        )
+        private const val OPENAI_SUBSCRIPTION_CALLBACK_URI: String = "http://localhost:1455/auth/callback"
+        private val OPENAI_SUBSCRIPTION_AUTHORIZATION_ADDITIONAL_PARAMS: Map<String, String> = mapOf(
+            "id_token_add_organizations" to "true",
+            "codex_cli_simplified_flow" to "true",
+            "originator" to "opencode",
+        )
+        private val OPENAI_CHAT_CAPABILITY_ALIASES: Set<String> = setOf(
+            "openai_completions",
+            "openai_endpoint_completions",
+        )
+        private val OPENAI_RESPONSES_CAPABILITY_ALIASES: Set<String> = setOf(
+            "openai_responses",
+            "openai_endpoint_responses",
+        )
     }
 
     override fun onCleared() {
@@ -3500,6 +4251,7 @@ public data class ChatPageUiState(
     val sessionSummaries: List<SessionSummary> = emptyList(),
     val messageAlignment: String = "left",
     val messageMaxWidthRatio: Float = 0.9f,
+    val sendKeyMode: String = "ctrl_or_cmd_enter_send",
     val agentPresets: List<AgentPreset> = emptyList(),
     val activePresetName: String = "build",
     val models: List<LlmModelConfig> = emptyList(),
@@ -3575,6 +4327,7 @@ public data class AppUiState(
     val configText: String = "",
     val configError: String? = null,
     val auths: List<LlmAuthConfig> = emptyList(),
+    val oauthStatusByAuthId: Map<String, OAuthStatusUi> = emptyMap(),
     val models: List<LlmModelConfig> = emptyList(),
     val activeModelId: String? = null,
     val defaultModelId: String? = null,
@@ -3594,6 +4347,7 @@ public data class AppUiState(
     val lastOpenedSessionId: String? = null,
     val messageAlignment: String = "left",
     val messageMaxWidthRatio: Float = 0.9f,
+    val sendKeyMode: String = "ctrl_or_cmd_enter_send",
     val mcpToolTimeoutMs: Int = 60000,
     val mcpServers: Map<String, io.github.stream29.kode.config.api.McpServerConfig> = emptyMap(),
     val mcpTestResults: Map<String, MainViewModel.McpTestResult> = emptyMap(),
@@ -3634,6 +4388,15 @@ public data class AppUiState(
     val temperature: Float = 0.3f,
 )
 
+public data class OAuthStatusUi(
+    val connected: Boolean,
+    val expired: Boolean,
+    val hasRefreshToken: Boolean,
+    val expiresAtEpochSecond: Long?,
+    val summary: String,
+    val inProgress: Boolean,
+)
+
 public data class UiToast(
     val id: String,
     val message: String,
@@ -3664,6 +4427,7 @@ private data class PreferencesSnapshot(
     val lastOpenedSessionId: String?,
     val messageAlignment: String,
     val messageMaxWidthRatio: Float,
+    val sendKeyMode: String,
     val disabledTools: Set<String>,
     val webSearchProvider: String,
     val webSearchApiKey: String,

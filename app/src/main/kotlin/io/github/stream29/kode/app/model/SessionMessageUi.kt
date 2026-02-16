@@ -28,6 +28,133 @@ public fun SessionMessage.isAssistantToolPlan(): Boolean =
 public fun SessionMessage.isUiToolCallLike(): Boolean =
     role == MessageRole.TOOL_CALL || role == MessageRole.TOOL_RESULT || isAssistantToolPlan()
 
+public fun SessionMessage.isToolRoleUi(): Boolean {
+    return role == MessageRole.TOOL_CALL || role == MessageRole.TOOL_RESULT
+}
+
+public fun SessionMessage.isSystemRoleUi(): Boolean {
+    return role == MessageRole.SYSTEM
+}
+
+public fun SessionMessage.isUserRoleUi(): Boolean {
+    return role == MessageRole.USER
+}
+
+public fun SessionMessage.shouldExpandByDefaultUi(): Boolean {
+    return when (role) {
+        MessageRole.USER -> true
+        MessageRole.ASSISTANT -> !isUiToolCallLike() && !isUiError()
+        MessageRole.SYSTEM,
+        MessageRole.TOOL_CALL,
+        MessageRole.TOOL_RESULT,
+        -> false
+    }
+}
+
+public fun SessionMessage.collapsedTitleUi(): String {
+    val toolSuffix = extractToolName()?.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
+    return when (role) {
+        MessageRole.SYSTEM -> "System message"
+        MessageRole.TOOL_CALL -> "Tool call$toolSuffix"
+        MessageRole.TOOL_RESULT -> if (isUiError()) {
+            "Tool error$toolSuffix"
+        } else {
+            "Tool result$toolSuffix"
+        }
+
+        MessageRole.ASSISTANT -> if (isAssistantToolPlan()) {
+            "Assistant tool plan"
+        } else {
+            "Assistant message"
+        }
+
+        MessageRole.USER -> "User message"
+    }
+}
+
+public fun SessionMessage.collapsedPreviewUi(maxLength: Int = 120): String {
+    val content = when (role) {
+        MessageRole.TOOL_CALL -> extractToolCallArgumentsText() ?: this.content
+        MessageRole.TOOL_RESULT -> extractToolResultText() ?: this.content
+        else -> this.content
+    }
+    val normalized = content.replace(Regex("\\s+"), " ").trim()
+    if (normalized.isBlank()) {
+        return "(empty)"
+    }
+    return if (normalized.length > maxLength) {
+        normalized.take(maxLength) + "..."
+    } else {
+        normalized
+    }
+}
+
+public fun SessionMessage.toolGroupPayloadOrNull(): ToolGroupPayload? {
+    return when (role) {
+        MessageRole.TOOL_CALL -> ToolGroupPayload.Call(
+            toolName = extractToolName(),
+            callId = extractToolCallId(),
+            argumentsText = extractToolCallArgumentsText()?.takeIf { it.isNotBlank() } ?: content,
+            messageId = id,
+        )
+
+        MessageRole.TOOL_RESULT -> ToolGroupPayload.Result(
+            toolName = extractToolName(),
+            callId = extractToolCallId(),
+            resultText = extractToolResultText()?.takeIf { it.isNotBlank() } ?: content,
+            messageId = id,
+        )
+
+        else -> null
+    }
+}
+
+public fun SessionMessage.projectedTextForSessionSummary(): String? {
+    return when (role) {
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+        -> content.trim().takeIf { it.isNotBlank() }
+
+        MessageRole.TOOL_CALL -> {
+            if (isSayToUserToolCall() || isAwaitUserInputToolCall()) {
+                extractToolCallPrimaryTextArg()?.trim()?.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+        }
+
+        MessageRole.TOOL_RESULT -> {
+            if (isAwaitUserInputToolResult()) {
+                extractToolResultText()?.trim()?.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+        }
+
+        MessageRole.SYSTEM -> null
+    }
+}
+
+public sealed interface ToolGroupPayload {
+    public val toolName: String?
+    public val callId: String?
+    public val messageId: String
+
+    public data class Call(
+        override val toolName: String?,
+        override val callId: String?,
+        val argumentsText: String,
+        override val messageId: String,
+    ) : ToolGroupPayload
+
+    public data class Result(
+        override val toolName: String?,
+        override val callId: String?,
+        val resultText: String,
+        override val messageId: String,
+    ) : ToolGroupPayload
+}
+
 public fun SessionMessage.extractToolName(): String? {
     return when (role) {
         MessageRole.TOOL_CALL -> decodeToolCallData()?.toolName ?: (koogMessage as? Message.Tool.Call)?.tool

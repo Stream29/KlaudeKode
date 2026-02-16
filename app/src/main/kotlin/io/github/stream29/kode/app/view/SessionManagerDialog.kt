@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -225,17 +227,8 @@ private fun SessionCard(
     onDelete: () -> Unit,
     onArchive: () -> Unit
 ) {
-    val statusColor = when (session.status) {
-        SessionStatus.ACTIVE -> MaterialTheme.colorScheme.primary
-        SessionStatus.ARCHIVED -> MaterialTheme.colorScheme.tertiary
-        SessionStatus.DELETED -> MaterialTheme.colorScheme.error
-    }
-    
-    val statusIcon = when (session.status) {
-        SessionStatus.ACTIVE -> Icons.Default.Circle
-        SessionStatus.ARCHIVED -> Icons.Default.Inventory2
-        SessionStatus.DELETED -> Icons.Default.Delete
-    }
+    val statusColor = session.status.statusColor(colorScheme = MaterialTheme.colorScheme)
+    val statusIcon = session.status.statusIcon()
     
     val dateStr = formatSessionTime(session)
     
@@ -350,7 +343,7 @@ private fun SessionCard(
                     )
                 }
 
-                if (session.status == SessionStatus.ARCHIVED) {
+                if (session.status.showRestoreAction()) {
                     FilledTonalIconButton(
                         onClick = onRestore,
                         modifier = Modifier.size(40.dp)
@@ -396,4 +389,24 @@ private fun SessionCard(
 private fun formatSessionTime(session: SessionSummary): String {
     val dateFormat = session.updatedAt.toLocalDateTime(TimeZone.currentSystemDefault())
     return "${dateFormat.date} ${dateFormat.hour.toString().padStart(2, '0')}:${dateFormat.minute.toString().padStart(2, '0')}"
+}
+
+private fun SessionStatus.statusColor(colorScheme: ColorScheme): Color {
+    return when (this) {
+        SessionStatus.ACTIVE -> colorScheme.primary
+        SessionStatus.ARCHIVED -> colorScheme.tertiary
+        SessionStatus.DELETED -> colorScheme.error
+    }
+}
+
+private fun SessionStatus.statusIcon(): ImageVector {
+    return when (this) {
+        SessionStatus.ACTIVE -> Icons.Default.Circle
+        SessionStatus.ARCHIVED -> Icons.Default.Inventory2
+        SessionStatus.DELETED -> Icons.Default.Delete
+    }
+}
+
+private fun SessionStatus.showRestoreAction(): Boolean {
+    return this == SessionStatus.ARCHIVED
 }

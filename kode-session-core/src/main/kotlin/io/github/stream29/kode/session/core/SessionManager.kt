@@ -46,18 +46,23 @@ public class SessionManager(
     private val sessionFactory: SessionFactory = SessionFactory(repository)
     private val subAgentJobs: ConcurrentHashMap<String, ConcurrentHashMap<String, Job>> = ConcurrentHashMap()
 
-    public enum class SubAgentPollStatus {
-        Pending,
-        Completed,
-        Missing,
-        Failed,
-    }
+    public sealed interface SubAgentPollResult {
+        public data class Pending(
+            val error: String? = null,
+        ) : SubAgentPollResult
 
-    public data class SubAgentPollResult(
-        val status: SubAgentPollStatus,
-        val result: String?,
-        val error: String?,
-    )
+        public data class Completed(
+            val result: String,
+        ) : SubAgentPollResult
+
+        public data class Missing(
+            val error: String = SUBAGENT_NOT_FOUND_ERROR,
+        ) : SubAgentPollResult
+
+        public data class Failed(
+            val error: String?,
+        ) : SubAgentPollResult
+    }
 
     public data class PendingToolCallInfo(
         val messageId: String,
@@ -1066,35 +1071,19 @@ public class SessionManager(
     }
 
     private fun missingSubAgentPollResult(): SubAgentPollResult {
-        return SubAgentPollResult(
-            status = SubAgentPollStatus.Missing,
-            result = null,
-            error = SUBAGENT_NOT_FOUND_ERROR,
-        )
+        return SubAgentPollResult.Missing()
     }
 
     private fun pendingSubAgentPollResult(error: String? = null): SubAgentPollResult {
-        return SubAgentPollResult(
-            status = SubAgentPollStatus.Pending,
-            result = null,
-            error = error,
-        )
+        return SubAgentPollResult.Pending(error = error)
     }
 
     private fun completedSubAgentPollResult(value: String): SubAgentPollResult {
-        return SubAgentPollResult(
-            status = SubAgentPollStatus.Completed,
-            result = value,
-            error = null,
-        )
+        return SubAgentPollResult.Completed(result = value)
     }
 
     private fun failedSubAgentPollResult(throwable: Throwable): SubAgentPollResult {
-        return SubAgentPollResult(
-            status = SubAgentPollStatus.Failed,
-            result = null,
-            error = throwable.message,
-        )
+        return SubAgentPollResult.Failed(error = throwable.message)
     }
 
     private fun buildNormalizedAwaitUserInputMessages(

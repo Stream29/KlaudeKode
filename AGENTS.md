@@ -24,6 +24,8 @@ This file should be updated when essential. (For example, new module being added
 - `Kori`(reference/Kori) AI-powered Markdown notepad with Mermaid support. Cloned from GitHub.
 - `compose-markdown`(reference/compose-markdown) Compose Markdown rendering library. Cloned from GitHub.
 - `multiplatform-markdown-renderer`(reference/multiplatform-markdown-renderer) Multiplatform Markdown renderer for Compose. Cloned from GitHub.
+- `remote-compose-androidx`(reference/remote-compose-androidx) AndroidX Remote Compose related sources via sparse checkout (`compose/remote` and Glance `remotecompose` path). Cloned from GitHub.
+- `compose-remote-layout`(reference/compose-remote-layout) Community Compose Remote Layout implementation by utsmannn. Cloned from GitHub.
 
 ## Coding Standards
 

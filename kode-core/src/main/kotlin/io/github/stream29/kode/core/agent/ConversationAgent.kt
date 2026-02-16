@@ -5,6 +5,7 @@ import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.RequestMetaInfo
+import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.session.core.SessionManager
@@ -76,10 +77,17 @@ public class ConversationAgent(
         sessionId: String,
         agentId: String?,
         model: LLModel,
+        modelParams: LLMParams?,
         checkpointAfterExecution: Boolean,
     ): String {
         val (systemPrompt, messages) = resolvePromptContext(sessionId = sessionId, agentId = agentId)
-        val finalResponse = executeWithTools(sessionId, systemPrompt, messages, model)
+        val finalResponse = executeWithTools(
+            sessionId = sessionId,
+            systemPrompt = systemPrompt,
+            historyMessages = messages,
+            model = model,
+            modelParams = modelParams,
+        )
         sessionManager.addAssistantMessage(sessionId, finalResponse, null, agentId)
         if (checkpointAfterExecution) {
             sessionBridge.checkpoint(sessionId, "After execution")
@@ -87,7 +95,12 @@ public class ConversationAgent(
         return finalResponse
     }
 
-    public suspend fun chat(sessionId: String, userInput: String, model: LLModel): String {
+    public suspend fun chat(
+        sessionId: String,
+        userInput: String,
+        model: LLModel,
+        modelParams: LLMParams?,
+    ): String {
         requireInteractiveContext("Subagent cannot accept direct user chat")
         return withManagedSessionRun(sessionId) {
             val processedInput = hookManager.applyUserPromptHooks(sessionId, userInput)
@@ -96,30 +109,41 @@ public class ConversationAgent(
                 sessionId = sessionId,
                 agentId = runtimeContext.agentId,
                 model = model,
+                modelParams = modelParams,
                 checkpointAfterExecution = true,
             )
         }
     }
 
-    public suspend fun continueSession(sessionId: String, model: LLModel): String {
+    public suspend fun continueSession(
+        sessionId: String,
+        model: LLModel,
+        modelParams: LLMParams?,
+    ): String {
         requireInteractiveContext("Subagent cannot continue user session directly")
         return withManagedSessionRun(sessionId) {
             executeAndPersistResponse(
                 sessionId = sessionId,
                 agentId = runtimeContext.agentId,
                 model = model,
+                modelParams = modelParams,
                 checkpointAfterExecution = true,
             )
         }
     }
 
-    public suspend fun runSubAgent(sessionId: String, model: LLModel): String {
+    public suspend fun runSubAgent(
+        sessionId: String,
+        model: LLModel,
+        modelParams: LLMParams?,
+    ): String {
         val agentId = requireNotNull(runtimeContext.agentId) { "Subagent context requires agentId" }
         return try {
             executeAndPersistResponse(
                 sessionId = sessionId,
                 agentId = agentId,
                 model = model,
+                modelParams = modelParams,
                 checkpointAfterExecution = false,
             )
         } catch (signal: SubAgentReturnSignal) {
@@ -132,6 +156,7 @@ public class ConversationAgent(
         iteration: Int,
         systemPrompt: String,
         messages: List<Message>,
+        modelParams: LLMParams?,
     ): ai.koog.prompt.dsl.Prompt {
         val messagesForPrompt = buildList {
             add(Message.System(systemPrompt, RequestMetaInfo.create(Clock.System.toDeprecatedClock())))
@@ -140,6 +165,7 @@ public class ConversationAgent(
         return ai.koog.prompt.dsl.Prompt(
             id = "conversation_${sessionId}_$iteration",
             messages = messagesForPrompt,
+            params = modelParams ?: LLMParams(),
         )
     }
 
@@ -147,7 +173,8 @@ public class ConversationAgent(
         sessionId: String,
         systemPrompt: String,
         historyMessages: List<Message>,
-        model: LLModel
+        model: LLModel,
+        modelParams: LLMParams?,
     ): String {
         var allMessages = historyMessages.toMutableList()
         var iteration = 0
@@ -165,6 +192,7 @@ public class ConversationAgent(
                 iteration = iteration,
                 systemPrompt = systemPrompt,
                 messages = allMessages,
+                modelParams = modelParams,
             )
 
             val response = promptExecutor.execute(currentPrompt, model, toolRegistry.tools.map { it.descriptor }).first()

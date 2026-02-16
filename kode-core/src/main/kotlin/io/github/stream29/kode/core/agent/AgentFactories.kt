@@ -6,15 +6,19 @@ import ai.koog.agents.ext.tool.file.EditFileTool
 import ai.koog.agents.ext.tool.file.ListDirectoryTool
 import ai.koog.agents.ext.tool.file.ReadFileTool
 import ai.koog.prompt.executor.clients.LLMClient
-import ai.koog.prompt.executor.clients.anthropic.AnthropicLLMClient
-import ai.koog.prompt.executor.clients.google.GoogleClientSettings
-import ai.koog.prompt.executor.clients.google.GoogleLLMClient
-import ai.koog.prompt.executor.clients.openai.OpenAIClientSettings
-import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
 import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.rag.base.files.JVMFileSystemProvider
 import io.github.stream29.kode.config.api.LlmAuthConfig
+import io.github.stream29.kode.config.api.LlmAuth as ConfigLlmAuth
+import io.github.stream29.kode.oauth.core.DefaultOAuthAuthCodePkceClient
+import io.github.stream29.kode.oauth.core.DefaultOAuthCredentialManager
+import io.github.stream29.kode.oauth.core.DefaultOAuthDeviceFlowClient
+import io.github.stream29.kode.oauth.core.FileOAuthTokenStore
+import io.github.stream29.kode.oauth.core.OAuthCredentialManager
+import io.github.stream29.kode.oauth.core.OAuthTokenRecord
+import io.github.stream29.kode.providers.api.LlmAuth as RuntimeLlmAuth
+import io.github.stream29.kode.providers.builtin.BuiltinLlmProviderRegistry
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.tools.CommunicationTools
 import io.github.stream29.kode.tools.FileSearchTools
@@ -25,67 +29,132 @@ import io.github.stream29.kode.tools.ThinkTool
 import io.github.stream29.kode.tools.TodoTool
 import io.github.stream29.kode.tools.WebTools
 import io.github.stream29.kode.ui.core.MessageHandler
+import kotlinx.coroutines.runBlocking
 import java.io.File
 
 internal object MultiLLMExecutorFactory {
     fun create(auths: List<LlmAuthConfig>): MultiLLMPromptExecutor {
         val clients = mutableMapOf<LLMProvider, LLMClient>()
-        
+        val ownerByProvider = mutableMapOf<LLMProvider, LlmAuthConfig>()
+
         auths.forEach { auth ->
-            val provider = providerStringToEnum(auth.provider)
-            if (!clients.containsKey(provider)) {
-                val client = createClientForAuth(auth)
-                clients[provider] = client
+            val providerId = auth.providerId.trim()
+            require(providerId.isNotBlank()) { "providerId is blank for auth '${auth.id}'" }
+
+            val provider = BuiltinLlmProviderRegistry.findProvider(providerId)
+                ?: throw IllegalArgumentException("Provider not found: $providerId (authId=${auth.id})")
+            val existingOwner = ownerByProvider[provider.llmProvider]
+            if (existingOwner != null && existingOwner.id != auth.id) {
+                throw IllegalArgumentException(
+                    "Auth '${auth.id}' conflicts with '${existingOwner.id}': " +
+                            "${providerId} and ${existingOwner.providerId} share runtime provider '${provider.llmProvider.id}'."
+                )
+            }
+            if (existingOwner == null) {
+                val runtimeAuth = resolveRuntimeAuth(auth)
+                val client = provider.createClientAny(runtimeAuth)
+                clients[provider.llmProvider] = client
+                ownerByProvider[provider.llmProvider] = auth
             }
         }
-        
+
         return MultiLLMPromptExecutor(clients)
     }
-    
-    private fun providerStringToEnum(provider: String): LLMProvider {
-        return when (provider) {
-            "Anthropic" -> LLMProvider.Anthropic
-            "OpenAI" -> LLMProvider.OpenAI
-            "Moonshot" -> LLMProvider.OpenAI
-            "DeepSeek" -> LLMProvider.OpenAI
-            "Gemini" -> LLMProvider.Google
-            else -> LLMProvider.OpenAI
-        }
-    }
-    
-    private fun createClientForAuth(auth: LlmAuthConfig): LLMClient {
-        return when (auth) {
-            is LlmAuthConfig.Anthropic -> AnthropicLLMClient(apiKey = auth.apiKey)
-            is LlmAuthConfig.OpenAI -> {
-                val baseUrl = auth.baseUrl
-                val settings = if (baseUrl != null) 
-                    OpenAIClientSettings(baseUrl = baseUrl) 
-                else 
-                    OpenAIClientSettings()
-                OpenAILLMClient(apiKey = auth.apiKey, settings = settings)
+
+    private fun resolveRuntimeAuth(authConfig: LlmAuthConfig): RuntimeLlmAuth {
+        return when (val auth = authConfig.auth) {
+            is ConfigLlmAuth.ApiKey -> {
+                val apiKey = resolveApiKey(authConfigId = authConfig.id, auth = auth)
+                RuntimeLlmAuth.ApiKey(
+                    apiKey = apiKey,
+                    baseUrl = auth.baseUrl,
+                    customHeaders = auth.customHeaders,
+                )
             }
-            is LlmAuthConfig.Moonshot -> {
-                val settings = OpenAIClientSettings(baseUrl = auth.baseUrl ?: "https://api.moonshot.cn/v1")
-                OpenAILLMClient(apiKey = auth.apiKey, settings = settings)
-            }
-            is LlmAuthConfig.DeepSeek -> {
-                val settings = OpenAIClientSettings(baseUrl = auth.baseUrl ?: "https://api.deepseek.com/v1")
-                OpenAILLMClient(apiKey = auth.apiKey, settings = settings)
-            }
-            is LlmAuthConfig.Gemini -> {
-                val baseUrl = auth.baseUrl
-                val settings = if (baseUrl != null) 
-                    GoogleClientSettings(baseUrl = baseUrl) 
-                else 
-                    GoogleClientSettings()
-                GoogleLLMClient(apiKey = auth.apiKey, settings = settings)
-            }
-            is LlmAuthConfig.OpenAICompatible -> {
-                val settings = OpenAIClientSettings(baseUrl = auth.baseUrl)
-                OpenAILLMClient(apiKey = auth.apiKey, settings = settings)
+
+            is ConfigLlmAuth.OAuth -> {
+                val tokenRecord = resolveOAuthTokenRecord(authId = authConfig.id, auth = auth)
+                RuntimeLlmAuth.OAuthAccessToken(
+                    accessToken = tokenRecord.accessToken,
+                    baseUrl = auth.baseUrl,
+                    customHeaders = resolveOAuthCustomHeaders(
+                        providerId = authConfig.providerId,
+                        configured = auth.customHeaders,
+                        tokenRecord = tokenRecord,
+                    ),
+                )
             }
         }
     }
+
+    private fun resolveApiKey(authConfigId: String, auth: ConfigLlmAuth.ApiKey): String {
+        val direct = auth.apiKey.trim()
+        if (direct.isNotBlank()) {
+            return direct
+        }
+
+        val candidates = auth.envKeys
+            .map { key -> key.trim() }
+            .filter { key -> key.isNotBlank() }
+            .distinct()
+        val fromEnv = candidates.firstNotNullOfOrNull { key ->
+            System.getenv(key)?.trim()?.takeIf { value -> value.isNotBlank() }
+        }
+        if (fromEnv != null) {
+            return fromEnv
+        }
+
+        throw IllegalArgumentException(
+            "Missing API key for auth '$authConfigId'. Provide LlmAuth.ApiKey.apiKey or set one of envKeys: ${candidates.joinToString()}."
+        )
+    }
+
+    private fun resolveOAuthTokenRecord(authId: String, auth: ConfigLlmAuth.OAuth): OAuthTokenRecord {
+        val token = runBlocking {
+            oauthCredentialManager.ensureValidTokenRecord(authId = authId, oauth = auth.oauth)
+        }
+        if (token != null && token.accessToken.isNotBlank()) {
+            return token
+        }
+        throw IllegalArgumentException(
+            "Missing OAuth access token for auth '$authId'. Run interactive OAuth connect first (storage=${auth.oauth.storage}, key=${auth.oauth.key})."
+        )
+    }
+
+    private fun resolveOAuthCustomHeaders(
+        providerId: String,
+        configured: Map<String, String>,
+        tokenRecord: OAuthTokenRecord,
+    ): Map<String, String> {
+        val normalizedProviderId = providerId.trim().lowercase()
+        if (normalizedProviderId !in OPENAI_SUBSCRIPTION_PROVIDER_IDS) {
+            return configured
+        }
+        val accountId = tokenRecord.chatGptAccountId?.trim().orEmpty()
+        if (accountId.isBlank()) {
+            return configured
+        }
+        val hasHeader = configured.keys.any { key -> key.equals(OPENAI_ACCOUNT_HEADER, ignoreCase = true) }
+        if (hasHeader) {
+            return configured
+        }
+        return configured + mapOf(OPENAI_ACCOUNT_HEADER to accountId)
+    }
+
+    private val oauthCredentialManager: OAuthCredentialManager by lazy {
+        val baseDir = File(System.getProperty("user.home"), ".kode/oauth")
+        DefaultOAuthCredentialManager(
+            authCodePkceClient = DefaultOAuthAuthCodePkceClient(),
+            deviceFlowClient = DefaultOAuthDeviceFlowClient(),
+            tokenStore = FileOAuthTokenStore(baseDir = baseDir),
+        )
+    }
+
+    private val OPENAI_SUBSCRIPTION_PROVIDER_IDS: Set<String> = setOf(
+        "openai-subscription-browser",
+        "openai-subscription-device",
+    )
+    private const val OPENAI_ACCOUNT_HEADER: String = "ChatGPT-Account-Id"
 }
 
 internal object ToolRegistryFactory {

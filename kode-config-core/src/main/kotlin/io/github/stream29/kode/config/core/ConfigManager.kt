@@ -1,14 +1,8 @@
 package io.github.stream29.kode.config.core
 
-import com.charleskorn.kaml.PolymorphismStyle
-import com.charleskorn.kaml.Yaml
-import com.charleskorn.kaml.YamlConfiguration
-import com.charleskorn.kaml.YamlNamingStrategy
 import io.github.stream29.kode.config.api.AppConfig
 import io.github.stream29.kode.config.api.ConfigProvider
 import io.github.stream29.kode.config.api.ConfigSource
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 
 /**
  * Configuration manager that orchestrates configuration operations.
@@ -18,31 +12,22 @@ public class ConfigManager(
     private val provider: ConfigProvider,
     private val source: ConfigSource?,
 ) {
-    private val yaml = Yaml(
-        configuration = YamlConfiguration(
-            encodeDefaults = false,
-            polymorphismStyle = PolymorphismStyle.Property,
-            yamlNamingStrategy = YamlNamingStrategy.SnakeCase
-        )
-    )
-
     /**
      * Load configuration from the provider.
-     * Returns default empty config if not found or parsing fails.
+     * Returns default empty config only when configuration is missing.
+     * Throws when existing configuration content is invalid.
      */
     public suspend fun load(): AppConfig {
-        return try {
-            val loaded = provider.load()
-                ?: source?.read()?.let(::parse)
-                ?: AppConfig()
-            val normalized = normalize(loaded)
-            if (normalized != loaded) {
-                persist(normalized)
+        val loaded = provider.load()
+            ?: source?.read()?.let { raw ->
+                ConfigYamlCodec.parse(raw)
             }
-            normalized
-        } catch (_: Exception) {
-            AppConfig()
+            ?: AppConfig()
+        val normalized = normalize(loaded)
+        if (normalized != loaded) {
+            persist(normalized)
         }
+        return normalized
     }
 
     /**
@@ -69,20 +54,15 @@ public class ConfigManager(
     /**
      * Parse YAML content to AppConfig.
      */
-    public fun parse(content: String): AppConfig = if (content.isBlank()) {
-        AppConfig(auths = emptyList(), models = emptyList())
-    } else {
-        yaml.decodeFromString<AppConfig>(content)
-    }
+    public fun parse(content: String): AppConfig = ConfigYamlCodec.parse(content)
 
     /**
      * Serialize AppConfig to YAML content.
      */
-    public fun serialize(config: AppConfig): String = yaml.encodeToString(config)
+    public fun serialize(config: AppConfig): String = ConfigYamlCodec.serialize(config)
 
     private fun normalize(config: AppConfig): AppConfig {
-        val withDefaultModelId = normalizeDefaultModelId(config)
-        return normalizeLegacyPreset(withDefaultModelId)
+        return normalizeDefaultModelId(config)
     }
 
     private suspend fun persist(config: AppConfig) {
@@ -99,19 +79,4 @@ public class ConfigManager(
         )
     }
 
-    @Suppress("DEPRECATION")
-    private fun normalizeLegacyPreset(config: AppConfig): AppConfig {
-        val legacy = config.agent
-        val normalizedPreset = config.preset.copy(
-            builtin = config.preset.builtin ?: legacy.builtin,
-            file = config.preset.file ?: legacy.file,
-        )
-        if (normalizedPreset == config.preset && legacy.builtin == null && legacy.file == null) {
-            return config
-        }
-        return config.copy(
-            preset = normalizedPreset,
-            agent = io.github.stream29.kode.config.api.AgentConfig(),
-        )
-    }
 }

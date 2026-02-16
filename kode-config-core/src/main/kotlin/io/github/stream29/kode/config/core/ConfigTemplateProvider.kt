@@ -18,19 +18,57 @@ public object ConfigTemplateProvider {
         # 9. skills/preset/ui/logging: UX and behavior settings
         
         auths:
-          - type: Anthropic
-            id: anthropic-main
-            api_key: your-anthropic-api-key-here
-            base_url: null
+          - id: anthropic-main
+            provider_id: anthropic
+            auth:
+              type: api_key
+              api_key: your-anthropic-api-key-here
+              env_keys:
+                - ANTHROPIC_API_KEY
+              base_url: null
+              custom_headers: {}
+          - id: openai-subscription
+            provider_id: openai-subscription-browser
+            auth:
+              type: oauth
+              oauth:
+                storage: file
+                key: ~/.kode/oauth/openai-subscription.oauth.json
+                authorization_endpoint: https://auth.openai.com/oauth/authorize
+                token_endpoint: https://auth.openai.com/oauth/token
+                client_id: app_EMoamEEZ73f0CkXaXp7hrann
+                scopes:
+                  - openid
+                  - profile
+                  - email
+                  - offline_access
+                callback_uri: http://localhost:1455/auth/callback
+                authorization_additional_params:
+                  id_token_add_organizations: "true"
+                  codex_cli_simplified_flow: "true"
+                  originator: opencode
+                token_additional_params: {}
+              base_url: https://api.openai.com/v1
+              custom_headers: {}
           # Add more auths as needed:
-          # - type: OpenAI
-          #   id: openai-main
-          #   api_key: your-openai-key
-          #   base_url: null
-          # - type: Moonshot
-          #   id: moonshot-main
-          #   api_key: your-moonshot-key
-          #   base_url: https://api.moonshot.cn/v1
+          # - id: openai-main
+          #   provider_id: openai-api-key
+          #   auth:
+          #     type: api_key
+          #     api_key: your-openai-key
+          #     env_keys:
+          #       - OPENAI_API_KEY
+          #     base_url: null
+          #     custom_headers: {}
+          # - id: moonshot-main
+          #   provider_id: moonshot
+          #   auth:
+          #     type: api_key
+          #     api_key: your-moonshot-key
+          #     env_keys:
+          #       - MOONSHOT_API_KEY
+          #     base_url: https://api.moonshot.cn/v1
+          #     custom_headers: {}
         
         models:
           - id: claude-sonnet
@@ -91,6 +129,7 @@ public object ConfigTemplateProvider {
           theme: dark
           message_alignment: left
           message_max_width_ratio: 0.9
+          send_key_mode: ctrl_or_cmd_enter_send
           last_opened_session_id: null
 
         logging:

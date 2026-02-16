@@ -1,7 +1,6 @@
 package io.github.stream29.kode.session.core.storage
 
 import io.github.stream29.kode.session.core.model.SessionMetadata
-import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
 
 internal fun querySessionSummaries(
@@ -12,17 +11,11 @@ internal fun querySessionSummaries(
         item.matchesFilter(filter)
     }
 
-    val sorted = when (filter?.sortBy) {
-        SortBy.CREATED_AT -> filtered.sortedBy { item -> item.createdAt }
-        SortBy.TITLE -> filtered.sortedBy { item -> item.title }
-        else -> filtered.sortedBy { item -> item.updatedAt }
-    }
+    val sortBy = filter?.sortBy ?: SortBy.UPDATED_AT
+    val sorted = SORTER_BY[sortBy]?.invoke(filtered) ?: filtered.sortedBy { item -> item.updatedAt }
 
-    val ordered = if (filter?.sortOrder == SortOrder.ASCENDING) {
-        sorted
-    } else {
-        sorted.toList().asReversed().asSequence()
-    }
+    val sortOrder = filter?.sortOrder ?: SortOrder.DESCENDING
+    val ordered = sortOrder.applyTo(sorted)
 
     val paged = ordered
         .drop(filter?.offset ?: 0)
@@ -42,12 +35,7 @@ private fun SessionMetadata.matchesFilter(filter: SessionFilter?): Boolean {
     }
 
     if (filter.status != null) {
-        val statusMatches = when (filter.status) {
-            SessionStatusFilter.ACTIVE -> this.status == SessionStatus.ACTIVE
-            SessionStatusFilter.ARCHIVED -> this.status == SessionStatus.ARCHIVED
-            SessionStatusFilter.ALL -> true
-        }
-        if (!statusMatches) {
+        if (!filter.status.matches(this.status)) {
             return false
         }
     }
@@ -91,3 +79,9 @@ internal fun SessionMetadata.toSessionSummary(): SessionSummary {
         tags = tags,
     )
 }
+
+private val SORTER_BY: Map<SortBy, (Sequence<SessionMetadata>) -> Sequence<SessionMetadata>> = mapOf(
+    SortBy.CREATED_AT to { input -> input.sortedBy { item -> item.createdAt } },
+    SortBy.UPDATED_AT to { input -> input.sortedBy { item -> item.updatedAt } },
+    SortBy.TITLE to { input -> input.sortedBy { item -> item.title } },
+)
