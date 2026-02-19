@@ -6,4 +6,4 @@ import kotlin.script.experimental.jvmhost.BasicJvmScriptingHost
 internal val host = BasicJvmScriptingHost()
 internal val scriptEvaluationMutex = ReentrantLock()
 
-public const val kotlinScriptToolName: String = "KotlinScriptTool"
+public const val kotlinScriptToolName: String = "executeKotlinScript"

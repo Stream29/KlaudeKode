@@ -1,14 +1,8 @@
 package io.github.stream29.kode.core.agent
 
-import ai.koog.agents.core.tools.ToolRegistry
-import ai.koog.agents.core.tools.reflect.tools
-import ai.koog.agents.ext.tool.file.EditFileTool
-import ai.koog.agents.ext.tool.file.ListDirectoryTool
-import ai.koog.agents.ext.tool.file.ReadFileTool
 import ai.koog.prompt.executor.clients.LLMClient
 import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import ai.koog.prompt.llm.LLMProvider
-import ai.koog.rag.base.files.JVMFileSystemProvider
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmAuth as ConfigLlmAuth
 import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER
@@ -21,16 +15,6 @@ import io.github.stream29.kode.oauth.core.OAuthCredentialManager
 import io.github.stream29.kode.oauth.core.OAuthTokenRecord
 import io.github.stream29.kode.providers.api.LlmAuth as RuntimeLlmAuth
 import io.github.stream29.kode.providers.builtin.BuiltinLlmProviderRegistry
-import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.tools.CommunicationTools
-import io.github.stream29.kode.tools.FileSearchTools
-import io.github.stream29.kode.tools.KotlinScriptTool
-import io.github.stream29.kode.tools.ShellTool
-import io.github.stream29.kode.tools.TaskTool
-import io.github.stream29.kode.tools.ThinkTool
-import io.github.stream29.kode.tools.TodoTool
-import io.github.stream29.kode.tools.WebTools
-import io.github.stream29.kode.ui.core.MessageHandler
 import kotlinx.coroutines.runBlocking
 import java.io.File
 
@@ -162,61 +146,4 @@ internal object MultiLLMExecutorFactory {
         PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE,
     )
     private const val OPENAI_ACCOUNT_HEADER: String = "ChatGPT-Account-Id"
-}
-
-internal object ToolRegistryFactory {
-    fun create(
-        workingDir: File,
-        messageHandler: MessageHandler,
-        logger: (String) -> Unit,
-        disabledTools: Set<String>,
-        taskAgentFactory: io.github.stream29.kode.tools.AgentFactory?,
-        ownerSessionId: String?,
-        ownerAgentId: String?,
-        sessionManager: SessionManager?,
-    ): ToolRegistry {
-        return ToolRegistry {
-            val disableFile = disabledTools.contains("file")
-            val disableFileEdit = disableFile || disabledTools.contains("file-edit")
-
-            if (!disableFile) {
-                tool(ListDirectoryTool(JVMFileSystemProvider.ReadOnly))
-                tool(ReadFileTool(JVMFileSystemProvider.ReadOnly))
-            }
-            if (!disableFileEdit) {
-                tool(EditFileTool(JVMFileSystemProvider.ReadWrite))
-            }
-            if (!disabledTools.contains("communication")) {
-                tools(CommunicationTools(messageHandler))
-            }
-            if (!disabledTools.contains("shell")) {
-                tools(ShellTool(messageHandler, workingDir, logger))
-                tools(KotlinScriptTool(messageHandler, workingDir, logger))
-            }
-            if (!disabledTools.contains("web")) {
-                tools(WebTools(messageHandler, logger))
-            }
-            if (!disabledTools.contains("todo")) {
-                tools(TodoTool(messageHandler, logger))
-            }
-            if (!disabledTools.contains("search")) {
-                tools(FileSearchTools(messageHandler, workingDir, logger))
-            }
-            if (!disabledTools.contains("think")) {
-                tools(ThinkTool(messageHandler, logger))
-            }
-            if (!disabledTools.contains("task") && taskAgentFactory != null) {
-                tools(
-                    TaskTool(
-                        messageHandler = messageHandler,
-                        agentFactory = taskAgentFactory,
-                        logger = logger,
-                        sessionManager = sessionManager,
-                        ownerSessionId = ownerSessionId,
-                        ownerAgentId = ownerAgentId,
-                    )
-                )
-            }
-        }
-    }
 }

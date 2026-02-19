@@ -43,18 +43,31 @@ public class FileSessionStorage(
     dataDir: File = FileSystemLocations.dataDir,
     private val json: Json = Json {
         prettyPrint = true
-        ignoreUnknownKeys = true
         encodeDefaults = true
     },
 ) : SessionStorage, SessionRepository {
 
     private val sessionDirRoot: File = File(dataDir, "sessions")
     private val metadataCsvFile: File = File(dataDir, "session-meta.csv")
+    private val schemaVersionFile: File = File(dataDir, SESSION_SCHEMA_VERSION_FILE_NAME)
     private val rwMutex: Mutex = Mutex()
 
     init {
         dataDir.mkdirs()
+        ensureStorageSchemaVersion()
         sessionDirRoot.mkdirs()
+    }
+
+    private fun ensureStorageSchemaVersion() {
+        val currentVersion = schemaVersionFile.takeIf { it.isFile }?.readText()?.trim()
+        if (currentVersion == SESSION_SCHEMA_VERSION) {
+            return
+        }
+        metadataCsvFile.delete()
+        sessionDirRoot.deleteRecursively()
+        sessionDirRoot.mkdirs()
+        schemaVersionFile.parentFile?.mkdirs()
+        schemaVersionFile.writeText(SESSION_SCHEMA_VERSION)
     }
 
     override suspend fun listSessions(): List<SessionMetadata> {
@@ -71,23 +84,14 @@ public class FileSessionStorage(
                 val metadataRow = readMetadataRows().firstOrNull { row -> row.id == id }
                     ?: throw IllegalArgumentException("Session not found: $id")
                 val metadata = metadataRow.toMetadata()
-                val sessionMeta = readSessionMeta(sessionId = id) ?: SessionFileMeta(config = emptySessionConfig())
+                val sessionMeta = readSessionMeta(sessionId = id)
+                    ?: throw IllegalStateException("Session meta missing: $id")
                 val storedAgentMetas = readAllAgentMetas(sessionId = id)
 
                 val mainAgentId = mainAgentId(sessionId = id)
                 val mainAgentMeta = storedAgentMetas
                     .firstOrNull { item -> item.kind == AgentKind.MAIN && item.agentId == mainAgentId }
-                    ?: storedAgentMetas.firstOrNull { item -> item.kind == AgentKind.MAIN }
-                    ?: defaultAgentMeta(
-                        agentId = mainAgentId,
-                        kind = AgentKind.MAIN,
-                        config = AgentConfig(
-                            systemPrompt = sessionMeta.config.systemPrompt,
-                            taskDescription = null,
-                            expectedResult = null,
-                            canInteractWithUser = true,
-                        ),
-                    )
+                    ?: throw IllegalStateException("Main agent meta missing for session: $id")
 
                 val mainAgentMessages = loadWindowMessages(
                     sessionId = id,
@@ -174,7 +178,7 @@ public class FileSessionStorage(
                 session.subagents.value.forEach { (agentId, subAgent) ->
                     val completed = subAgent.result.isCompleted
                     val resultText = if (completed) {
-                        runCatching { subAgent.result.await() }.getOrNull()
+                        subAgent.result.await()
                     } else {
                         null
                     }
@@ -225,9 +229,15 @@ public class FileSessionStorage(
     }
 
     override suspend fun getSession(sessionId: String): ConversationSession? {
-        return runCatching {
+        return try {
             loadSession(sessionId).toConversationSession()
-        }.getOrNull()
+        } catch (error: IllegalArgumentException) {
+            if (error.message == "Session not found: $sessionId") {
+                null
+            } else {
+                throw error
+            }
+        }
     }
 
     override suspend fun listSessions(filter: SessionFilter?): List<SessionSummary> {
@@ -252,9 +262,7 @@ public class FileSessionStorage(
     }
 
     override suspend fun getCheckpoints(sessionId: String): List<SessionCheckpoint> {
-        return runCatching {
-            loadSession(sessionId).checkpoints.value
-        }.getOrDefault(emptyList())
+        return loadSession(sessionId).checkpoints.value
     }
 
     override suspend fun getLatestCheckpoint(sessionId: String): SessionCheckpoint? {
@@ -340,20 +348,6 @@ public class FileSessionStorage(
             return normalizedMeta.copy(
                 activeStartSeq = nextSeq,
                 nextSeq = nextSeq,
-            )
-        }
-
-        if (!existingWindow.complete) {
-            val segmentStart = nextSeq
-            writeMessages(
-                sessionId = sessionId,
-                agentId = agentId,
-                startSeq = segmentStart,
-                messages = runtimeMessages,
-            )
-            return normalizedMeta.copy(
-                activeStartSeq = segmentStart,
-                nextSeq = segmentStart + runtimeMessages.size,
             )
         }
 
@@ -454,7 +448,7 @@ public class FileSessionStorage(
         val start = agentMeta.activeStartSeq.coerceAtLeast(0)
         val end = agentMeta.nextSeq.coerceAtLeast(start)
         if (start == end) {
-            return LoadedWindow(messages = emptyList(), complete = true)
+            return LoadedWindow(messages = emptyList())
         }
 
         val messages = mutableListOf<SessionMessage>()
@@ -466,18 +460,22 @@ public class FileSessionStorage(
                 seq = seq,
             )
             if (!messageFile.isFile) {
-                return LoadedWindow(messages = messages, complete = false)
+                throw IllegalStateException(
+                    "Session message file missing: sessionId=$sessionId, agentId=$agentId, seq=$seq"
+                )
             }
-            val decoded = runCatching {
+            val decoded = try {
                 json.decodeFromString(AgentMessage.serializer(), messageFile.readText())
-            }.getOrNull()
-            if (decoded == null) {
-                return LoadedWindow(messages = messages, complete = false)
+            } catch (error: Exception) {
+                throw IllegalStateException(
+                    "Failed to decode session message: sessionId=$sessionId, agentId=$agentId, seq=$seq",
+                    error,
+                )
             }
             messages += decoded
             seq += 1
         }
-        return LoadedWindow(messages = messages, complete = true)
+        return LoadedWindow(messages = messages)
     }
 
     private fun writeMessages(
@@ -537,9 +535,11 @@ public class FileSessionStorage(
         if (!file.isFile) {
             return null
         }
-        return runCatching {
+        return try {
             json.decodeFromString(SessionFileMeta.serializer(), file.readText())
-        }.getOrNull()
+        } catch (error: Exception) {
+            throw IllegalStateException("Failed to decode session meta: sessionId=$sessionId", error)
+        }
     }
 
     private fun writeSessionMeta(sessionId: String, meta: SessionFileMeta) {
@@ -555,9 +555,14 @@ public class FileSessionStorage(
         if (!file.isFile) {
             return null
         }
-        return runCatching {
+        return try {
             json.decodeFromString(AgentFileMeta.serializer(), file.readText())
-        }.getOrNull()
+        } catch (error: Exception) {
+            throw IllegalStateException(
+                "Failed to decode agent meta: sessionId=$sessionId, agentId=$agentId",
+                error,
+            )
+        }
     }
 
     private fun writeAgentMeta(sessionId: String, meta: AgentFileMeta) {
@@ -573,19 +578,25 @@ public class FileSessionStorage(
         if (!agentsDir.isDirectory) {
             return emptyList()
         }
-        return agentsDir.listFiles()
+        val directories = agentsDir.listFiles()
             ?.filter { file -> file.isDirectory }
-            ?.mapNotNull { directory ->
-                val metaFile = File(directory, AGENT_META_FILE_NAME)
-                if (!metaFile.isFile) {
-                    null
-                } else {
-                    runCatching {
-                        json.decodeFromString(AgentFileMeta.serializer(), metaFile.readText())
-                    }.getOrNull()
-                }
-            }
             ?: emptyList()
+        return directories.map { directory ->
+            val metaFile = File(directory, AGENT_META_FILE_NAME)
+            if (!metaFile.isFile) {
+                throw IllegalStateException(
+                    "Agent meta file missing: sessionId=$sessionId, directory=${directory.absolutePath}"
+                )
+            }
+            try {
+                json.decodeFromString(AgentFileMeta.serializer(), metaFile.readText())
+            } catch (error: Exception) {
+                throw IllegalStateException(
+                    "Failed to decode agent meta file: sessionId=$sessionId, path=${metaFile.absolutePath}",
+                    error,
+                )
+            }
+        }
     }
 
     private fun readMetadataRows(): List<SessionMetadataCsvRow> {
@@ -597,52 +608,17 @@ public class FileSessionStorage(
             return emptyList()
         }
         return decodeCurrentMetadataRows(content)
-            ?: decodeLegacyMetadataRows(content)
-            ?: emptyList()
     }
 
-    private fun decodeCurrentMetadataRows(content: String): List<SessionMetadataCsvRow>? {
-        return runCatching {
+    private fun decodeCurrentMetadataRows(content: String): List<SessionMetadataCsvRow> {
+        return try {
             CSVFormat.decodeFromString(
                 deserializer = ListSerializer(SessionMetadataCsvRow.serializer()),
                 string = content,
             )
-        }.getOrNull()
-    }
-
-    private fun decodeLegacyMetadataRows(content: String): List<SessionMetadataCsvRow>? {
-        return runCatching {
-            CSVFormat.decodeFromString(
-                deserializer = ListSerializer(LegacySessionMetadataCsvRow.serializer()),
-                string = content,
-            ).map { legacy ->
-                SessionMetadataCsvRow(
-                    id = legacy.id,
-                    title = legacy.title,
-                    createdAtIso = legacy.createdAtIso,
-                    updatedAtIso = legacy.updatedAtIso,
-                    messageCount = 0,
-                    state = legacy.state,
-                    status = legacy.status,
-                    parentSessionId = legacy.parentSessionId,
-                    forkedFromMessageId = legacy.forkedFromMessageId,
-                    version = legacy.version,
-                    tags = legacy.tags,
-                    childSessionIds = legacy.childSessionIds,
-                )
-            }
-        }.getOrNull()
-    }
-
-    private fun emptySessionConfig(): SessionConfig {
-        return SessionConfig(
-            preferredModel = null,
-            systemPrompt = null,
-            workDir = null,
-            maxIterations = null,
-            temperature = null,
-            customValues = null,
-        )
+        } catch (error: Exception) {
+            throw IllegalStateException("Failed to decode session metadata csv: ${metadataCsvFile.absolutePath}", error)
+        }
     }
 
     private fun writeMetadataRows(rows: List<SessionMetadataCsvRow>) {
@@ -740,21 +716,6 @@ public class FileSessionStorage(
     }
 
     @Serializable
-    private data class LegacySessionMetadataCsvRow(
-        val id: String,
-        val title: String,
-        val createdAtIso: String,
-        val updatedAtIso: String,
-        val state: SessionState,
-        val status: SessionStatus,
-        val parentSessionId: String,
-        val forkedFromMessageId: String,
-        val version: Long,
-        val tags: String,
-        val childSessionIds: String,
-    )
-
-    @Serializable
     private data class SessionFileMeta(
         val config: SessionConfig,
     )
@@ -779,10 +740,11 @@ public class FileSessionStorage(
 
     private data class LoadedWindow(
         val messages: List<SessionMessage>,
-        val complete: Boolean,
     )
 
     private companion object {
+        private const val SESSION_SCHEMA_VERSION_FILE_NAME: String = "session-schema.version"
+        private const val SESSION_SCHEMA_VERSION: String = "5"
         private const val SESSION_META_FILE_NAME: String = "meta.json"
         private const val AGENTS_DIR_NAME: String = "agents"
         private const val AGENT_META_FILE_NAME: String = "meta.json"

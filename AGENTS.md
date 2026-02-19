@@ -117,22 +117,35 @@ plugin-name = { id = "plugin.id", version.ref = "version-ref" }
 - 2026-02-19：新增内置 `test-deterministic` provider（`provider-builtin`）用于测试链路；基于 Koog mock executor，`execute` 固定返回 deterministic tool-call，避免 tool-only 协议下 assistant 文本违规，供 `agent-api-test` 稳定复现 continue/no-pending 路径。
 - 2026-02-19：模块收纳调整：脚本相关模块合并到 `:tools:kotlin-script-tool`（整合原根模块 `:scripting-tool` 与工具模块脚本能力）；工具模块统一为 `:tools:{communication,file-search,kotlin-script,shell,task,think,todo,web}-tool`；配置与 UI 模块分别收纳为 `:config:{api,core,fs,legacy}` 与 `:ui:{core,components,bridge}`（通过 `projectDir` 映射保留现有目录）。
 - 2026-02-19：Session 存储改为 `sessions/<id>/meta.json + agents/<agentId>/{meta.json,messages/<seq>.json}`；会话加载仅按 agent `activeStartSeq..nextSeq` 读取活跃窗口，UI 继续只消费 `SessionUiState.messages`；本阶段停用自动 checkpoint 落盘。
-- 2026-02-19：会话消息模型改为 sealed `AgentMessage`（`UserMessage` / `ToolExchangeMessage` / `SuspendMessage` / `ResumeMessage`）；普通工具调用按单条 `ToolExchangeMessage` 持久化，`waitForUserInput` 保持 Suspend/Resume 双消息特例；UI 不再做 call/result 配对。
+- 2026-02-19：会话消息模型硬切为仅两种 `AgentMessage`：`UserMessage` 与 `AgentScript`，并在两者上强制携带 `koogMessages` 原始协议消息列表；LLM 请求历史统一由 `SessionUiState.messages -> koogMessages` 还原，不再依赖 metadata 反推。
+- 2026-02-19：会话存储执行无兼容硬切：`FileSessionStorage` 引入 schema 版本门禁，版本变更时直接清空历史 `sessions` 与 `session-meta.csv`，不做旧消息格式迁移。
+- 2026-02-19：工具执行策略升级为 strict script-only：`ToolRegistryFactory` 仅注册 `KotlinScriptTool`；`ConversationAgent` 仅向模型暴露 `executeKotlinScript`，任何非 script tool call 直接抛协议错误并终止当前轮次。
+- 2026-02-19：script-only 收敛阶段暂停 MCP/ACP：会话工厂不再合并 MCP registry，`MainViewModel.startAcpServer` 直接拒绝启动并提示已禁用。
+- 2026-02-19：代理执行架构重构为接口化：删除 `ConversationAgent`，新增公共 `Agent` 接口与 `MainAgent`/`SubAgent` 两个实现，共享 `ScriptOnlyAgentEngine` 执行内核，主/子代理职责边界显式化。
 - 2026-02-19：工具名协议统一为单一事实来源 `ToolNames`（`kode-session-core`）；跨层仅使用统一新名字（camelCase），移除旧别名兼容（如 `await_user_input` / `wait_for_user_input` / `fork_subagent` / `spawn_subagent` / `create_agent`）。
+- 2026-02-19：`ConversationAgent.DEFAULT_SYSTEM_PROMPT` 对齐 strict script-only：仅允许 `executeKotlinScript`，非 script 工具调用视为协议违规（fail-fast）。
+- 2026-02-19：`FileSessionStorage` 存储读取策略改为 strict fail-fast：移除 legacy `session-meta.csv` 兼容解析与 fail-open 吞错路径（含 metadata/agent/message 解码容错）；数据损坏或结构缺失一律显式抛错。
+- 2026-02-19：会话存储 schema 版本升级到 `4`，以强制切断不含 `koogMessages` 的历史消息数据。
+- 2026-02-19：script-only 运行时移除 `ToolRegistry` 依赖：`ScriptOnlyAgentEngine` 直接向模型暴露单一 `executeKotlinScript` descriptor，并按调用即时创建 `KotlinScriptTool` 执行；agent 绑定 `ScriptContext` 通过 `awaitForUserInput` 信号驱动挂起/恢复。
+- 2026-02-19：`ScriptOnlyAgentEngine.DEFAULT_SYSTEM_PROMPT` 明确声明 `ScriptContext` receiver API（含 `suspendForUserInput`）的调用时机与停止语义；后续新增 receiver 方法必须同步写入 system prompt 使用约定。
+- 2026-02-19：`ScriptContext` 新增 `sayToUser(text)` 用户输出通道：脚本侧 `println` 仅用于 agent 自检/调试；运行时每轮消费 `ScriptContext.outputList` 并落盘到 `AgentScript.outputList`，主聊天 UI 将该 list 按元素展开为独立消息展示。
+- 2026-02-19：会话存储 schema 版本升级到 `5`，以硬切引入 `AgentScript.outputList` 的消息结构变更。
 
 ## Critical Interaction Contract
 
 - 这种很重要的设计，你都要加到@AGENTS.md 里面，用简短凝练的语言记录。如果发生了变更就要更新。这句话本身也要记录进去。
-- Chat resume contract: non-empty input = append user response semantics then resume; empty input = resume directly.
-- Resume legality contract: before every resume, history must be legal (either waiting for `waitForUserInput` result, or no pending tool call).
-- Input insertion contract:
-- trailing `waitForUserInput` call -> treat input as that tool result.
-- trailing non-`waitForUserInput` pending tool call -> rollback pending call, then append synthetic `userInterrupt` tool call + result pair.
-- no pending tool call -> append as regular USER message, then resume.
+- Chat resume contract: non-empty input = append as `UserMessage` then resume; empty input = resume directly.
+- Resume legality contract: strict script-only 下历史不得出现 trailing `AgentScript.status == PENDING_INPUT`；若存在则按协议违规报错。
+- Input insertion contract: script-only 下不再走 `waitForUserInput`/resume 工具结果注入链路。
 - Stop contract is two-phase:
   - first stop click = safe-stop (wait current tool call to finish, then suspend at safe point).
-  - second stop click = force-stop (cancel run, rollback unfinished trailing tool call).
-- Never leave conversation in illegal pending-tool-call state after stop/continue paths.
+  - second stop click = force-stop (cancel run, rollback unfinished trailing pending script).
+- Never leave conversation in illegal pending-script state after stop/continue paths.
 - Tool-only execution contract: each model response batch in conversation loop must contain at least one `Message.Tool.Call`; non-empty `Message.Assistant` text is protocol violation and should fail fast.
-- Session persistence contract: do not persist synthetic/fallback assistant text from executor loop; persist user/tool-call/tool-result records only to avoid blank assistant rows.
-- Debug raw-view contract: raw message panel serializes `SessionMessage` directly from `SessionUiState.messages`; it must stay isolated from friendly message projection/grouping logic.
+- Script-only tool contract: only `Message.Tool.Call.tool == executeKotlinScript` is legal; any other tool name must fail fast.
+- Script receiver contract: each agent run owns an isolated `ScriptContext`; script-side `suspendForUserInput()` only flips await signal, and engine must consume this signal after tool execution to enter pending-input state.
+- System prompt contract: `ScriptOnlyAgentEngine.DEFAULT_SYSTEM_PROMPT` must explicitly document currently supported `ScriptContext` receiver methods and usage constraints; adding a new receiver method requires updating this prompt in the same change.
+- User output contract: script-side user-visible text must use `ScriptContext.sayToUser(text)`; `println` output is debug-only and must not be treated as user message.
+- Output projection contract: engine must persist per-turn `ScriptContext.outputList` into `AgentScript.outputList`; chat UI must render each list element as one assistant message, while raw-view keeps original `SessionMessage` serialization.
+- Session persistence contract: persist `UserMessage`/`AgentScript` only, and each message must include `koogMessages` raw payload; do not persist synthetic/fallback assistant text.
+- Debug raw-view contract: raw message panel serializes `SessionMessage` (including `koogMessages`) directly from `SessionUiState.messages`; keep isolated from friendly projection/grouping logic.

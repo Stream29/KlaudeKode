@@ -1,19 +1,26 @@
 package io.github.stream29.kode.session.core
+
+import ai.koog.prompt.message.Message
+import ai.koog.prompt.message.RequestMetaInfo
+import ai.koog.prompt.message.ResponseMetaInfo
 import io.github.stream29.kode.session.core.model.AgentConfig
+import io.github.stream29.kode.session.core.model.AgentScript
+import io.github.stream29.kode.session.core.model.AgentScriptStatus
 import io.github.stream29.kode.session.core.model.AgentState
 import io.github.stream29.kode.session.core.model.Agent
 import io.github.stream29.kode.session.core.model.ConversationSession
-import io.github.stream29.kode.session.core.model.ResumeMessage
+import io.github.stream29.kode.session.core.model.SCRIPT_RESULT_MODE_CALL_RESULT
+import io.github.stream29.kode.session.core.model.SCRIPT_RESULT_MODE_METADATA_KEY
+import io.github.stream29.kode.session.core.model.SCRIPT_TOOL_ARGS_METADATA_KEY
+import io.github.stream29.kode.session.core.model.SCRIPT_TOOL_NAME_METADATA_KEY
 import io.github.stream29.kode.session.core.model.Session
 import io.github.stream29.kode.session.core.model.SessionCheckpoint
 import io.github.stream29.kode.session.core.model.SessionConfiguration
 import io.github.stream29.kode.session.core.model.SessionMessage
-import io.github.stream29.kode.session.core.model.SuspendMessage
 import io.github.stream29.kode.session.core.model.SessionState
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.model.SubAgent
-import io.github.stream29.kode.session.core.model.ToolExchangeMessage
 import io.github.stream29.kode.session.core.model.UserMessage
 import io.github.stream29.kode.session.core.tool.ToolNames
 import io.github.stream29.kode.session.core.model.toConversationSession
@@ -27,9 +34,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.datetime.toDeprecatedInstant
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Clock
@@ -62,10 +69,9 @@ public class SessionManager(
         ) : SubAgentPollResult
     }
 
-    public data class PendingToolCallInfo(
+    public data class PendingScriptInfo(
         val messageId: String,
-        val toolName: String,
-        val toolCallId: String,
+        val scriptId: String,
     )
 
     public suspend fun createSession(
@@ -209,91 +215,51 @@ public class SessionManager(
         content: String,
         agentId: String?,
     ): ConversationSession {
+        val now = clock.now()
         return addMessage(
             sessionId = sessionId,
             agentId = agentId,
             message = UserMessage(
                 id = generateId(),
                 content = content,
-                timestamp = clock.now(),
+                timestamp = now,
+                koogMessages = listOf(
+                    Message.User(
+                        content = content,
+                        metaInfo = RequestMetaInfo(timestamp = now.toDeprecatedInstant()),
+                    )
+                ),
                 metadata = null,
             ),
         )
     }
 
-    public suspend fun addToolExchangeMessage(
+    public suspend fun addAgentScriptMessage(
         sessionId: String,
-        toolName: String,
-        toolCallId: String,
-        arguments: JsonElement,
-        result: JsonElement,
-        isError: Boolean,
-        errorMessage: String?,
+        scriptId: String,
+        status: AgentScriptStatus,
+        scriptReturnValue: String?,
+        scriptStdout: String,
+        error: String?,
+        outputList: List<String>,
+        koogMessages: List<Message>,
         metadata: Map<String, String>?,
         agentId: String?,
     ): ConversationSession {
+        assertScriptOnlyKoogMessages(koogMessages = koogMessages)
         return addMessage(
             sessionId = sessionId,
             agentId = agentId,
-            message = ToolExchangeMessage(
+            message = AgentScript(
                 id = generateId(),
-                toolName = toolName,
-                toolCallId = toolCallId,
-                arguments = arguments,
-                result = result,
-                isError = isError,
-                errorMessage = errorMessage,
-                displayName = null,
+                scriptId = scriptId,
+                status = status,
+                scriptReturnValue = scriptReturnValue,
+                scriptStdout = scriptStdout,
+                error = error,
+                outputList = outputList,
                 timestamp = clock.now(),
-                metadata = metadata,
-            ),
-        )
-    }
-
-    public suspend fun addSuspendMessage(
-        sessionId: String,
-        toolName: String,
-        toolCallId: String,
-        arguments: JsonElement,
-        metadata: Map<String, String>?,
-        agentId: String?,
-    ): ConversationSession {
-        return addMessage(
-            sessionId = sessionId,
-            agentId = agentId,
-            message = SuspendMessage(
-                id = generateId(),
-                toolName = toolName,
-                toolCallId = toolCallId,
-                arguments = arguments,
-                displayName = null,
-                timestamp = clock.now(),
-                metadata = metadata,
-            ),
-        )
-    }
-
-    public suspend fun addResumeMessage(
-        sessionId: String,
-        toolName: String,
-        toolCallId: String,
-        result: JsonElement,
-        isError: Boolean,
-        errorMessage: String?,
-        metadata: Map<String, String>?,
-        agentId: String?,
-    ): ConversationSession {
-        return addMessage(
-            sessionId = sessionId,
-            agentId = agentId,
-            message = ResumeMessage(
-                id = generateId(),
-                toolName = toolName,
-                toolCallId = toolCallId,
-                result = result,
-                isError = isError,
-                errorMessage = errorMessage,
-                timestamp = clock.now(),
+                koogMessages = koogMessages,
                 metadata = metadata,
             ),
         )
@@ -661,26 +627,25 @@ public class SessionManager(
         }
     }
 
-    public suspend fun getTrailingPendingToolCall(
+    public suspend fun getTrailingPendingScript(
         sessionId: String,
         agentId: String?,
-    ): PendingToolCallInfo? {
+    ): PendingScriptInfo? {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
             val agent = resolveAgent(runtime, sessionId, agentId)
-            val trailing = agent.trailingSuspendMessage() ?: return null
-            return PendingToolCallInfo(
+            val trailing = agent.trailingPendingScript() ?: return null
+            return PendingScriptInfo(
                 messageId = trailing.id,
-                toolName = trailing.toolName,
-                toolCallId = trailing.toolCallId,
+                scriptId = trailing.scriptId,
             )
         } finally {
             runtime.mutex.unlock()
         }
     }
 
-    public suspend fun rollbackTrailingPendingToolCall(
+    public suspend fun rollbackTrailingPendingScript(
         sessionId: String,
         agentId: String?,
     ): Boolean {
@@ -688,7 +653,7 @@ public class SessionManager(
         runtime.mutex.lock()
         try {
             val agent = resolveAgent(runtime, sessionId, agentId)
-            if (agent.trailingSuspendMessage() == null) {
+            if (agent.trailingPendingScript() == null) {
                 return false
             }
 
@@ -697,7 +662,7 @@ public class SessionManager(
             if (isMainAgent(sessionId, agentId)) {
                 runtime.agent.value.state.value = AgentState.Suspended
             }
-            updateMetadataAfterToolCallRewrite(runtime)
+            updateMetadataAfterPendingScriptRollback(runtime)
             persist(runtime)
             return true
         } finally {
@@ -713,6 +678,8 @@ public class SessionManager(
         taskDescription: String,
         expectedResult: String,
     ) {
+        throw IllegalStateException("Subagent is disabled in strict script-only runtime")
+
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
@@ -723,7 +690,7 @@ public class SessionManager(
             val normalizedMode = validateSubAgentMode(mode)
 
             val parentAgent = resolveAgent(runtime, sessionId, parentAgentId)
-            val parentMessages = trimTrailingPendingToolCall(parentAgent.messages.value)
+            val parentMessages = trimTrailingPendingScript(parentAgent.messages.value)
             val initialMessages = buildSubAgentInitialMessages(
                 normalizedMode = normalizedMode,
                 parentMessages = parentMessages,
@@ -769,11 +736,11 @@ public class SessionManager(
         }
     }
 
-    private fun trimTrailingPendingToolCall(messages: List<SessionMessage>): kotlinx.collections.immutable.PersistentList<SessionMessage> {
+    private fun trimTrailingPendingScript(messages: List<SessionMessage>): kotlinx.collections.immutable.PersistentList<SessionMessage> {
         val last = messages.lastOrNull() ?: run {
             return persistentListOf()
         }
-        val normalizedMessages = if (last is SuspendMessage) {
+        val normalizedMessages = if (last is AgentScript && last.status == AgentScriptStatus.PENDING_INPUT) {
             messages.dropLast(1)
         } else {
             messages
@@ -864,7 +831,8 @@ public class SessionManager(
         runtime.mutex.lock()
         return try {
             val activeIds = mutableListOf<String>()
-            val mainRunning = runtime.agent.value.state.value == AgentState.Running && (runtime.runJob.value?.isActive == true)
+            val mainRunning =
+                runtime.agent.value.state.value == AgentState.Running && (runtime.runJob.value?.isActive == true)
             if (mainRunning) {
                 activeIds += mainAgentId(sessionId)
             }
@@ -925,6 +893,8 @@ public class SessionManager(
         fromAgentId: String,
         message: String,
     ): Boolean {
+        throw IllegalStateException("receiveAgentMessage is disabled in strict script-only runtime")
+
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
@@ -939,22 +909,35 @@ public class SessionManager(
             }
 
             val callId = generateId()
+            val now = clock.now()
             val payload = buildJsonObject {
                 put("agentId", JsonPrimitive(fromAgentId))
                 put("message", JsonPrimitive(message))
             }
-            val injectedMetadata = injectedMessageMetadata()
-            val injectedExchange = createToolExchangeMessage(
+            val injectedMetadata = injectedMessageMetadata(
                 toolName = ToolNames.RECEIVE_AGENT_MESSAGE,
-                toolCallId = callId,
-                arguments = payload,
-                result = payload,
-                isError = false,
-                errorMessage = null,
+                toolArgs = payload.toString(),
+                resultMode = SCRIPT_RESULT_MODE_CALL_RESULT,
+            )
+            val injectedScript = createAgentScriptMessage(
+                scriptId = callId,
+                status = AgentScriptStatus.COMPLETED,
+                scriptReturnValue = payload.toString(),
+                scriptStdout = payload.toString(),
+                error = null,
+                outputList = emptyList(),
+                koogMessages = buildToolCallAndResultKoogMessages(
+                    scriptId = callId,
+                    toolName = ToolNames.RECEIVE_AGENT_MESSAGE,
+                    toolArgs = payload.toString(),
+                    result = payload.toString(),
+                    timestamp = now,
+                ),
+                timestamp = now,
                 metadata = injectedMetadata,
             )
 
-            targetAgent.messages.value = targetAgent.messages.value.add(injectedExchange)
+            targetAgent.messages.value = targetAgent.messages.value.add(injectedScript)
             runtime.metadata.value = runtime.metadata.value.copy(
                 updatedAt = clock.now(),
                 version = runtime.metadata.value.version + 1,
@@ -997,7 +980,8 @@ public class SessionManager(
     }
 
     private fun computeSessionState(runtime: Session): SessionState {
-        val mainRunning = runtime.agent.value.state.value == AgentState.Running && (runtime.runJob.value?.isActive == true)
+        val mainRunning =
+            runtime.agent.value.state.value == AgentState.Running && (runtime.runJob.value?.isActive == true)
         val subRunning = runtime.subagents.value.any { (_, subAgent) ->
             subAgent.delegate.state.value == AgentState.Running && !subAgent.result.isCompleted
         }
@@ -1018,7 +1002,7 @@ public class SessionManager(
         }
     }
 
-    private fun updateMetadataAfterToolCallRewrite(runtime: Session) {
+    private fun updateMetadataAfterPendingScriptRollback(runtime: Session) {
         runtime.metadata.value = runtime.metadata.value.copy(
             state = computeSessionState(runtime),
             updatedAt = clock.now(),
@@ -1061,19 +1045,32 @@ public class SessionManager(
             return persistentListOf()
         }
 
-        val toolCallId = generateId()
+        val scriptId = generateId()
+        val now = clock.now()
         val forkResultText = "You are the forked subagent, Your task: $taskDescription Expected Result: $expectedResult"
-        val metadata = injectedMessageMetadata()
-        val forkExchange = createToolExchangeMessage(
+        val metadata = injectedMessageMetadata(
             toolName = ToolNames.FORK,
-            toolCallId = toolCallId,
-            arguments = buildJsonObject { },
-            result = JsonPrimitive(forkResultText),
-            isError = false,
-            errorMessage = null,
+            toolArgs = "{}",
+            resultMode = SCRIPT_RESULT_MODE_CALL_RESULT,
+        )
+        val forkScript = createAgentScriptMessage(
+            scriptId = scriptId,
+            status = AgentScriptStatus.COMPLETED,
+            scriptReturnValue = forkResultText,
+            scriptStdout = "{}",
+            error = null,
+            outputList = emptyList(),
+            koogMessages = buildToolCallAndResultKoogMessages(
+                scriptId = scriptId,
+                toolName = ToolNames.FORK,
+                toolArgs = "{}",
+                result = forkResultText,
+                timestamp = now,
+            ),
+            timestamp = now,
             metadata = metadata,
         )
-        return parentMessages.add(forkExchange)
+        return parentMessages.add(forkScript)
     }
 
     private fun buildSubAgentPrompt(
@@ -1105,48 +1102,95 @@ public class SessionManager(
         }
     }
 
-    private fun createToolExchangeMessage(
-        toolName: String,
-        toolCallId: String,
-        arguments: JsonElement,
-        result: JsonElement,
-        isError: Boolean,
-        errorMessage: String?,
+    private fun createAgentScriptMessage(
+        scriptId: String,
+        status: AgentScriptStatus,
+        scriptReturnValue: String?,
+        scriptStdout: String,
+        error: String?,
+        outputList: List<String>,
+        koogMessages: List<Message>,
+        timestamp: kotlin.time.Instant,
         metadata: Map<String, String>?,
     ): SessionMessage {
-        return ToolExchangeMessage(
+        assertScriptOnlyKoogMessages(koogMessages = koogMessages)
+        return AgentScript(
             id = generateId(),
-            toolName = toolName,
-            toolCallId = toolCallId,
-            arguments = arguments,
-            result = result,
-            isError = isError,
-            errorMessage = errorMessage,
-            displayName = null,
-            timestamp = clock.now(),
+            scriptId = scriptId,
+            status = status,
+            scriptReturnValue = scriptReturnValue,
+            scriptStdout = scriptStdout,
+            error = error,
+            outputList = outputList,
+            timestamp = timestamp,
+            koogMessages = koogMessages,
             metadata = metadata,
+        )
+    }
+
+    private fun assertScriptOnlyKoogMessages(koogMessages: List<Message>) {
+        if (koogMessages.isEmpty()) {
+            throw IllegalStateException("Script-only violation: AgentScript.koogMessages must not be empty")
+        }
+        val nonScriptTool = koogMessages
+            .filterIsInstance<Message.Tool>()
+            .firstOrNull { tool -> tool.tool != ToolNames.EXECUTE_KOTLIN_SCRIPT }
+        if (nonScriptTool != null) {
+            throw IllegalStateException(
+                "Script-only violation: tool '${nonScriptTool.tool}' is not allowed in AgentScript.koogMessages"
+            )
+        }
+    }
+
+    private fun buildToolCallAndResultKoogMessages(
+        scriptId: String,
+        toolName: String,
+        toolArgs: String,
+        result: String,
+        timestamp: kotlin.time.Instant,
+    ): List<Message> {
+        return listOf(
+            Message.Tool.Call(
+                id = scriptId,
+                tool = toolName,
+                content = toolArgs,
+                metaInfo = ResponseMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+            ),
+            Message.Tool.Result(
+                id = scriptId,
+                tool = toolName,
+                content = result,
+                metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+            ),
         )
     }
 
     private fun SessionMessage.copyWithNewId(newId: String): SessionMessage {
         return when (this) {
             is UserMessage -> copy(id = newId)
-            is ToolExchangeMessage -> copy(id = newId)
-            is SuspendMessage -> copy(id = newId)
-            is ResumeMessage -> copy(id = newId)
+            is AgentScript -> copy(id = newId)
         }
     }
 
-    private fun Agent.trailingSuspendMessage(): SuspendMessage? {
+    private fun Agent.trailingPendingScript(): AgentScript? {
         val trailing = messages.value.lastOrNull() ?: return null
-        if (trailing !is SuspendMessage) {
+        if (trailing !is AgentScript || trailing.status != AgentScriptStatus.PENDING_INPUT) {
             return null
         }
         return trailing
     }
 
-    private fun injectedMessageMetadata(): Map<String, String> {
-        return mapOf(INJECTED_METADATA_KEY to INJECTED_METADATA_VALUE)
+    private fun injectedMessageMetadata(
+        toolName: String,
+        toolArgs: String,
+        resultMode: String,
+    ): Map<String, String> {
+        return mapOf(
+            INJECTED_METADATA_KEY to INJECTED_METADATA_VALUE,
+            SCRIPT_TOOL_NAME_METADATA_KEY to toolName,
+            SCRIPT_TOOL_ARGS_METADATA_KEY to toolArgs,
+            SCRIPT_RESULT_MODE_METADATA_KEY to resultMode,
+        )
     }
 
     private suspend fun persist(runtime: Session) {

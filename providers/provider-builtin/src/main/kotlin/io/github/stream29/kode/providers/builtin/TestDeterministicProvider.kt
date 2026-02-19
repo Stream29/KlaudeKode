@@ -68,14 +68,14 @@ private class TestDeterministicLlmClient(
         model: LLModel,
         tools: List<ToolDescriptor>,
     ): List<Message.Response> {
-        val preferredToolName = tools.firstOrNull { descriptor -> descriptor.name == WAIT_FOR_USER_INPUT_TOOL_NAME }?.name
+        val preferredToolName = tools.firstOrNull { descriptor -> descriptor.name == EXECUTE_SCRIPT_TOOL_NAME }?.name
             ?: tools.firstOrNull()?.name
             ?: FALLBACK_TOOL_NAME
         return listOf(
             Message.Tool.Call(
                 id = "test-deterministic-tool-call",
                 tool = preferredToolName,
-                content = NO_ARGS_JSON,
+                content = SCRIPT_ARGS_JSON,
                 metaInfo = ResponseMetaInfo.Empty,
             )
         )
@@ -107,9 +107,9 @@ private class TestDeterministicLlmClient(
 
     private companion object {
         private const val MOCK_RESPONSE_TEXT: String = "test-deterministic-mock-response"
-        private const val WAIT_FOR_USER_INPUT_TOOL_NAME: String = "waitForUserInput"
-        private const val FALLBACK_TOOL_NAME: String = "sayToUser"
-        private const val NO_ARGS_JSON: String = "{}"
+        private const val EXECUTE_SCRIPT_TOOL_NAME: String = "executeKotlinScript"
+        private const val FALLBACK_TOOL_NAME: String = "executeKotlinScript"
+        private const val SCRIPT_ARGS_JSON: String = "{\"script\":\"println(\\\"deterministic\\\")\"}"
     }
 }
 

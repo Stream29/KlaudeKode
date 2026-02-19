@@ -1,6 +1,7 @@
 package io.github.stream29.kode.session.core.tool
 
 public object ToolNames {
+    public const val EXECUTE_KOTLIN_SCRIPT: String = "executeKotlinScript"
     public const val WAIT_FOR_USER_INPUT: String = "waitForUserInput"
     public const val SAY_TO_USER: String = "sayToUser"
     public const val USER_INTERRUPT: String = "userInterrupt"

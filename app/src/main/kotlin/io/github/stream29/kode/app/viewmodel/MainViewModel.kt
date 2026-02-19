@@ -55,7 +55,6 @@ import io.github.stream29.kode.session.core.storage.SessionFilter
 import io.github.stream29.kode.session.core.storage.SessionStatusFilter
 import io.github.stream29.kode.session.core.storage.SortBy
 import io.github.stream29.kode.session.core.storage.SortOrder
-import io.github.stream29.kode.session.core.tool.ToolNames
 import io.github.stream29.kode.tools.WebTools
 import io.github.stream29.kode.ui.bridge.auth.OAuthStatusUi
 import io.github.stream29.kode.ui.bridge.mcp.McpHealthResult
@@ -73,7 +72,6 @@ import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.AgentState
 import io.github.stream29.kode.ui.core.MessageHandler
-import com.agentclientprotocol.agent.Agent
 import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.agent.AgentSession
 import com.agentclientprotocol.agent.AgentSupport
@@ -87,9 +85,9 @@ import com.agentclientprotocol.model.PromptCapabilities
 import com.agentclientprotocol.model.SessionId
 import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.transport.StdioTransport
-import kotlinx.io.asSink
-import kotlinx.io.asSource
-import kotlinx.io.buffered
+import io.github.stream29.kode.tools.scripting.KotlinScriptResult
+import io.github.stream29.kode.tools.scripting.ScriptContext
+import io.github.stream29.kode.tools.scripting.evalInThreadCancellable
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -111,11 +109,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonObject
 import java.awt.Desktop
 import java.io.File
-import java.nio.channels.Channels
 import java.nio.channels.Pipe
 import java.util.UUID
 
@@ -1048,18 +1043,15 @@ public class MainViewModel(
 
         ensureOAuthCredentialsUpToDate()
 
-        val mcpRegistry = buildMcpToolRegistry()
-        buildAgentFactory(mcpRegistry)
+        buildAgentFactory()
         return true
     }
 
-    private fun buildAgentFactory(mcpRegistry: ToolRegistry?) {
+    private fun buildAgentFactory() {
         agentFactory = SessionAwareAgentFactory(
             auths = auths,
             models = models,
             messageHandler = this@MainViewModel,
-            disabledTools = disabledTools,
-            mcpToolRegistry = mcpRegistry,
             eventListener = this@MainViewModel,
             hookManager = hookManager,
             logger = { logMessage: String -> log(logMessage) },
@@ -1285,22 +1277,6 @@ public class MainViewModel(
                     return@launch
                 }
 
-                val pendingCall = sessionManager.getTrailingPendingToolCall(sessionId = sessionId, agentId = null)
-                if (pendingCall != null) {
-                    if (!isAwaitUserInputToolNameForContinue(pendingCall.toolName)) {
-                        val rolledBack = sessionManager.rollbackTrailingPendingToolCall(
-                            sessionId = sessionId,
-                            agentId = null,
-                        )
-                        if (rolledBack) {
-                            addSystemMessage(
-                                "Recovered unfinished tool call '${pendingCall.toolName}' by rollback before continue.",
-                                sessionId,
-                            )
-                        }
-                    }
-                }
-
                 if (!refreshAgentFactoryForConversation()) {
                     addSystemMessage("Agent not initialized. Please check your configuration.")
                     return@launch
@@ -1383,9 +1359,9 @@ public class MainViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 sessionManager.stopRun(sessionId)
-                val rolledBack = sessionManager.rollbackTrailingPendingToolCall(sessionId = sessionId, agentId = null)
+                val rolledBack = sessionManager.rollbackTrailingPendingScript(sessionId = sessionId, agentId = null)
                 if (rolledBack) {
-                    addSystemMessage("Force stop rolled back unfinished trailing tool call", sessionId)
+                    addSystemMessage("Force stop rolled back unfinished trailing pending script", sessionId)
                 }
             } catch (e: Exception) {
                 addSystemMessage("Stop session failed: ${e.message}", sessionId)
@@ -1476,55 +1452,12 @@ public class MainViewModel(
         }
     }
 
-    private fun isAwaitUserInputToolNameForContinue(toolName: String): Boolean {
-        return toolName == ToolNames.WAIT_FOR_USER_INPUT
-    }
-
     private suspend fun prepareConversationHistoryForContinue(sessionId: String, input: String) {
-        val pendingCall = sessionManager.getTrailingPendingToolCall(sessionId = sessionId, agentId = null)
-        if (pendingCall != null) {
-            if (isAwaitUserInputToolNameForContinue(pendingCall.toolName)) {
-                sessionManager.addResumeMessage(
-                    sessionId = sessionId,
-                    toolName = pendingCall.toolName,
-                    toolCallId = pendingCall.toolCallId,
-                    result = JsonPrimitive(input),
-                    isError = false,
-                    errorMessage = null,
-                    metadata = null,
-                    agentId = null,
-                )
-                return
-            }
-
-            val rolledBack = sessionManager.rollbackTrailingPendingToolCall(sessionId = sessionId, agentId = null)
-            if (rolledBack) {
-                addSystemMessage(
-                    "Recovered unfinished tool call '${pendingCall.toolName}' by rollback before continue.",
-                    sessionId,
-                )
-            }
-
-            if (input.isBlank()) {
-                return
-            }
-
-            val toolCallId = "${ToolNames.USER_INTERRUPT}-${UUID.randomUUID()}"
-            val payload = buildJsonObject {
-                put("message", JsonPrimitive(input))
-            }
-            sessionManager.addToolExchangeMessage(
-                sessionId = sessionId,
-                toolName = ToolNames.USER_INTERRUPT,
-                toolCallId = toolCallId,
-                arguments = payload,
-                result = JsonPrimitive(input),
-                isError = false,
-                errorMessage = null,
-                metadata = null,
-                agentId = null,
+        val pendingScript = sessionManager.getTrailingPendingScript(sessionId = sessionId, agentId = null)
+        if (pendingScript != null) {
+            throw IllegalStateException(
+                "Script-only violation: pending script '${pendingScript.scriptId}' requires waitForUserInput flow"
             )
-            return
         }
 
         if (input.isBlank()) {
@@ -2375,8 +2308,6 @@ logging:
                         override fun log(message: String) {}
                         override suspend fun requestInput(): String = ""
                     },
-                    disabledTools = emptySet(),
-                    mcpToolRegistry = null,
                     eventListener = null,
                     hookManager = hookManager,
                     logger = { },
@@ -2438,25 +2369,18 @@ logging:
         val deferred = inputDeferreds.remove(sessionId)
         if (deferred == null) {
             viewModelScope.launch(Dispatchers.IO) {
-                val pendingCall = sessionManager.getTrailingPendingToolCall(sessionId = sessionId, agentId = null)
-                if (pendingCall == null || !isAwaitUserInputToolNameForContinue(pendingCall.toolName)) {
-                    addSystemMessage("No pending ${ToolNames.WAIT_FOR_USER_INPUT} tool call to submit", sessionId)
+                val pendingScript = sessionManager.getTrailingPendingScript(sessionId = sessionId, agentId = null)
+                if (pendingScript == null) {
+                    addSystemMessage("No pending script waiting for input to submit", sessionId)
                     return@launch
                 }
-                sessionManager.addResumeMessage(
-                    sessionId = sessionId,
-                    toolName = pendingCall.toolName,
-                    toolCallId = pendingCall.toolCallId,
-                    result = JsonPrimitive(input),
-                    isError = false,
-                    errorMessage = null,
-                    metadata = null,
-                    agentId = null,
+                addSystemMessage(
+                    "Script-only violation: pending script '${pendingScript.scriptId}' requires waitForUserInput flow",
+                    sessionId,
                 )
                 updateSessionRunState(sessionId) { state ->
                     state.copy(isWaitingForInput = false)
                 }
-                continueCurrentSession()
             }
             return
         }
@@ -3071,10 +2995,7 @@ logging:
         scriptRunning = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val result = io.github.stream29.kode.scripting.eval(
-                    script = script,
-                    workingDir = resolveSessionWorkingDir(currentSessionWorkDir).absolutePath,
-                )
+                val result = ScriptContext().evalInThreadCancellable(script = script)
                 scriptOutput = result.toUiScriptOutput()
             } catch (e: Exception) {
                 scriptOutput = "Script failed: ${e.message}"
@@ -3528,13 +3449,13 @@ logging:
         )
     }
 
-    private fun io.github.stream29.kode.scripting.EvalResult.toUiScriptOutput(): String {
+    private fun KotlinScriptResult.toUiScriptOutput(): String {
         return when (this) {
-            is io.github.stream29.kode.scripting.EvalResult.Success -> {
+            is KotlinScriptResult.Success -> {
                 "Return: ${returnValue}\n\nStdout:\n${stdout}"
             }
 
-            is io.github.stream29.kode.scripting.EvalResult.Failure -> {
+            is KotlinScriptResult.Failure -> {
                 "Error: ${message}\n\nStdout:\n${stdout}"
             }
         }
@@ -3621,73 +3542,8 @@ logging:
     }
 
     public fun startAcpServer() {
-        if (acpRunning) {
-            return
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val factory = agentFactory
-                if (factory == null) {
-                    appendAcpLog("ACP start failed: agent not initialized")
-                    return@launch
-                }
-                val modelId = activeModelId
-                if (modelId == null) {
-                    appendAcpLog("ACP start failed: no model selected")
-                    return@launch
-                }
-                val model = factory.createLLModel(modelId)
-                val sessionId = currentSessionId ?: UUID.randomUUID().toString()
-                val toolRegistry = factory.buildToolRegistry(
-                    workingDir = resolveSessionWorkingDir(currentSessionWorkDir),
-                    sessionId = sessionId
-                )
-
-                val clientToAgent = Pipe.open()
-                val agentToClient = Pipe.open()
-                val protocolScope = CoroutineScope(Dispatchers.IO + Job())
-
-                val agentTransport = StdioTransport(
-                    protocolScope,
-                    Dispatchers.IO,
-                    input = Channels.newInputStream(clientToAgent.source()).asSource().buffered(),
-                    output = Channels.newOutputStream(agentToClient.sink()).asSink().buffered(),
-                    name = "agent"
-                )
-
-                val clientTransport = StdioTransport(
-                    protocolScope,
-                    Dispatchers.IO,
-                    input = Channels.newInputStream(agentToClient.source()).asSource().buffered(),
-                    output = Channels.newOutputStream(clientToAgent.sink()).asSink().buffered(),
-                    name = "client"
-                )
-
-                val protocol = Protocol(protocolScope, agentTransport)
-                val support = KodeAcpAgentSupport(
-                    promptExecutor = factory.promptExecutor,
-                    toolRegistry = toolRegistry,
-                    model = model,
-                    systemPrompt = SessionAwareAgentFactory.SYSTEM_PROMPT,
-                    maxIterations = maxStepsPerTurn,
-                    protocol = protocol
-                )
-
-                Agent(protocol, support)
-                protocol.start()
-
-                acpProtocolScope = protocolScope
-                acpProtocol = protocol
-                acpTransport = agentTransport
-                acpClientTransport = clientTransport
-                acpClientToAgent = clientToAgent
-                acpAgentToClient = agentToClient
-                acpRunning = true
-                appendAcpLog("ACP agent started (stdio). Host/port: $acpHost:$acpPort")
-            } catch (e: Exception) {
-                appendAcpLog("ACP start failed: ${e.message}")
-            }
-        }
+        appendAcpLog("ACP is disabled in script-only runtime")
+        addSystemMessage("ACP is disabled in script-only runtime")
     }
 
     public fun stopAcpServer() {

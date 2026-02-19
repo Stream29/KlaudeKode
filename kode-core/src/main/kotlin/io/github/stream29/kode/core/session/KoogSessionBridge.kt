@@ -1,9 +1,16 @@
 package io.github.stream29.kode.core.session
 
 import ai.koog.prompt.message.Message
+import ai.koog.prompt.message.RequestMetaInfo
+import ai.koog.prompt.message.ResponseMetaInfo
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.model.AgentScriptStatus
 import io.github.stream29.kode.session.core.model.toKoogMessages
+import io.github.stream29.kode.session.core.tool.ToolNames
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.datetime.toDeprecatedClock
+import kotlin.time.Clock
 
 public class KoogSessionBridge(
     private val sessionManager: SessionManager,
@@ -26,56 +33,59 @@ public class KoogSessionBridge(
         result: JsonElement,
         isError: Boolean,
         errorMessage: String?,
+        outputList: List<String>,
         agentId: String?,
     ) {
-        sessionManager.addToolExchangeMessage(
-            sessionId = sessionId,
-            toolName = toolName,
+        if (toolName != ToolNames.EXECUTE_KOTLIN_SCRIPT) {
+            throw IllegalStateException(
+                "Script-only violation: tool '$toolName' is not allowed for persistence; " +
+                        "only '${ToolNames.EXECUTE_KOTLIN_SCRIPT}' is supported"
+            )
+        }
+        val koogMessages = buildScriptExchangeMessages(
             toolCallId = toolCallId,
-            arguments = arguments,
-            result = result,
-            isError = isError,
-            errorMessage = errorMessage,
+            toolArgs = arguments.toString(),
+            result = result.toMessageContent(),
+        )
+        sessionManager.addAgentScriptMessage(
+            sessionId = sessionId,
+            scriptId = toolCallId,
+            status = if (isError) AgentScriptStatus.FAILED else AgentScriptStatus.COMPLETED,
+            scriptReturnValue = result.toMessageContent(),
+            scriptStdout = arguments.toString(),
+            error = errorMessage,
+            outputList = outputList,
+            koogMessages = koogMessages,
             metadata = null,
             agentId = agentId,
         )
     }
 
-    public suspend fun saveSuspend(
-        sessionId: String,
-        toolName: String,
+    private fun buildScriptExchangeMessages(
         toolCallId: String,
-        arguments: JsonElement,
-        agentId: String?,
-    ) {
-        sessionManager.addSuspendMessage(
-            sessionId = sessionId,
-            toolName = toolName,
-            toolCallId = toolCallId,
-            arguments = arguments,
-            metadata = null,
-            agentId = agentId,
+        toolArgs: String,
+        result: String,
+    ): List<Message> {
+        return listOf(
+            Message.Tool.Call(
+                id = toolCallId,
+                tool = ToolNames.EXECUTE_KOTLIN_SCRIPT,
+                content = toolArgs,
+                metaInfo = ResponseMetaInfo.create(Clock.System.toDeprecatedClock()),
+            ),
+            Message.Tool.Result(
+                id = toolCallId,
+                tool = ToolNames.EXECUTE_KOTLIN_SCRIPT,
+                content = result,
+                metaInfo = RequestMetaInfo.create(Clock.System.toDeprecatedClock()),
+            ),
         )
     }
 
-    public suspend fun saveResume(
-        sessionId: String,
-        toolName: String,
-        toolCallId: String,
-        result: JsonElement,
-        isError: Boolean,
-        errorMessage: String?,
-        agentId: String?,
-    ) {
-        sessionManager.addResumeMessage(
-            sessionId = sessionId,
-            toolName = toolName,
-            toolCallId = toolCallId,
-            result = result,
-            isError = isError,
-            errorMessage = errorMessage,
-            metadata = null,
-            agentId = agentId,
-        )
+    private fun JsonElement.toMessageContent(): String {
+        return when (this) {
+            is JsonPrimitive -> if (isString) content else toString()
+            else -> toString()
+        }
     }
 }

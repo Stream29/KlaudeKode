@@ -35,6 +35,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.github.stream29.kode.session.core.model.AgentScript
+import io.github.stream29.kode.session.core.model.AgentScriptStatus
 import io.github.stream29.kode.session.core.model.SessionMessage
 import io.github.stream29.kode.ui.core.components.message.MessageBubble
 import io.github.stream29.kode.ui.core.components.message.SystemMessage
@@ -54,11 +56,12 @@ internal fun MessageList(
     messageMaxWidthRatio: Float,
     modifier: Modifier = Modifier,
 ) {
+    val displayedMessages = remember(messages) { buildDisplayedMessages(messages) }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+    LaunchedEffect(displayedMessages.size) {
+        if (displayedMessages.isNotEmpty()) {
+            listState.animateScrollToItem(displayedMessages.size - 1)
         }
     }
 
@@ -85,9 +88,10 @@ internal fun MessageList(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 itemsIndexed(
-                    items = messages,
-                    key = { index, message -> "${message.id}-$index" },
-                ) { index, message ->
+                    items = displayedMessages,
+                    key = { index, row -> "${row.renderedMessage.id}-$index" },
+                ) { _, row ->
+                    val message = row.renderedMessage
                     val defaultExpanded = remember(
                         message.id,
                         message.isUiToolCallLike(),
@@ -114,7 +118,7 @@ internal fun MessageList(
                             messageAlignment = messageAlignment,
                             messageMaxWidthRatio = messageMaxWidthRatio,
                             onForkFromHere = {
-                                onForkFromMessage(index)
+                                onForkFromMessage(row.sourceIndex)
                             },
                         )
                     }
@@ -136,6 +140,40 @@ internal fun MessageList(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+private data class DisplayMessageRow(
+    val renderedMessage: SessionMessage,
+    val sourceIndex: Int,
+)
+
+private fun buildDisplayedMessages(messages: List<SessionMessage>): List<DisplayMessageRow> {
+    return buildList {
+        messages.forEachIndexed { sourceIndex, message ->
+            if (message is AgentScript && message.outputList.isNotEmpty()) {
+                message.outputList.forEachIndexed { outputIndex, output ->
+                    add(
+                        DisplayMessageRow(
+                            renderedMessage = message.copy(
+                                id = "${message.id}#output-$outputIndex",
+                                status = AgentScriptStatus.COMPLETED,
+                                scriptReturnValue = output,
+                                scriptStdout = "",
+                                error = null,
+                                outputList = listOf(output),
+                            ),
+                            sourceIndex = sourceIndex,
+                        )
+                    )
+                }
+                if (message.status != AgentScriptStatus.COMPLETED) {
+                    add(DisplayMessageRow(renderedMessage = message, sourceIndex = sourceIndex))
+                }
+            } else {
+                add(DisplayMessageRow(renderedMessage = message, sourceIndex = sourceIndex))
             }
         }
     }

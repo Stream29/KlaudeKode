@@ -15,15 +15,9 @@ import io.github.stream29.kode.core.hooks.ToolCallHookResult
 import io.github.stream29.kode.core.hooks.UserPromptHook
 import io.github.stream29.kode.providers.builtin.TEST_DETERMINISTIC_PROVIDER_ID
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.session.core.model.SessionMessage
-import io.github.stream29.kode.session.core.model.ToolExchangeMessage
 import io.github.stream29.kode.session.core.model.UserMessage
-import io.github.stream29.kode.session.core.tool.ToolNames
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.koin.core.context.startKoin
 import org.koin.core.context.stopKoin
 import org.koin.dsl.module
@@ -102,9 +96,9 @@ private suspend fun validateContinueInputBehaviorWithTestProvider() {
 
         val sessionId = requireNotNull(viewModel.currentSessionId)
         createdSessionId = sessionId
-        val pendingBeforeContinue = sessionManager.getTrailingPendingToolCall(sessionId = sessionId, agentId = null)
+        val pendingBeforeContinue = sessionManager.getTrailingPendingScript(sessionId = sessionId, agentId = null)
         ensure(pendingBeforeContinue == null) {
-            "expected no pending tool call before continueFromInput, got ${pendingBeforeContinue?.toolName}"
+            "expected no pending script before continueFromInput, got ${pendingBeforeContinue?.scriptId}"
         }
 
         val followUpInput = "AGENT_API_TEST_INPUT_NO_PENDING"
@@ -117,11 +111,6 @@ private suspend fun validateContinueInputBehaviorWithTestProvider() {
             val session = sessionManager.getSession(sessionId)
             val messages = session?.messages ?: return@waitUntil false
             messages.any { message -> message is UserMessage && message.content == followUpInput }
-        }
-
-        val messages = requireNotNull(sessionManager.getSession(sessionId)).messages
-        ensure(!containsUserInterruptForInput(messages = messages, input = followUpInput)) {
-            "follow-up input was incorrectly persisted as synthetic userInterrupt"
         }
 
         println("test provider continue-input routing check passed")
@@ -181,9 +170,9 @@ private suspend fun validateContinueInputBehaviorWithAnthropicHaiku() {
             phaseName = "first anthropic run",
         )
 
-        val pendingBeforeContinue = sessionManager.getTrailingPendingToolCall(sessionId = sessionId, agentId = null)
+        val pendingBeforeContinue = sessionManager.getTrailingPendingScript(sessionId = sessionId, agentId = null)
         ensure(pendingBeforeContinue == null) {
-            "expected no pending tool call before continueFromInput, got ${pendingBeforeContinue?.toolName}"
+            "expected no pending script before continueFromInput, got ${pendingBeforeContinue?.scriptId}"
         }
 
         val followUpInput = "AGENT_API_TEST_INPUT_NO_PENDING"
@@ -200,10 +189,6 @@ private suspend fun validateContinueInputBehaviorWithAnthropicHaiku() {
         ensure(messages.any { message -> message is UserMessage && message.content == followUpInput }) {
             "expected follow-up input to be appended as USER message"
         }
-        ensure(!containsUserInterruptForInput(messages = messages, input = followUpInput)) {
-            "follow-up input was incorrectly persisted as synthetic userInterrupt"
-        }
-
         println("anthropic haiku continue-input routing check passed")
     } finally {
         if (createdSessionId != null) {
@@ -286,21 +271,6 @@ private fun resolveAnthropicHaikuModelId(viewModel: MainViewModel): String {
     }
     return requireNotNull(fallback?.id) {
         "anthropic haiku model is not configured"
-    }
-}
-
-private fun containsUserInterruptForInput(messages: List<SessionMessage>, input: String): Boolean {
-    return messages.any { message ->
-        if (message is ToolExchangeMessage && message.toolName == ToolNames.USER_INTERRUPT) {
-            val interruptMessage = message.arguments
-                .jsonObject["message"]
-                ?.jsonPrimitive
-                ?.contentOrNull
-            if (interruptMessage == input) {
-                return@any true
-            }
-        }
-        false
     }
 }
 

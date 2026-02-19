@@ -14,6 +14,17 @@ import kotlin.test.assertTrue
 
 class KotlinScriptToolTest {
     @Test
+    fun consumeOutputList_returnsItemsInAppendOrderAndClearsBuffer() {
+        val scriptContext = ScriptContext()
+
+        scriptContext.sayToUser("first")
+        scriptContext.sayToUser("second")
+
+        assertEquals(expected = listOf("first", "second"), actual = scriptContext.consumeOutputList())
+        assertTrue(scriptContext.consumeOutputList().isEmpty())
+    }
+
+    @Test
     fun consumeSignal_defaultsToFalseAndResetsAfterConsume() {
         val scriptContext = ScriptContext()
 
@@ -67,6 +78,26 @@ class KotlinScriptToolTest {
         val success = assertIs<KotlinScriptResult.Success>(result)
         assertEquals(expected = "awaited", actual = success.returnValue)
         assertTrue(scriptContext.consumeAwaitForUserInputSignal())
+    }
+
+    @Test
+    fun eval_canAppendUserVisibleOutputsThroughReceiver() {
+        val scriptContext = ScriptContext()
+
+        val result = scriptContext.eval(
+            script =
+                """
+                sayToUser("hello")
+                println("debug-only")
+                sayToUser("world")
+                "ok"
+                """.trimIndent()
+        )
+
+        val success = assertIs<KotlinScriptResult.Success>(result)
+        assertEquals(expected = "ok", actual = success.returnValue)
+        assertContains(success.stdout, "debug-only")
+        assertEquals(expected = listOf("hello", "world"), actual = scriptContext.consumeOutputList())
     }
 
     @Test
@@ -227,6 +258,31 @@ class KotlinScriptToolTest {
             val success = assertIs<KotlinScriptResult.Success>(result)
             assertEquals(expected = "done", actual = success.returnValue)
             assertTrue(scriptContext.consumeAwaitForUserInputSignal())
+        }
+    }
+
+    @Test
+    fun execute_propagatesUserVisibleOutputsToProvidedContext() = runTest {
+        withContext(Dispatchers.Default.limitedParallelism(1)) {
+            val scriptContext = ScriptContext()
+            val tool = KotlinScriptTool(scriptContext = scriptContext)
+
+            val result = tool.execute(
+                args = KotlinScriptParams(
+                    script =
+                        """
+                    sayToUser("hello-user")
+                    println("debug-only")
+                    "done"
+                    """.trimIndent(),
+                    timeoutSeconds = 5,
+                )
+            )
+
+            val success = assertIs<KotlinScriptResult.Success>(result)
+            assertEquals(expected = "done", actual = success.returnValue)
+            assertContains(success.stdout, "debug-only")
+            assertEquals(expected = listOf("hello-user"), actual = scriptContext.consumeOutputList())
         }
     }
 
