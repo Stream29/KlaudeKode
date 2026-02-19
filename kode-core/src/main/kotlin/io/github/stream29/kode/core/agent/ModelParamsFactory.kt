@@ -34,6 +34,8 @@ import io.github.stream29.kode.config.api.OpenAiReasoningEffortConfig
 import io.github.stream29.kode.config.api.OpenAiReasoningSummaryConfig
 import io.github.stream29.kode.config.api.OpenAiServiceTierConfig
 import io.github.stream29.kode.config.api.OpenAiTruncationConfig
+import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER
+import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE
 import io.github.stream29.kode.config.api.ToolChoiceConfig
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -42,6 +44,23 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 internal object ModelParamsFactory {
+    fun enforceRequiredToolChoice(params: LLMParams?): LLMParams {
+        val required = LLMParams.ToolChoice.Required
+        val effective = params ?: return LLMParams(toolChoice = required)
+        if (effective.toolChoice == required) {
+            return effective
+        }
+
+        return when (effective) {
+            is OpenAIChatParams -> effective.copy(toolChoice = required)
+            is OpenAIResponsesParams -> effective.copy(toolChoice = required)
+            is AnthropicParams -> effective.copy(toolChoice = required)
+            is GoogleParams -> effective.copy(toolChoice = required)
+            is DeepSeekParams -> effective.copy(toolChoice = required)
+            else -> effective.copy(toolChoice = required)
+        }
+    }
+
     fun create(
         modelConfig: LlmModelConfig,
         authConfig: LlmAuthConfig,
@@ -55,7 +74,10 @@ internal object ModelParamsFactory {
         return when (paramsConfig) {
             is LlmModelParamsConfig.OpenAi -> {
                 toOpenAiParams(
-                    endpoint = paramsConfig.endpoint,
+                    endpoint = resolveOpenAiEndpoint(
+                        providerId = authConfig.providerId,
+                        configuredEndpoint = paramsConfig.endpoint,
+                    ),
                     chat = paramsConfig.chat,
                     responses = paramsConfig.responses,
                     model = model,
@@ -65,7 +87,10 @@ internal object ModelParamsFactory {
 
             is LlmModelParamsConfig.OpenAiCompatible -> {
                 toOpenAiParams(
-                    endpoint = paramsConfig.endpoint,
+                    endpoint = resolveOpenAiEndpoint(
+                        providerId = authConfig.providerId,
+                        configuredEndpoint = paramsConfig.endpoint,
+                    ),
                     chat = paramsConfig.chat,
                     responses = paramsConfig.responses,
                     model = model,
@@ -294,6 +319,19 @@ internal object ModelParamsFactory {
                 LLMParams.ToolChoice.Named(name)
             }
         }
+    }
+
+    private fun resolveOpenAiEndpoint(
+        providerId: String,
+        configuredEndpoint: OpenAiEndpoint,
+    ): OpenAiEndpoint {
+        val normalizedProviderId = providerId.trim().lowercase()
+        if (normalizedProviderId == PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER ||
+            normalizedProviderId == PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE
+        ) {
+            return OpenAiEndpoint.Responses
+        }
+        return configuredEndpoint
     }
 
     private fun mapOpenAiReasoning(config: OpenAiReasoningConfig?): ReasoningConfig? {

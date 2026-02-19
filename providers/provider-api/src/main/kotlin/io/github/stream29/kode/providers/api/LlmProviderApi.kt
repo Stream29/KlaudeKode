@@ -18,7 +18,7 @@ public sealed interface LlmAuth {
     ) : LlmAuth
 }
 
-public interface LlmProvider<Auth : LlmAuth> {
+public interface LlmProvider {
     public val id: String
     public val displayName: String
     public val llmProvider: LLMProvider
@@ -27,14 +27,19 @@ public interface LlmProvider<Auth : LlmAuth> {
 
     public fun supportsAuth(auth: LlmAuth): Boolean
 
-    public fun createClient(auth: Auth): LLMClient
+    public fun createClient(auth: LlmAuth): LLMClient
+}
 
-    public fun createClientAny(auth: LlmAuth): LLMClient {
-        if (!supportsAuth(auth)) {
-            throw IllegalArgumentException("Provider '$id' does not support auth: ${auth::class.simpleName}")
-        }
+public fun requireApiKeyAuth(providerId: String, auth: LlmAuth): LlmAuth.ApiKey {
+    val apiKeyAuth = auth as? LlmAuth.ApiKey
+    return requireNotNull(apiKeyAuth) {
+        "Provider '$providerId' requires ApiKey auth but got: ${auth::class.simpleName}"
+    }
+}
 
-        @Suppress("UNCHECKED_CAST")
-        return createClient(auth as Auth)
+public fun requireOAuthAccessTokenAuth(providerId: String, auth: LlmAuth): LlmAuth.OAuthAccessToken {
+    val oauthAuth = auth as? LlmAuth.OAuthAccessToken
+    return requireNotNull(oauthAuth) {
+        "Provider '$providerId' requires OAuthAccessToken auth but got: ${auth::class.simpleName}"
     }
 }

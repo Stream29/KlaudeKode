@@ -4,7 +4,7 @@ plugins {
 }
 
 dependencies {
-    api(projects.kodeConfigApi)
+    api(projects.config.api)
     
     implementation(libs.bundles.serialization)
     

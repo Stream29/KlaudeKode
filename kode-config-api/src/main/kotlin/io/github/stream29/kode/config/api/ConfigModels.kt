@@ -21,6 +21,12 @@ public const val PROVIDER_ID_XAI: String = "xai"
 public const val PROVIDER_ID_MOONSHOT: String = "moonshot"
 public const val PROVIDER_ID_MISTRAL: String = "mistral"
 
+public const val AUTH_MODE_API_KEY: String = "api_key"
+public const val AUTH_MODE_OAUTH_SUBSCRIPTION: String = "oauth_subscription"
+public const val AUTH_MODE_OAUTH_DEVICE: String = "oauth_device"
+public const val AUTH_MODE_CLOUD_CREDENTIAL_CHAIN: String = "cloud_credential_chain"
+public const val AUTH_MODE_WELL_KNOWN: String = "well_known"
+
 public val OPENAI_LIKE_PROVIDER_IDS: Set<String> = setOf(
     PROVIDER_ID_OPENAI_API_KEY,
     PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER,
@@ -268,6 +274,7 @@ public data class UiConfig(
     val messageAlignment: String = "left",
     val messageMaxWidthRatio: Float = 0.9f,
     val sendKeyMode: String = "ctrl_or_cmd_enter_send",
+    val debugShowRawMessageList: Boolean = false,
     val lastOpenedSessionId: String? = null,
 )
 

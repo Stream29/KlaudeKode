@@ -8,12 +8,17 @@ kotlinxSerialization = "1.9.0"
 kotlinxCoroutines = "1.10.2"
 # Keep compat until Koog public APIs stop depending on kotlinx.datetime.Instant/Clock ABI.
 kotlinxDatetime = "0.7.1-0.6.x-compat"
-koog = "0.6.1"
+koog = "0.6.2"
 ktor = "3.3.2"
+netty = "4.1.126.Final"
 ivy = "2.5.3"
 kaml = "0.104.0"
-compose = "1.10.0"
-androidx-lifecycle = "2.9.4"
+compose = "1.11.0-alpha02"
+androidx-lifecycle = "2.10.0"
+jetbrainsLifecycle = "2.10.0-alpha08"
+jetbrainsNavigation3 = "1.1.0-alpha02"
+composeMaterial3 = "1.11.0-alpha02"
+composeMaterialIconsExtended = "1.7.3"
 jsoup = "1.17.2"
 commonmark = "0.27.1"
 javafx = "21.0.8"
@@ -22,6 +27,7 @@ kotlinxCollectionsImmutable = "0.4.0"
 kotlinxSerializationCsv = "0.0.23"
 koin = "4.1.0"
 composeRemoteLayout = "0.2.0-alpha01"
+oidc = "0.16.5"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -38,11 +44,16 @@ serializationCsv = { module = "app.softwork:kotlinx-serialization-csv", version.
 androidxViewmodel = { module = "androidx.lifecycle:lifecycle-viewmodel", version.ref = "androidx-lifecycle" }
 androidxViewmodelCompose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
 androidxLifecycleRuntimeCompose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
+jetbrainsLifecycleViewmodelNavigation3 = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-navigation3", version.ref = "jetbrainsLifecycle" }
+jetbrainsNavigation3Ui = { module = "org.jetbrains.androidx.navigation3:navigation3-ui", version.ref = "jetbrainsNavigation3" }
+jetbrainsComposeMaterial3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "composeMaterial3" }
+jetbrainsComposeMaterialIconsExtended = { module = "org.jetbrains.compose.material:material-icons-extended", version.ref = "composeMaterialIconsExtended" }
 koinCore = { module = "io.insert-koin:koin-core", version.ref = "koin" }
 koinCompose = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
 
 # Koog framework
 koogAgents = { module = "ai.koog:koog-agents", version.ref = "koog" }
+koogAgentsTest = { module = "ai.koog:agents-test", version.ref = "koog" }
 koogAgentsFeaturesAcp = { module = "ai.koog:agents-features-acp", version.ref = "koog" }
 koogAgentsMcp = { module = "ai.koog:agents-mcp", version.ref = "koog" }
 koogAnthropicClient = { module = "ai.koog:prompt-executor-anthropic-client", version.ref = "koog" }
@@ -77,6 +88,7 @@ javafxWeb = { module = "org.openjfx:javafx-web", version.ref = "javafx" }
 javafxSwing = { module = "org.openjfx:javafx-swing", version.ref = "javafx" }
 markdownRendererM3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdownRenderer" }
 composeRemoteLayoutJvm = { module = "io.github.utsmannn:compose-remote-layout-jvm", version.ref = "composeRemoteLayout" }
+oidcCore = { module = "io.github.kalinjul.kotlin.multiplatform:oidc-core", version.ref = "oidc" }
 
 [bundles]
 koog = [

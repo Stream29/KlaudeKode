@@ -11,6 +11,14 @@ import io.github.stream29.kode.config.api.OpenAiEndpoint
 import io.github.stream29.kode.config.api.AppConfig
 import io.github.stream29.kode.config.api.ServiceConfig
 import io.github.stream29.kode.config.api.transportType
+import io.github.stream29.kode.config.api.AUTH_MODE_API_KEY
+import io.github.stream29.kode.config.api.AUTH_MODE_CLOUD_CREDENTIAL_CHAIN
+import io.github.stream29.kode.config.api.AUTH_MODE_OAUTH_DEVICE
+import io.github.stream29.kode.config.api.AUTH_MODE_OAUTH_SUBSCRIPTION
+import io.github.stream29.kode.config.api.AUTH_MODE_WELL_KNOWN
+import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_COMPATIBLE
+import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER
+import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE
 import ai.koog.agents.mcp.McpToolRegistryProvider
 import ai.koog.agents.mcp.defaultStdioTransport
 import ai.koog.agents.core.agent.AIAgent
@@ -20,17 +28,16 @@ import ai.koog.agents.core.tools.ToolParameterType
 import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.agents.features.acp.AcpAgent
 import ai.koog.prompt.executor.model.PromptExecutor
+import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLModel
-import io.github.stream29.kode.app.service.WebToolsProvider
 import io.github.stream29.kode.app.util.parseKeyValueLines
-import io.github.stream29.kode.app.model.MessageAlignmentPreference
-import io.github.stream29.kode.app.model.SendKeyModePreference
-import io.github.stream29.kode.app.model.isSystemRoleUi
-import io.github.stream29.kode.app.model.projectedTextForSessionSummary
+import io.github.stream29.kode.ui.core.preferences.MessageAlignmentPreference
+import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
+import io.github.stream29.kode.ui.core.message.isSystemRoleUi
+import io.github.stream29.kode.ui.core.message.projectedTextForSessionSummary
 import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemLocations
 import io.github.stream29.kode.core.agent.SessionAwareAgentFactory
-import io.github.stream29.kode.core.agent.SessionAwareAgentFactoryProvider
 import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.providers.api.ProviderAuthMode
 import io.github.stream29.kode.providers.api.ProviderOAuthAuthCodePkcePreset
@@ -48,6 +55,20 @@ import io.github.stream29.kode.session.core.storage.SessionFilter
 import io.github.stream29.kode.session.core.storage.SessionStatusFilter
 import io.github.stream29.kode.session.core.storage.SortBy
 import io.github.stream29.kode.session.core.storage.SortOrder
+import io.github.stream29.kode.session.core.tool.ToolNames
+import io.github.stream29.kode.tools.WebTools
+import io.github.stream29.kode.ui.bridge.auth.OAuthStatusUi
+import io.github.stream29.kode.ui.bridge.mcp.McpHealthResult
+import io.github.stream29.kode.ui.bridge.mcp.McpHealthStatus
+import io.github.stream29.kode.ui.bridge.mcp.McpTestResult
+import io.github.stream29.kode.ui.bridge.mcp.McpTestStatus
+import io.github.stream29.kode.ui.bridge.mcp.McpToolParameterSummary
+import io.github.stream29.kode.ui.bridge.mcp.McpToolSummary
+import io.github.stream29.kode.ui.bridge.provider.UiProviderAuthMode
+import io.github.stream29.kode.ui.bridge.provider.UiProviderModelPreset
+import io.github.stream29.kode.ui.bridge.provider.UiProviderOAuthAuthCodePkcePreset
+import io.github.stream29.kode.ui.bridge.provider.UiProviderOAuthDeviceFlowPreset
+import io.github.stream29.kode.ui.bridge.provider.UiProviderPreset
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.AgentState
@@ -90,16 +111,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import java.awt.Desktop
 import java.io.File
 import java.nio.channels.Channels
 import java.nio.channels.Pipe
+import java.util.UUID
 
 public class MainViewModel(
     private val configManager: ConfigManager,
     private val sessionManager: SessionManager,
-    private val agentFactoryProvider: SessionAwareAgentFactoryProvider,
-    private val webToolsProvider: WebToolsProvider,
     private val hookManager: HookManager,
     private val oauthCredentialManager: OAuthCredentialManager,
 ) : ViewModel(), MessageHandler, AgentState, AgentEventListener {
@@ -123,6 +145,9 @@ public class MainViewModel(
         ),
     )
     private val providerPresets: List<ProviderPreset> = BuiltinProviderPresetRegistry.listPresets()
+    private val providerPresetViews: List<UiProviderPreset> = providerPresets.map { preset ->
+        preset.toUiProviderPreset()
+    }
 
     private val _sessionUiState: MutableStateFlow<SessionUiState> = MutableStateFlow(SessionUiState())
     public val sessionUiState: StateFlow<SessionUiState> = _sessionUiState.asStateFlow()
@@ -155,6 +180,7 @@ public class MainViewModel(
                 messageAlignment = state.messageAlignment,
                 messageMaxWidthRatio = state.messageMaxWidthRatio,
                 sendKeyMode = state.sendKeyMode,
+                debugShowRawMessageList = state.debugShowRawMessageList,
                 agentPresets = state.agentPresets,
                 activePresetName = state.activePresetName,
                 models = state.models,
@@ -320,18 +346,253 @@ public class MainViewModel(
         get() = _appUiState.value.currentPage
         set(value) {
             updateAppUiState { current ->
-                current.copy(currentPage = value)
+                current.withPageNavigation(nextPage = value)
             }
         }
 
-    // Dialog visibility
-    public var showSessionManager: Boolean
-        get() = _appUiState.value.showSessionManager
+    public var modelsPageSelectedTab: Int
+        get() = _appUiState.value.modelsPageSelectedTab
         set(value) {
             updateAppUiState { current ->
-                current.copy(showSessionManager = value)
+                current.copy(modelsPageSelectedTab = value.coerceIn(minimumValue = 0, maximumValue = 2))
             }
         }
+
+    public var openAddModelDialogRequest: OpenAddModelDialogRequest?
+        get() = _appUiState.value.overlayDialogRequests.openAddModelDialogRequest
+        set(value) {
+            updateAppUiState { current ->
+                current.copy(
+                    overlayDialogRequests = current.overlayDialogRequests.copy(
+                        openAddModelDialogRequest = value,
+                    )
+                )
+            }
+        }
+
+    public fun navigateToPage(page: io.github.stream29.kode.app.view.AppPage) {
+        currentPage = page
+    }
+
+    public fun requestOpenAddModelDialog(preselectedAuthId: String?) {
+        navigateToModelsAndOpenAddModelDialog(preselectedAuthId = preselectedAuthId)
+    }
+
+    public fun navigateToModelsAndOpenAddModelDialog(preselectedAuthId: String?) {
+        updateAppUiState { current ->
+            current.copy(
+                currentPage = io.github.stream29.kode.app.view.AppPage.Models,
+                modelsPageSelectedTab = 0,
+                overlayDialogRequests = current.overlayDialogRequests.copy(
+                    openAddModelDialogRequest = OpenAddModelDialogRequest(
+                        preselectedAuthId = preselectedAuthId?.trim()?.takeIf { it.isNotBlank() },
+                        requestNonce = System.nanoTime(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    public fun requestOpenEditModelDialog(modelId: String) {
+        val normalizedModelId = modelId.trim()
+        if (normalizedModelId.isBlank()) {
+            return
+        }
+        updateAppUiState { current ->
+            current.copy(
+                currentPage = io.github.stream29.kode.app.view.AppPage.Models,
+                modelsPageSelectedTab = 0,
+                overlayDialogRequests = current.overlayDialogRequests.copy(
+                    openEditModelDialogRequest = OpenEditModelDialogRequest(
+                        modelId = normalizedModelId,
+                        requestNonce = System.nanoTime(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    public fun requestOpenAddAuthDialog() {
+        updateAppUiState { current ->
+            current.copy(
+                currentPage = io.github.stream29.kode.app.view.AppPage.Models,
+                modelsPageSelectedTab = 1,
+                overlayDialogRequests = current.overlayDialogRequests.copy(
+                    openAddAuthDialogRequest = OpenAddAuthDialogRequest(
+                        requestNonce = System.nanoTime(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    public fun requestOpenEditAuthDialog(authId: String) {
+        val normalizedAuthId = authId.trim()
+        if (normalizedAuthId.isBlank()) {
+            return
+        }
+        updateAppUiState { current ->
+            current.copy(
+                currentPage = io.github.stream29.kode.app.view.AppPage.Models,
+                modelsPageSelectedTab = 1,
+                overlayDialogRequests = current.overlayDialogRequests.copy(
+                    openEditAuthDialogRequest = OpenEditAuthDialogRequest(
+                        authId = normalizedAuthId,
+                        requestNonce = System.nanoTime(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    public fun requestOpenDeleteAuthDialog(authId: String) {
+        val normalizedAuthId = authId.trim()
+        if (normalizedAuthId.isBlank()) {
+            return
+        }
+        updateAppUiState { current ->
+            current.copy(
+                currentPage = io.github.stream29.kode.app.view.AppPage.Models,
+                modelsPageSelectedTab = 1,
+                overlayDialogRequests = current.overlayDialogRequests.copy(
+                    openDeleteAuthDialogRequest = OpenDeleteAuthDialogRequest(
+                        authId = normalizedAuthId,
+                        requestNonce = System.nanoTime(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    public fun consumeOpenAddModelDialogRequest(requestNonce: Long) {
+        updateAppUiState { current ->
+            val existing = current.overlayDialogRequests.openAddModelDialogRequest
+            if (existing == null || existing.requestNonce != requestNonce) {
+                current
+            } else {
+                current.copy(
+                    overlayDialogRequests = current.overlayDialogRequests.copy(
+                        openAddModelDialogRequest = null,
+                    )
+                )
+            }
+        }
+    }
+
+    public fun consumeOpenEditModelDialogRequest(requestNonce: Long) {
+        updateAppUiState { current ->
+            val existing = current.overlayDialogRequests.openEditModelDialogRequest
+            if (existing == null || existing.requestNonce != requestNonce) {
+                current
+            } else {
+                current.copy(
+                    overlayDialogRequests = current.overlayDialogRequests.copy(
+                        openEditModelDialogRequest = null,
+                    )
+                )
+            }
+        }
+    }
+
+    public fun consumeOpenAddAuthDialogRequest(requestNonce: Long) {
+        updateAppUiState { current ->
+            val existing = current.overlayDialogRequests.openAddAuthDialogRequest
+            if (existing == null || existing.requestNonce != requestNonce) {
+                current
+            } else {
+                current.copy(
+                    overlayDialogRequests = current.overlayDialogRequests.copy(
+                        openAddAuthDialogRequest = null,
+                    )
+                )
+            }
+        }
+    }
+
+    public fun consumeOpenEditAuthDialogRequest(requestNonce: Long) {
+        updateAppUiState { current ->
+            val existing = current.overlayDialogRequests.openEditAuthDialogRequest
+            if (existing == null || existing.requestNonce != requestNonce) {
+                current
+            } else {
+                current.copy(
+                    overlayDialogRequests = current.overlayDialogRequests.copy(
+                        openEditAuthDialogRequest = null,
+                    )
+                )
+            }
+        }
+    }
+
+    public fun consumeOpenDeleteAuthDialogRequest(requestNonce: Long) {
+        updateAppUiState { current ->
+            val existing = current.overlayDialogRequests.openDeleteAuthDialogRequest
+            if (existing == null || existing.requestNonce != requestNonce) {
+                current
+            } else {
+                current.copy(
+                    overlayDialogRequests = current.overlayDialogRequests.copy(
+                        openDeleteAuthDialogRequest = null,
+                    )
+                )
+            }
+        }
+    }
+
+    // Dialog visibility
+    public fun requestOpenSessionManagerDialog() {
+        updateAppUiState { current ->
+            current.copy(
+                overlayDialogRequests = current.overlayDialogRequests.copy(
+                    openSessionManagerDialogRequest = OpenSessionManagerDialogRequest(
+                        requestNonce = System.nanoTime(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    public fun requestCloseSessionManagerDialog() {
+        updateAppUiState { current ->
+            current.copy(
+                overlayDialogRequests = current.overlayDialogRequests.copy(
+                    closeSessionManagerDialogRequest = CloseSessionManagerDialogRequest(
+                        requestNonce = System.nanoTime(),
+                    ),
+                ),
+            )
+        }
+    }
+
+    public fun consumeOpenSessionManagerDialogRequest(requestNonce: Long) {
+        updateAppUiState { current ->
+            val existing = current.overlayDialogRequests.openSessionManagerDialogRequest
+            if (existing == null || existing.requestNonce != requestNonce) {
+                current
+            } else {
+                current.copy(
+                    overlayDialogRequests = current.overlayDialogRequests.copy(
+                        openSessionManagerDialogRequest = null,
+                    )
+                )
+            }
+        }
+    }
+
+    public fun consumeCloseSessionManagerDialogRequest(requestNonce: Long) {
+        updateAppUiState { current ->
+            val existing = current.overlayDialogRequests.closeSessionManagerDialogRequest
+            if (existing == null || existing.requestNonce != requestNonce) {
+                current
+            } else {
+                current.copy(
+                    overlayDialogRequests = current.overlayDialogRequests.copy(
+                        closeSessionManagerDialogRequest = null,
+                    )
+                )
+            }
+        }
+    }
 
     public var showConfigEditor: Boolean
         get() = _appUiState.value.showConfigEditor
@@ -358,9 +619,6 @@ public class MainViewModel(
                 applySessionRunState(
                     base = current.copy(
                         currentSessionId = value,
-                        showContinueRecoveryDialog = false,
-                        continueRecoveryToolName = "",
-                        continueRecoveryToolCallId = "",
                     ),
                     sessionId = value,
                 )
@@ -552,6 +810,10 @@ public class MainViewModel(
         get() = _appUiState.value.sendKeyMode
         set(value) = updateAppUiState { it.copy(sendKeyMode = normalizeSendKeyMode(value)) }
 
+    public var debugShowRawMessageList: Boolean
+        get() = _appUiState.value.debugShowRawMessageList
+        set(value) = updateAppUiState { it.copy(debugShowRawMessageList = value) }
+
     public var mcpToolTimeoutMs: Int
         get() = _appUiState.value.mcpToolTimeoutMs
         set(value) = updateAppUiState { it.copy(mcpToolTimeoutMs = value) }
@@ -698,6 +960,7 @@ public class MainViewModel(
         set(value) = updateAppUiState { it.copy(temperature = value) }
 
     private var sessionRunStates: Map<String, SessionRunState> = emptyMap()
+    private var safeStopCompletedSessions: Set<String> = emptySet()
     private var sessionTitleGeneratingIds: Set<String> = emptySet()
     private val inputDeferreds: MutableMap<String, CompletableDeferred<String>> = mutableMapOf()
     private val sessionJobs: MutableMap<String, Job> = mutableMapOf()
@@ -708,12 +971,6 @@ public class MainViewModel(
     private val defaultAppDataDir: String = "~/.kode/"
     private val autoSessionTitlePlaceholder: String = "New Chat"
     private val legacySessionTitlePrefix: String = "Conversation "
-
-    private enum class ContinueConflictResolution {
-        Auto,
-        Rollback,
-        ContinueWithoutRollback,
-    }
 
     // AgentState implementation
     override val isRunning: Boolean
@@ -752,7 +1009,7 @@ public class MainViewModel(
             return
         }
         val toast = UiToast(
-            id = java.util.UUID.randomUUID().toString(),
+            id = UUID.randomUUID().toString(),
             message = normalized,
         )
         updateAppUiState { current ->
@@ -797,14 +1054,16 @@ public class MainViewModel(
     }
 
     private fun buildAgentFactory(mcpRegistry: ToolRegistry?) {
-        agentFactory = agentFactoryProvider.create(
+        agentFactory = SessionAwareAgentFactory(
             auths = auths,
             models = models,
             messageHandler = this@MainViewModel,
             disabledTools = disabledTools,
             mcpToolRegistry = mcpRegistry,
             eventListener = this@MainViewModel,
+            hookManager = hookManager,
             logger = { logMessage: String -> log(logMessage) },
+            sessionManager = sessionManager,
         )
     }
     
@@ -848,6 +1107,7 @@ public class MainViewModel(
         messageAlignment = normalizeMessageAlignment(config.ui.messageAlignment)
         messageMaxWidthRatio = normalizeMessageWidthRatio(config.ui.messageMaxWidthRatio)
         sendKeyMode = normalizeSendKeyMode(config.ui.sendKeyMode)
+        debugShowRawMessageList = config.ui.debugShowRawMessageList
         applyAgentPresetFromConfig()
         val webSearch = config.services.webSearch
         webSearchProvider = webSearch?.provider ?: "none"
@@ -944,17 +1204,26 @@ public class MainViewModel(
                     it.copy(
                         isRunning = true,
                         currentTask = task,
-                        isWaitingForInput = false
+                        isWaitingForInput = false,
+                        stopMode = StopMode.None,
                     )
                 }
 
                 factory.runWithSession(sessionId, task, modelId)
+                if (consumeSafeStopCompleted(sessionId)) {
+                    addSystemMessage("Safe stop completed", sessionId)
+                    return@launch
+                }
                 ensureSessionAutoTitle(
                     sessionId = sessionId,
                     modelId = modelId,
                     factory = factory,
                     force = false,
                 )
+            } catch (_: CancellationException) {
+                runningSessionId?.let { sessionId ->
+                    addSystemMessage("Run cancelled", sessionId)
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
                 val message = e.message ?: "Unknown error"
@@ -969,7 +1238,12 @@ public class MainViewModel(
             } finally {
                 runningSessionId?.let { sessionId ->
                     updateSessionRunState(sessionId) { state ->
-                        state.copy(isRunning = false, currentTask = "", isWaitingForInput = false)
+                        state.copy(
+                            isRunning = false,
+                            currentTask = "",
+                            isWaitingForInput = false,
+                            stopMode = StopMode.None,
+                        )
                     }
                     sessionJobs.remove(sessionId)
                 }
@@ -987,30 +1261,10 @@ public class MainViewModel(
     }
     
     public fun continueCurrentSession() {
-        continueCurrentSession(resolution = ContinueConflictResolution.Auto)
+        continueCurrentSessionInternal()
     }
 
-    public fun continueCurrentSessionAfterRollback() {
-        dismissContinueRecoveryDialog()
-        continueCurrentSession(resolution = ContinueConflictResolution.Rollback)
-    }
-
-    public fun continueCurrentSessionWithoutRollback() {
-        dismissContinueRecoveryDialog()
-        continueCurrentSession(resolution = ContinueConflictResolution.ContinueWithoutRollback)
-    }
-
-    public fun dismissContinueRecoveryDialog() {
-        updateSessionUiState { current ->
-            current.copy(
-                showContinueRecoveryDialog = false,
-                continueRecoveryToolName = "",
-                continueRecoveryToolCallId = "",
-            )
-        }
-    }
-
-    private fun continueCurrentSession(resolution: ContinueConflictResolution) {
+    private fun continueCurrentSessionInternal() {
         val sessionId = currentSessionId
         if (sessionId == null) {
             addSystemMessage("No active session")
@@ -1031,33 +1285,20 @@ public class MainViewModel(
                     return@launch
                 }
 
-                when (resolution) {
-                    ContinueConflictResolution.Auto -> {
-                        val pendingCall = sessionManager.getTrailingPendingToolCall(sessionId)
-                        if (pendingCall != null) {
-                            if (isAwaitUserInputToolNameForContinue(pendingCall.toolName)) {
-                                val normalized = sessionManager.normalizeTrailingAwaitUserInputToolCall(sessionId)
-                                if (normalized) {
-                                    addSystemMessage(
-                                        "Detected pending awaitUserInput call and normalized it to sayToUser before continue.",
-                                        sessionId,
-                                    )
-                                }
-                            } else {
-                                showContinueRecoveryDialog(
-                                    toolName = pendingCall.toolName,
-                                    toolCallId = pendingCall.toolCallId,
-                                )
-                                return@launch
-                            }
+                val pendingCall = sessionManager.getTrailingPendingToolCall(sessionId = sessionId, agentId = null)
+                if (pendingCall != null) {
+                    if (!isAwaitUserInputToolNameForContinue(pendingCall.toolName)) {
+                        val rolledBack = sessionManager.rollbackTrailingPendingToolCall(
+                            sessionId = sessionId,
+                            agentId = null,
+                        )
+                        if (rolledBack) {
+                            addSystemMessage(
+                                "Recovered unfinished tool call '${pendingCall.toolName}' by rollback before continue.",
+                                sessionId,
+                            )
                         }
                     }
-
-                    ContinueConflictResolution.Rollback -> {
-                        sessionManager.rollbackTrailingPendingToolCall(sessionId)
-                    }
-
-                    ContinueConflictResolution.ContinueWithoutRollback -> Unit
                 }
 
                 if (!refreshAgentFactoryForConversation()) {
@@ -1078,11 +1319,17 @@ public class MainViewModel(
                     it.copy(
                         isRunning = true,
                         currentTask = "Continue",
-                        isWaitingForInput = false
+                        isWaitingForInput = false,
+                        stopMode = StopMode.None,
                     )
                 }
 
                 factory.continueSession(sessionId, modelId)
+                if (consumeSafeStopCompleted(sessionId)) {
+                    addSystemMessage("Safe stop completed", sessionId)
+                }
+            } catch (_: CancellationException) {
+                addSystemMessage("Continue cancelled", sessionId)
             } catch (e: Exception) {
                 e.printStackTrace()
                 addSystemMessage("Error: ${e.message}", sessionId)
@@ -1090,7 +1337,12 @@ public class MainViewModel(
             } finally {
                 if (runStarted) {
                     updateSessionRunState(sessionId) { state ->
-                        state.copy(isRunning = false, currentTask = "", isWaitingForInput = false)
+                        state.copy(
+                            isRunning = false,
+                            currentTask = "",
+                            isWaitingForInput = false,
+                            stopMode = StopMode.None,
+                        )
                     }
                     sessionJobs.remove(sessionId)
                 }
@@ -1100,17 +1352,54 @@ public class MainViewModel(
 
     public fun stopCurrentSession() {
         val sessionId = currentSessionId ?: return
-        sessionJobs[sessionId]?.cancel("Stopped by user")
+        val state = sessionRunStates[sessionId] ?: return
+        if (state.isWaitingForInput) {
+            addSystemMessage("Session is waiting for input; stop is not needed", sessionId)
+            return
+        }
+        if (!state.isRunning) {
+            return
+        }
+
+        if (state.stopMode != StopMode.SafeRequested) {
+            updateSessionRunState(sessionId) { current ->
+                current.copy(
+                    stopMode = StopMode.SafeRequested,
+                    currentTask = current.currentTask.ifBlank { "Safe stop requested" },
+                )
+            }
+            addSystemMessage(
+                "Safe stop requested. Click Stop again to force stop and rollback unfinished tool call.",
+                sessionId,
+            )
+            return
+        }
+
+        forceStopSession(sessionId)
+    }
+
+    private fun forceStopSession(sessionId: String) {
+        sessionJobs[sessionId]?.cancel("Force-stopped by user")
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 sessionManager.stopRun(sessionId)
+                val rolledBack = sessionManager.rollbackTrailingPendingToolCall(sessionId = sessionId, agentId = null)
+                if (rolledBack) {
+                    addSystemMessage("Force stop rolled back unfinished trailing tool call", sessionId)
+                }
             } catch (e: Exception) {
                 addSystemMessage("Stop session failed: ${e.message}", sessionId)
             } finally {
                 sessionJobs.remove(sessionId)
-                updateSessionRunState(sessionId) { state ->
-                    state.copy(isRunning = false, isWaitingForInput = false, currentTask = "")
+                updateSessionRunState(sessionId) { current ->
+                    current.copy(
+                        isRunning = false,
+                        isWaitingForInput = false,
+                        currentTask = "",
+                        stopMode = StopMode.None,
+                    )
                 }
+                safeStopCompletedSessions = safeStopCompletedSessions - sessionId
             }
         }
     }
@@ -1187,19 +1476,70 @@ public class MainViewModel(
         }
     }
 
-    private fun showContinueRecoveryDialog(toolName: String, toolCallId: String) {
-        updateSessionUiState { current ->
-            current.copy(
-                showContinueRecoveryDialog = true,
-                continueRecoveryToolName = toolName,
-                continueRecoveryToolCallId = toolCallId,
-            )
-        }
+    private fun isAwaitUserInputToolNameForContinue(toolName: String): Boolean {
+        return toolName == ToolNames.WAIT_FOR_USER_INPUT
     }
 
-    private fun isAwaitUserInputToolNameForContinue(toolName: String): Boolean {
-        val normalized = toolName.trim().replace("_", "").lowercase()
-        return normalized == "awaituserinput" || normalized == "waitforuserinput"
+    private suspend fun prepareConversationHistoryForContinue(sessionId: String, input: String) {
+        val pendingCall = sessionManager.getTrailingPendingToolCall(sessionId = sessionId, agentId = null)
+        if (pendingCall != null) {
+            if (isAwaitUserInputToolNameForContinue(pendingCall.toolName)) {
+                sessionManager.addResumeMessage(
+                    sessionId = sessionId,
+                    toolName = pendingCall.toolName,
+                    toolCallId = pendingCall.toolCallId,
+                    result = JsonPrimitive(input),
+                    isError = false,
+                    errorMessage = null,
+                    metadata = null,
+                    agentId = null,
+                )
+                return
+            }
+
+            val rolledBack = sessionManager.rollbackTrailingPendingToolCall(sessionId = sessionId, agentId = null)
+            if (rolledBack) {
+                addSystemMessage(
+                    "Recovered unfinished tool call '${pendingCall.toolName}' by rollback before continue.",
+                    sessionId,
+                )
+            }
+
+            if (input.isBlank()) {
+                return
+            }
+
+            val toolCallId = "${ToolNames.USER_INTERRUPT}-${UUID.randomUUID()}"
+            val payload = buildJsonObject {
+                put("message", JsonPrimitive(input))
+            }
+            sessionManager.addToolExchangeMessage(
+                sessionId = sessionId,
+                toolName = ToolNames.USER_INTERRUPT,
+                toolCallId = toolCallId,
+                arguments = payload,
+                result = JsonPrimitive(input),
+                isError = false,
+                errorMessage = null,
+                metadata = null,
+                agentId = null,
+            )
+            return
+        }
+
+        if (input.isBlank()) {
+            return
+        }
+
+        sessionManager.addUserMessage(sessionId = sessionId, content = input, agentId = null)
+    }
+
+    private fun consumeSafeStopCompleted(sessionId: String): Boolean {
+        if (sessionId !in safeStopCompletedSessions) {
+            return false
+        }
+        safeStopCompletedSessions = safeStopCompletedSessions - sessionId
+        return true
     }
 
     private suspend fun ensureSessionAutoTitle(
@@ -1457,7 +1797,7 @@ public class MainViewModel(
 
     private fun switchToSessionInternal(sessionId: String, announce: Boolean) {
         currentSessionId = sessionId
-        showSessionManager = false
+        requestCloseSessionManagerDialog()
         bindSessionFlows(sessionId)
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1513,7 +1853,7 @@ public class MainViewModel(
                 currentSessionWorkDir = newSession.configuration.workDir.orEmpty()
                 loadSessionList()
                 addSystemMessage("Session forked: ${newSession.id.take(8)}...")
-                showSessionManager = false
+                requestCloseSessionManagerDialog()
             } catch (e: Exception) {
                 addSystemMessage("Failed to fork session: ${e.message}")
             }
@@ -1781,6 +2121,7 @@ public class MainViewModel(
 
     private fun clearSessionRunState(sessionId: String) {
         sessionRunStates = sessionRunStates - sessionId
+        safeStopCompletedSessions = safeStopCompletedSessions - sessionId
         updateSessionUiState { currentUi ->
             applySessionRunState(
                 base = currentUi,
@@ -1909,7 +2250,7 @@ public class MainViewModel(
           codex_cli_simplified_flow: "true"
           originator: opencode
         token_additional_params: {}
-      base_url: https://api.openai.com/v1
+      base_url: https://chatgpt.com
       custom_headers: {}
 
 models:
@@ -1959,6 +2300,7 @@ ui:
   message_alignment: left
   message_max_width_ratio: 0.9
   send_key_mode: ctrl_or_cmd_enter_send
+  debug_show_raw_message_list: false
 
 logging:
   level: info
@@ -2025,7 +2367,7 @@ logging:
                     return@launch
                 }
                 
-                val testFactory = agentFactoryProvider.create(
+                val testFactory = SessionAwareAgentFactory(
                     auths = auths,
                     models = models,
                     messageHandler = object : MessageHandler {
@@ -2036,7 +2378,9 @@ logging:
                     disabledTools = emptySet(),
                     mcpToolRegistry = null,
                     eventListener = null,
+                    hookManager = hookManager,
                     logger = { },
+                    sessionManager = sessionManager,
                 )
                 models.forEach { model ->
                     testFactory.createLLModel(model.id)
@@ -2091,11 +2435,72 @@ logging:
         val input = taskInput
         taskInput = ""
 
-        val deferred = inputDeferreds.remove(sessionId) ?: return
+        val deferred = inputDeferreds.remove(sessionId)
+        if (deferred == null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val pendingCall = sessionManager.getTrailingPendingToolCall(sessionId = sessionId, agentId = null)
+                if (pendingCall == null || !isAwaitUserInputToolNameForContinue(pendingCall.toolName)) {
+                    addSystemMessage("No pending ${ToolNames.WAIT_FOR_USER_INPUT} tool call to submit", sessionId)
+                    return@launch
+                }
+                sessionManager.addResumeMessage(
+                    sessionId = sessionId,
+                    toolName = pendingCall.toolName,
+                    toolCallId = pendingCall.toolCallId,
+                    result = JsonPrimitive(input),
+                    isError = false,
+                    errorMessage = null,
+                    metadata = null,
+                    agentId = null,
+                )
+                updateSessionRunState(sessionId) { state ->
+                    state.copy(isWaitingForInput = false)
+                }
+                continueCurrentSession()
+            }
+            return
+        }
+
         updateSessionRunState(sessionId) { state ->
             state.copy(isWaitingForInput = false)
         }
         deferred.complete(input)
+    }
+
+    public fun continueFromInput(input: String) {
+        val sessionId = currentSessionId
+        if (sessionId == null) {
+            if (input.isBlank()) {
+                addSystemMessage("No active session")
+                return
+            }
+            taskInput = input
+            runTask()
+            return
+        }
+
+        if (sessionRunStates[sessionId]?.isRunning == true) {
+            addSystemMessage("Session is already running", sessionId)
+            return
+        }
+
+        if (isWaitingForInput) {
+            taskInput = input
+            submitInput()
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                prepareConversationHistoryForContinue(
+                    sessionId = sessionId,
+                    input = input,
+                )
+                continueCurrentSession()
+            } catch (e: Exception) {
+                addSystemMessage("Failed to continue: ${e.message}", sessionId)
+            }
+        }
     }
     
     private fun addSystemMessage(content: String, sessionId: String? = currentSessionId) {
@@ -2122,6 +2527,17 @@ logging:
         }
         addSystemMessage("Waiting for user input...", sessionId)
         return deferred.await()
+    }
+
+    override fun isSafeStopRequested(sessionId: String): Boolean {
+        return sessionRunStates[sessionId]?.stopMode == StopMode.SafeRequested
+    }
+
+    override fun onSafeStopReached(sessionId: String) {
+        updateSessionRunState(sessionId) { state ->
+            state.copy(stopMode = StopMode.None)
+        }
+        safeStopCompletedSessions = safeStopCompletedSessions + sessionId
     }
 
     override fun addMessageToUser(message: String) {
@@ -2274,6 +2690,7 @@ logging:
                     messageAlignment = messageAlignment,
                     messageMaxWidthRatio = messageMaxWidthRatio,
                     sendKeyMode = sendKeyMode,
+                    debugShowRawMessageList = debugShowRawMessageList,
                     lastOpenedSessionId = lastOpenedSessionId,
                 ),
                 tools = current.tools.copy(
@@ -2675,7 +3092,7 @@ logging:
         webLoading = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val tool = webToolsProvider.create(
+                val tool = WebTools(
                     messageHandler = this@MainViewModel,
                     logger = { log(it) },
                 )
@@ -2910,6 +3327,7 @@ logging:
             messageAlignment = messageAlignment,
             messageMaxWidthRatio = messageMaxWidthRatio,
             sendKeyMode = sendKeyMode,
+            debugShowRawMessageList = debugShowRawMessageList,
             disabledTools = disabledTools,
             webSearchProvider = webSearchProvider,
             webSearchApiKey = webSearchApiKey,
@@ -3033,47 +3451,71 @@ logging:
         return generateUniqueId(base, models.map { it.id }.toSet())
     }
 
-    public fun getProviderPresets(): List<ProviderPreset> {
-        return providerPresets
+    public fun getProviderPresets(): List<UiProviderPreset> {
+        return providerPresetViews
     }
 
-    public enum class McpTestStatus {
-        Success,
-        Error,
+    private fun ProviderPreset.toUiProviderPreset(): UiProviderPreset {
+        return UiProviderPreset(
+            id = id,
+            displayName = displayName,
+            defaultBaseUrl = defaultBaseUrl,
+            envKeys = envKeys,
+            authModes = authModes.map { mode -> mode.toUiProviderAuthMode() }.toSet(),
+            models = models.map { model ->
+                UiProviderModelPreset(
+                    id = model.id,
+                    supportsOpenAiChatEndpoint = model.capabilities.supportsOpenAiChatEndpoint(),
+                    supportsOpenAiResponsesEndpoint = model.capabilities.supportsOpenAiResponsesEndpoint(),
+                )
+            },
+            oauthAuthCodePkceByMode = oauthAuthCodePkceByMode.mapKeys { (mode, _) ->
+                mode.toUiProviderAuthMode()
+            }.mapValues { (_, preset) ->
+                preset.toUiProviderOAuthAuthCodePkcePreset()
+            },
+            oauthDeviceFlowByMode = oauthDeviceFlowByMode.mapKeys { (mode, _) ->
+                mode.toUiProviderAuthMode()
+            }.mapValues { (_, preset) ->
+                preset.toUiProviderOAuthDeviceFlowPreset()
+            },
+        )
     }
 
-    public enum class McpHealthStatus(
-        public val label: String,
-    ) {
-        Unknown(label = "Unknown"),
-        Checking(label = "Checking"),
-        Healthy(label = "Healthy"),
-        Unhealthy(label = "Unhealthy"),
+    private fun ProviderAuthMode.toUiProviderAuthMode(): UiProviderAuthMode {
+        return when (this) {
+            ProviderAuthMode.ApiKey -> UiProviderAuthMode.ApiKey
+            ProviderAuthMode.OAuthSubscription -> UiProviderAuthMode.OAuthSubscription
+            ProviderAuthMode.OAuthDevice -> UiProviderAuthMode.OAuthDevice
+            ProviderAuthMode.CloudCredentialChain -> UiProviderAuthMode.CloudCredentialChain
+            ProviderAuthMode.WellKnown -> UiProviderAuthMode.WellKnown
+        }
     }
 
-    public data class McpToolSummary(
-        val name: String,
-        val description: String,
-        val requiredParameters: List<McpToolParameterSummary>,
-        val optionalParameters: List<McpToolParameterSummary>,
-    )
+    private fun ProviderOAuthAuthCodePkcePreset.toUiProviderOAuthAuthCodePkcePreset(): UiProviderOAuthAuthCodePkcePreset {
+        return UiProviderOAuthAuthCodePkcePreset(
+            authorizationEndpoint = authorizationEndpoint,
+            tokenEndpoint = tokenEndpoint,
+            clientId = clientId,
+            scopes = scopes,
+            callbackUri = callbackUri,
+            authorizationAdditionalParams = authorizationAdditionalParams,
+            tokenAdditionalParams = tokenAdditionalParams,
+        )
+    }
 
-    public data class McpToolParameterSummary(
-        val name: String,
-        val type: String,
-        val description: String,
-    )
-
-    public data class McpTestResult(
-        val status: McpTestStatus,
-        val message: String,
-        val tools: List<McpToolSummary>,
-    )
-
-    public data class McpHealthResult(
-        val status: McpHealthStatus,
-        val message: String,
-    )
+    private fun ProviderOAuthDeviceFlowPreset.toUiProviderOAuthDeviceFlowPreset(): UiProviderOAuthDeviceFlowPreset {
+        return UiProviderOAuthDeviceFlowPreset(
+            strategy = strategy,
+            tokenEndpoint = tokenEndpoint,
+            clientId = clientId,
+            scopes = scopes,
+            deviceAuthorizationEndpoint = deviceAuthorizationEndpoint,
+            deviceTokenEndpoint = deviceTokenEndpoint,
+            verificationUri = verificationUri,
+            redirectUri = redirectUri,
+        )
+    }
 
     private fun McpTestStatus.toHealthResult(message: String): McpHealthResult {
         val healthStatus = when (this) {
@@ -3195,7 +3637,7 @@ logging:
                     return@launch
                 }
                 val model = factory.createLLModel(modelId)
-                val sessionId = currentSessionId ?: java.util.UUID.randomUUID().toString()
+                val sessionId = currentSessionId ?: UUID.randomUUID().toString()
                 val toolRegistry = factory.buildToolRegistry(
                     workingDir = resolveSessionWorkingDir(currentSessionWorkDir),
                     sessionId = sessionId
@@ -3303,7 +3745,7 @@ logging:
 
         override suspend fun createSession(sessionParameters: SessionCreationParameters): AgentSession {
             return KodeAcpAgentSession(
-                sessionId = SessionId(java.util.UUID.randomUUID().toString()),
+                sessionId = SessionId(UUID.randomUUID().toString()),
                 promptExecutor = promptExecutor,
                 toolRegistry = toolRegistry,
                 model = model,
@@ -3654,11 +4096,7 @@ logging:
 
     private fun normalizeAuthMode(mode: String): String {
         val normalized = mode.trim().lowercase()
-        return if (normalized.isBlank()) {
-            AUTH_MODE_API_KEY
-        } else {
-            normalized
-        }
+        return normalized.ifBlank { AUTH_MODE_API_KEY }
     }
 
     private fun providerAuthModeToConfigValue(mode: ProviderAuthMode): String {
@@ -3720,8 +4158,8 @@ logging:
         val presetModel = preset.models.firstOrNull { model -> model.id == modelConfig.model }
             ?: return OpenAiEndpointSupport.unspecified()
 
-        val supportsChat = presetModel.capabilities.contains(ai.koog.prompt.llm.LLMCapability.OpenAIEndpoint.Completions)
-        val supportsResponses = presetModel.capabilities.contains(ai.koog.prompt.llm.LLMCapability.OpenAIEndpoint.Responses)
+        val supportsChat = presetModel.capabilities.supportsOpenAiChatEndpoint()
+        val supportsResponses = presetModel.capabilities.supportsOpenAiResponsesEndpoint()
         val hasEndpointCapability = supportsChat || supportsResponses
         if (!hasEndpointCapability) {
             return OpenAiEndpointSupport.unspecified()
@@ -3732,6 +4170,14 @@ logging:
             supportsResponses = supportsResponses,
             constrained = true,
         )
+    }
+
+    private fun Iterable<LLMCapability>.supportsOpenAiChatEndpoint(): Boolean {
+        return any { capability -> capability.id.trim().lowercase() in OPENAI_CHAT_CAPABILITY_ALIASES }
+    }
+
+    private fun Iterable<LLMCapability>.supportsOpenAiResponsesEndpoint(): Boolean {
+        return any { capability -> capability.id.trim().lowercase() in OPENAI_RESPONSES_CAPABILITY_ALIASES }
     }
 
     private fun resolveOpenAiEndpointSupportFromConfiguredCapabilities(capabilities: List<String>?): OpenAiEndpointSupport? {
@@ -3799,7 +4245,7 @@ logging:
             if (existing != null && existing.id != auth.id) {
                 throw IllegalArgumentException(
                     "Auth '${auth.id}' conflicts with '${existing.id}': " +
-                            "${providerId} and ${existing.providerId} share the same runtime client scope (${provider.llmProvider.id}). " +
+                            "$providerId and ${existing.providerId} share the same runtime client scope (${provider.llmProvider.id}). " +
                             "Use only one auth per provider scope."
                 )
             }
@@ -3811,7 +4257,8 @@ logging:
         auths.forEach { auth ->
             val oauth = auth.auth.oauthConfigOrNull()
                 ?: return@forEach
-            oauthCredentialManager.ensureValidAccessToken(authId = auth.id, oauth = oauth)
+            val normalizedOauth = normalizeOAuthConfigForRuntime(auth = auth, oauth = oauth)
+            oauthCredentialManager.ensureValidAccessToken(authId = auth.id, oauth = normalizedOauth)
         }
     }
 
@@ -3865,8 +4312,10 @@ logging:
     private fun markOAuthProgress(authId: String, summary: String) {
         val normalized = summary.trim().ifBlank { "processing" }
         val current = oauthStatusByAuthId[authId]
-        val next = if (current == null) {
-            OAuthStatusUi(
+        val next = current?.copy(
+            summary = normalized,
+            inProgress = true,
+        ) ?: OAuthStatusUi(
                 connected = false,
                 expired = false,
                 hasRefreshToken = false,
@@ -3874,20 +4323,16 @@ logging:
                 summary = normalized,
                 inProgress = true,
             )
-        } else {
-            current.copy(
-                summary = normalized,
-                inProgress = true,
-            )
-        }
         oauthStatusByAuthId = oauthStatusByAuthId + (authId to next)
     }
 
     private fun markOAuthFailure(authId: String, summary: String) {
         val normalized = summary.trim().ifBlank { "failed" }
         val current = oauthStatusByAuthId[authId]
-        val next = if (current == null) {
-            OAuthStatusUi(
+        val next = current?.copy(
+            summary = normalized,
+            inProgress = false,
+        ) ?: OAuthStatusUi(
                 connected = false,
                 expired = false,
                 hasRefreshToken = false,
@@ -3895,12 +4340,6 @@ logging:
                 summary = normalized,
                 inProgress = false,
             )
-        } else {
-            current.copy(
-                summary = normalized,
-                inProgress = false,
-            )
-        }
         oauthStatusByAuthId = oauthStatusByAuthId + (authId to next)
     }
 
@@ -3921,7 +4360,7 @@ logging:
                     ?: throw IllegalArgumentException("Auth not found: $authId")
                 connectOAuthInternal(auth = auth)
                 initializeAgentFactory()
-            } catch (e: CancellationException) {
+            } catch (_: CancellationException) {
                 addSystemMessage("OAuth connect cancelled for $authId")
                 markOAuthFailure(authId = authId, summary = "cancelled")
             } catch (e: Exception) {
@@ -3947,7 +4386,7 @@ logging:
     private suspend fun connectOAuthInternal(auth: LlmAuthConfig) {
         val rawOauth = auth.auth.oauthConfigOrNull()
             ?: throw IllegalArgumentException("Auth ${auth.id} does not have OAuth config")
-        val oauth = normalizeOAuthConfigForConnect(auth = auth, oauth = rawOauth)
+        val oauth = normalizeOAuthConfigForRuntime(auth = auth, oauth = rawOauth)
         if (!oauth.canInteractiveConnect(providerId = auth.providerId)) {
             throw IllegalArgumentException("OAuth config for ${auth.id} is incomplete")
         }
@@ -3984,12 +4423,12 @@ logging:
     }
 
     private fun resolveOAuthConnectAuthMode(auth: LlmAuthConfig): String {
-        val providerId = auth.providerId.trim()
+        val providerId = auth.providerId.trim().lowercase()
         val oauth = auth.auth.oauthConfigOrNull()
         if (oauth?.isDeviceFlow(providerId = providerId) == true) {
-            return "oauth_device"
+            return AUTH_MODE_OAUTH_DEVICE
         }
-        return OAUTH_CONNECT_AUTH_MODE_BY_PROVIDER_ID[providerId] ?: "oauth_subscription"
+        return OAUTH_CONNECT_AUTH_MODE_BY_PROVIDER_ID[providerId] ?: AUTH_MODE_OAUTH_SUBSCRIPTION
     }
 
     private fun resolveProviderDisplayName(providerId: String): String {
@@ -3997,11 +4436,11 @@ logging:
         return providerPresets.firstOrNull { preset -> preset.id == normalized }?.displayName ?: normalized
     }
 
-    private fun normalizeOAuthConfigForConnect(
+    private fun normalizeOAuthConfigForRuntime(
         auth: LlmAuthConfig,
         oauth: io.github.stream29.kode.config.api.OAuthConfig,
     ): io.github.stream29.kode.config.api.OAuthConfig {
-        if (!OPENAI_SUBSCRIPTION_BROWSER_PROVIDER_IDS.contains(auth.providerId.trim())) {
+        if (!isOpenAiSubscriptionBrowserProvider(auth.providerId)) {
             return oauth
         }
 
@@ -4010,15 +4449,18 @@ logging:
         }
 
         val callbackUri = normalizeOpenAiSubscriptionCallbackUri(oauth.callbackUri)
-        val authorizationAdditionalParams = if (oauth.authorizationAdditionalParams.isNotEmpty()) {
-            oauth.authorizationAdditionalParams
-        } else {
-            OPENAI_SUBSCRIPTION_AUTHORIZATION_ADDITIONAL_PARAMS
-        }
+        val authorizationAdditionalParams = oauth.authorizationAdditionalParams + OPENAI_SUBSCRIPTION_AUTHORIZATION_ADDITIONAL_PARAMS
         return oauth.copy(
+            authorizationEndpoint = OPENAI_SUBSCRIPTION_AUTHORIZATION_ENDPOINT,
+            tokenEndpoint = OPENAI_SUBSCRIPTION_TOKEN_ENDPOINT,
+            clientId = OPENAI_SUBSCRIPTION_CLIENT_ID,
             callbackUri = callbackUri,
             authorizationAdditionalParams = authorizationAdditionalParams,
         )
+    }
+
+    private fun isOpenAiSubscriptionBrowserProvider(providerId: String): Boolean {
+        return providerId.trim().lowercase() in OPENAI_SUBSCRIPTION_BROWSER_PROVIDER_IDS
     }
 
     private fun normalizeOpenAiSubscriptionCallbackUri(current: String?): String {
@@ -4065,8 +4507,9 @@ logging:
             try {
                 val auth = auths.firstOrNull { config -> config.id == authId }
                     ?: throw IllegalArgumentException("Auth not found: $authId")
-                val oauth = auth.auth.oauthConfigOrNull()
+                val rawOauth = auth.auth.oauthConfigOrNull()
                     ?: throw IllegalArgumentException("Auth $authId does not have OAuth config")
+                val oauth = normalizeOAuthConfigForRuntime(auth = auth, oauth = rawOauth)
                 val token = oauthCredentialManager.ensureValidAccessToken(
                     authId = auth.id,
                     oauth = oauth,
@@ -4176,25 +4619,27 @@ logging:
     }
 
     private companion object {
-        private const val AUTH_MODE_API_KEY: String = "api_key"
         private val PROVIDER_AUTH_MODE_TO_CONFIG_VALUE: Map<ProviderAuthMode, String> = mapOf(
             ProviderAuthMode.ApiKey to AUTH_MODE_API_KEY,
-            ProviderAuthMode.OAuthSubscription to "oauth_subscription",
-            ProviderAuthMode.OAuthDevice to "oauth_device",
-            ProviderAuthMode.CloudCredentialChain to "cloud_credential_chain",
-            ProviderAuthMode.WellKnown to "well_known",
+            ProviderAuthMode.OAuthSubscription to AUTH_MODE_OAUTH_SUBSCRIPTION,
+            ProviderAuthMode.OAuthDevice to AUTH_MODE_OAUTH_DEVICE,
+            ProviderAuthMode.CloudCredentialChain to AUTH_MODE_CLOUD_CREDENTIAL_CHAIN,
+            ProviderAuthMode.WellKnown to AUTH_MODE_WELL_KNOWN,
         )
         private val OAUTH_CONNECT_AUTH_MODE_BY_PROVIDER_ID: Map<String, String> = mapOf(
-            "openai-subscription-device" to "oauth_device",
-            "openai-subscription-browser" to "oauth_subscription",
+            PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE to AUTH_MODE_OAUTH_DEVICE,
+            PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER to AUTH_MODE_OAUTH_SUBSCRIPTION,
         )
         private val OPENAI_SUBSCRIPTION_BROWSER_PROVIDER_IDS: Set<String> = setOf(
-            "openai-subscription-browser",
+            PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER,
         )
         private val CUSTOM_NAMED_PROVIDER_IDS: Set<String> = setOf(
-            "openai-compatible",
+            PROVIDER_ID_OPENAI_COMPATIBLE,
         )
         private const val OPENAI_SUBSCRIPTION_CALLBACK_URI: String = "http://localhost:1455/auth/callback"
+        private const val OPENAI_SUBSCRIPTION_AUTHORIZATION_ENDPOINT: String = "https://auth.openai.com/oauth/authorize"
+        private const val OPENAI_SUBSCRIPTION_TOKEN_ENDPOINT: String = "https://auth.openai.com/oauth/token"
+        private const val OPENAI_SUBSCRIPTION_CLIENT_ID: String = "app_EMoamEEZ73f0CkXaXp7hrann"
         private val OPENAI_SUBSCRIPTION_AUTHORIZATION_ADDITIONAL_PARAMS: Map<String, String> = mapOf(
             "id_token_add_organizations" to "true",
             "codex_cli_simplified_flow" to "true",
@@ -4229,9 +4674,6 @@ public data class SessionUiState(
     val currentSessionWorkDir: String = "",
     val showNewSessionDialog: Boolean = false,
     val showSessionDirDialog: Boolean = false,
-    val showContinueRecoveryDialog: Boolean = false,
-    val continueRecoveryToolName: String = "",
-    val continueRecoveryToolCallId: String = "",
     val newSessionDirInput: String = "",
     val sessionDirDraft: String = "",
     val isRunning: Boolean = false,
@@ -4252,6 +4694,7 @@ public data class ChatPageUiState(
     val messageAlignment: String = "left",
     val messageMaxWidthRatio: Float = 0.9f,
     val sendKeyMode: String = "ctrl_or_cmd_enter_send",
+    val debugShowRawMessageList: Boolean = false,
     val agentPresets: List<AgentPreset> = emptyList(),
     val activePresetName: String = "build",
     val models: List<LlmModelConfig> = emptyList(),
@@ -4273,9 +4716,9 @@ public data class ToolsPageUiState(
 public data class McpPageUiState(
     val mcpToolTimeoutMs: Int = 60000,
     val mcpServers: Map<String, io.github.stream29.kode.config.api.McpServerConfig> = emptyMap(),
-    val mcpTestResults: Map<String, MainViewModel.McpTestResult> = emptyMap(),
+    val mcpTestResults: Map<String, McpTestResult> = emptyMap(),
     val mcpTestsInFlight: Set<String> = emptySet(),
-    val mcpHealthResults: Map<String, MainViewModel.McpHealthResult> = emptyMap(),
+    val mcpHealthResults: Map<String, McpHealthResult> = emptyMap(),
 )
 
 public data class AcpPageUiState(
@@ -4316,9 +4759,52 @@ public data class ConfigEditorUiState(
     val configError: String? = null,
 )
 
+public data class OpenAddModelDialogRequest(
+    val preselectedAuthId: String?,
+    val requestNonce: Long,
+)
+
+public data class OpenEditModelDialogRequest(
+    val modelId: String,
+    val requestNonce: Long,
+)
+
+public data class OpenAddAuthDialogRequest(
+    val requestNonce: Long,
+)
+
+public data class OpenEditAuthDialogRequest(
+    val authId: String,
+    val requestNonce: Long,
+)
+
+public data class OpenDeleteAuthDialogRequest(
+    val authId: String,
+    val requestNonce: Long,
+)
+
+public data class OpenSessionManagerDialogRequest(
+    val requestNonce: Long,
+)
+
+public data class CloseSessionManagerDialogRequest(
+    val requestNonce: Long,
+)
+
+public data class OverlayDialogRequestsState(
+    val openAddModelDialogRequest: OpenAddModelDialogRequest? = null,
+    val openEditModelDialogRequest: OpenEditModelDialogRequest? = null,
+    val openAddAuthDialogRequest: OpenAddAuthDialogRequest? = null,
+    val openEditAuthDialogRequest: OpenEditAuthDialogRequest? = null,
+    val openDeleteAuthDialogRequest: OpenDeleteAuthDialogRequest? = null,
+    val openSessionManagerDialogRequest: OpenSessionManagerDialogRequest? = null,
+    val closeSessionManagerDialogRequest: CloseSessionManagerDialogRequest? = null,
+)
+
 public data class AppUiState(
     val currentPage: io.github.stream29.kode.app.view.AppPage = io.github.stream29.kode.app.view.AppPage.Chat,
-    val showSessionManager: Boolean = false,
+    val modelsPageSelectedTab: Int = 0,
+    val overlayDialogRequests: OverlayDialogRequestsState = OverlayDialogRequestsState(),
     val showConfigEditor: Boolean = false,
     val showSettings: Boolean = false,
     val sessionSummaries: List<SessionSummary> = emptyList(),
@@ -4348,11 +4834,12 @@ public data class AppUiState(
     val messageAlignment: String = "left",
     val messageMaxWidthRatio: Float = 0.9f,
     val sendKeyMode: String = "ctrl_or_cmd_enter_send",
+    val debugShowRawMessageList: Boolean = false,
     val mcpToolTimeoutMs: Int = 60000,
     val mcpServers: Map<String, io.github.stream29.kode.config.api.McpServerConfig> = emptyMap(),
-    val mcpTestResults: Map<String, MainViewModel.McpTestResult> = emptyMap(),
+    val mcpTestResults: Map<String, McpTestResult> = emptyMap(),
     val mcpTestsInFlight: Set<String> = emptySet(),
-    val mcpHealthResults: Map<String, MainViewModel.McpHealthResult> = emptyMap(),
+    val mcpHealthResults: Map<String, McpHealthResult> = emptyMap(),
     val webSearchProvider: String = "none",
     val webSearchApiKey: String = "",
     val webSearchBaseUrl: String = "",
@@ -4388,24 +4875,43 @@ public data class AppUiState(
     val temperature: Float = 0.3f,
 )
 
-public data class OAuthStatusUi(
-    val connected: Boolean,
-    val expired: Boolean,
-    val hasRefreshToken: Boolean,
-    val expiresAtEpochSecond: Long?,
-    val summary: String,
-    val inProgress: Boolean,
-)
+private fun AppUiState.withPageNavigation(nextPage: io.github.stream29.kode.app.view.AppPage): AppUiState {
+    val nextOverlayDialogRequests = if (nextPage == io.github.stream29.kode.app.view.AppPage.Models) {
+        overlayDialogRequests
+    } else {
+        overlayDialogRequests.clearModelScopedRequests()
+    }
+    return copy(
+        currentPage = nextPage,
+        overlayDialogRequests = nextOverlayDialogRequests,
+    )
+}
+
+private fun OverlayDialogRequestsState.clearModelScopedRequests(): OverlayDialogRequestsState {
+    return copy(
+        openAddModelDialogRequest = null,
+        openEditModelDialogRequest = null,
+        openAddAuthDialogRequest = null,
+        openEditAuthDialogRequest = null,
+        openDeleteAuthDialogRequest = null,
+    )
+}
 
 public data class UiToast(
     val id: String,
     val message: String,
 )
 
+private enum class StopMode {
+    None,
+    SafeRequested,
+}
+
 private data class SessionRunState(
     val isRunning: Boolean = false,
     val isWaitingForInput: Boolean = false,
     val currentTask: String = "",
+    val stopMode: StopMode = StopMode.None,
 )
 
 private data class SessionSearchHit(
@@ -4428,6 +4934,7 @@ private data class PreferencesSnapshot(
     val messageAlignment: String,
     val messageMaxWidthRatio: Float,
     val sendKeyMode: String,
+    val debugShowRawMessageList: Boolean,
     val disabledTools: Set<String>,
     val webSearchProvider: String,
     val webSearchApiKey: String,

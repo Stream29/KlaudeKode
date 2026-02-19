@@ -35,6 +35,10 @@ public interface MessageHandler {
      * Request input for a specific session.
      */
     public suspend fun requestInput(sessionId: String): String = requestInput()
+
+    public fun isSafeStopRequested(sessionId: String): Boolean = false
+
+    public fun onSafeStopReached(sessionId: String): Unit = Unit
 }
 
 /**

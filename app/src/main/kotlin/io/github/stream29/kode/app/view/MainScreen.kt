@@ -1,14 +1,8 @@
 package io.github.stream29.kode.app.view
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -17,9 +11,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -27,55 +23,31 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.github.stream29.kode.app.model.extractToolCallArgumentsText
-import io.github.stream29.kode.app.model.extractToolCallId
-import io.github.stream29.kode.app.model.extractToolCallPrimaryTextArg
-import io.github.stream29.kode.app.model.extractToolName
-import io.github.stream29.kode.app.model.extractToolResultText
-import io.github.stream29.kode.app.model.SendKeyModePreference
-import io.github.stream29.kode.app.model.collapsedPreviewUi
-import io.github.stream29.kode.app.model.collapsedTitleUi
-import io.github.stream29.kode.app.model.isAssistantToolPlan
-import io.github.stream29.kode.app.model.isAwaitUserInputToolCall
-import io.github.stream29.kode.app.model.isAwaitUserInputToolResult
-import io.github.stream29.kode.app.model.isSayToUserToolCall
-import io.github.stream29.kode.app.model.isSayToUserToolResult
-import io.github.stream29.kode.app.model.isUiError
-import io.github.stream29.kode.app.model.isUiToolCallLike
-import io.github.stream29.kode.app.model.isSystemRoleUi
-import io.github.stream29.kode.app.model.isToolRoleUi
-import io.github.stream29.kode.app.model.isUserRoleUi
-import io.github.stream29.kode.app.model.shouldExpandByDefaultUi
-import io.github.stream29.kode.app.model.ToolGroupPayload
-import io.github.stream29.kode.app.model.toolGroupPayloadOrNull
+import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.scene.DialogSceneStrategy
+import androidx.navigation3.ui.NavDisplay
+import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
 import io.github.stream29.kode.app.util.formatModelDisplayName
-import io.github.stream29.kode.app.util.parseKeyValueLines
-import io.github.stream29.kode.app.view.components.MessageBubble
-import io.github.stream29.kode.app.view.components.SystemMessage
 import io.github.stream29.kode.app.viewmodel.AcpPageUiState
 import io.github.stream29.kode.app.viewmodel.AppUiState
 import io.github.stream29.kode.app.viewmodel.ChatPageUiState
 import io.github.stream29.kode.app.viewmodel.InfoPageUiState
 import io.github.stream29.kode.app.viewmodel.MainViewModel
-import io.github.stream29.kode.app.viewmodel.McpPageUiState
 import io.github.stream29.kode.app.viewmodel.SessionUiState
 import io.github.stream29.kode.app.viewmodel.SessionsPageUiState
 import io.github.stream29.kode.app.viewmodel.TerminalPageUiState
 import io.github.stream29.kode.app.viewmodel.ToolsPageUiState
 import io.github.stream29.kode.app.viewmodel.WebPageUiState
-import io.github.stream29.kode.config.api.McpTransportType
-import io.github.stream29.kode.config.api.supportsBrowserOAuth
-import io.github.stream29.kode.session.core.model.MessageRole
-import io.github.stream29.kode.session.core.model.SessionMessage
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
 public fun MainScreen(state: MainViewModel) {
     val chromeUi by state.mainChromeUiState.collectAsStateWithLifecycle()
+    val appUi by state.appUiState.collectAsStateWithLifecycle()
+    val sessionUi by state.sessionUiState.collectAsStateWithLifecycle()
     val configEditorUi by state.configEditorUiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -129,19 +101,263 @@ public fun MainScreen(state: MainViewModel) {
     }
 
     MaterialTheme(colorScheme = colorScheme) {
+        val navBackStack = remember { mutableStateListOf<NavKey>(chromeUi.currentPage) }
+        val dialogSceneStrategy = remember { DialogSceneStrategy<NavKey>() }
+
+        val navEntryProvider = entryProvider {
+            entry<AppPage> { key ->
+                when (key) {
+                    AppPage.Chat -> ChatRoute(state = state)
+                    AppPage.Sessions -> SessionsRoute(state = state)
+                    AppPage.Models -> ModelsRoute(state = state)
+                    AppPage.Settings -> SettingsRoute(state = state)
+                    AppPage.Tools -> ToolsRoute(state = state)
+                    AppPage.Mcp -> McpRoute(state = state)
+                    AppPage.Acp -> AcpRoute(state = state)
+                    AppPage.Terminal -> TerminalRoute(state = state)
+                    AppPage.Web -> WebRoute(state = state)
+                    AppPage.Info -> InfoRoute(state = state)
+                }
+            }
+            entry<ConfigEditorDialogRoute>(metadata = DialogSceneStrategy.dialog()) {
+                ConfigEditorDialog(
+                    ui = configEditorUi,
+                    onConfigTextChange = { value -> state.configText = value },
+                    onSave = { state.saveConfig() },
+                    onDismiss = {
+                        state.showConfigEditor = false
+                        navBackStack.removeDialogRoute(ConfigEditorDialogRoute)
+                    },
+                )
+            }
+            entry<SessionManagerDialogRoute>(metadata = DialogSceneStrategy.dialog()) {
+                SessionManagerDialog(
+                    viewModel = state,
+                    onDismiss = {
+                        state.requestCloseSessionManagerDialog()
+                        navBackStack.removeDialogRoute(SessionManagerDialogRoute)
+                    },
+                )
+            }
+            entry<AddModelDialogRoute>(metadata = DialogSceneStrategy.dialog()) { key ->
+                AddModelDialogDestination(
+                    viewModel = state,
+                    ui = appUi,
+                    preselectedAuthId = key.preselectedAuthId,
+                    onDismiss = {
+                        navBackStack.removeDialogRoute(key)
+                    },
+                )
+            }
+            entry<EditModelDialogRoute>(metadata = DialogSceneStrategy.dialog()) { key ->
+                EditModelDialogDestination(
+                    viewModel = state,
+                    ui = appUi,
+                    modelId = key.modelId,
+                    onDismiss = {
+                        navBackStack.removeDialogRoute(key)
+                    },
+                )
+            }
+            entry<AddAuthDialogRoute>(metadata = DialogSceneStrategy.dialog()) { key ->
+                AddAuthDialogDestination(
+                    viewModel = state,
+                    ui = appUi,
+                    onDismiss = {
+                        navBackStack.removeDialogRoute(key)
+                    },
+                )
+            }
+            entry<EditAuthDialogRoute>(metadata = DialogSceneStrategy.dialog()) { key ->
+                EditAuthDialogDestination(
+                    viewModel = state,
+                    ui = appUi,
+                    authId = key.authId,
+                    onDismiss = {
+                        navBackStack.removeDialogRoute(key)
+                    },
+                )
+            }
+            entry<DeleteAuthConfirmDialogRoute>(metadata = DialogSceneStrategy.dialog()) { key ->
+                DeleteAuthConfirmDialogDestination(
+                    viewModel = state,
+                    ui = appUi,
+                    authId = key.authId,
+                    onDismiss = {
+                        navBackStack.removeDialogRoute(key)
+                    },
+                )
+            }
+            entry<NewSessionDirDialogRoute>(metadata = DialogSceneStrategy.dialog()) {
+                NewSessionDirDialog(
+                    value = sessionUi.newSessionDirInput,
+                    onValueChange = { value -> state.newSessionDirInput = value },
+                    onConfirm = { state.confirmNewSessionDir() },
+                    onDismiss = {
+                        state.cancelNewSessionDir()
+                        navBackStack.removeDialogRoute(NewSessionDirDialogRoute)
+                    },
+                )
+            }
+            entry<EditSessionDirDialogRoute>(metadata = DialogSceneStrategy.dialog()) {
+                EditSessionDirDialog(
+                    value = sessionUi.sessionDirDraft,
+                    onValueChange = { value -> state.sessionDirDraft = value },
+                    onConfirm = { state.confirmSessionDirDialog() },
+                    onDismiss = {
+                        state.cancelSessionDirDialog()
+                        navBackStack.removeDialogRoute(EditSessionDirDialogRoute)
+                    },
+                )
+            }
+        }
+
         LaunchedEffect(chromeUi.currentPage) {
             if (chromeUi.currentPage == AppPage.Sessions) {
                 state.loadSessionList()
             }
+            val activeDialogRoutes = navBackStack.filter { entry ->
+                when (entry) {
+                    ConfigEditorDialogRoute -> chromeUi.showConfigEditor
+                    SessionManagerDialogRoute -> true
+                    is AddModelDialogRoute,
+                    is EditModelDialogRoute,
+                    is AddAuthDialogRoute,
+                    is EditAuthDialogRoute,
+                    is DeleteAuthConfirmDialogRoute,
+                    -> chromeUi.currentPage == AppPage.Models
+
+                    NewSessionDirDialogRoute -> sessionUi.showNewSessionDialog
+                    EditSessionDirDialogRoute -> sessionUi.showSessionDirDialog
+
+                    else -> false
+                }
+            }
+            navBackStack.clear()
+            navBackStack.add(chromeUi.currentPage)
+            navBackStack.addAll(activeDialogRoutes)
         }
 
-        if (chromeUi.showConfigEditor) {
-            ConfigEditorDialog(
-                ui = configEditorUi,
-                onConfigTextChange = { value -> state.configText = value },
-                onSave = { state.saveConfig() },
-                onDismiss = { state.showConfigEditor = false }
+        LaunchedEffect(chromeUi.showConfigEditor) {
+            val hasRoute = navBackStack.any { entry -> entry == ConfigEditorDialogRoute }
+            if (chromeUi.showConfigEditor && !hasRoute) {
+                navBackStack.add(ConfigEditorDialogRoute)
+            }
+            if (!chromeUi.showConfigEditor && hasRoute) {
+                navBackStack.removeAll { entry -> entry == ConfigEditorDialogRoute }
+            }
+        }
+
+        LaunchedEffect(appUi.overlayDialogRequests.openSessionManagerDialogRequest?.requestNonce) {
+            val request = appUi.overlayDialogRequests.openSessionManagerDialogRequest ?: return@LaunchedEffect
+            val hasRoute = navBackStack.any { entry -> entry == SessionManagerDialogRoute }
+            if (!hasRoute) {
+                navBackStack.add(SessionManagerDialogRoute)
+            }
+            state.consumeOpenSessionManagerDialogRequest(requestNonce = request.requestNonce)
+        }
+
+        LaunchedEffect(appUi.overlayDialogRequests.closeSessionManagerDialogRequest?.requestNonce) {
+            val request = appUi.overlayDialogRequests.closeSessionManagerDialogRequest ?: return@LaunchedEffect
+            navBackStack.removeAll { entry -> entry == SessionManagerDialogRoute }
+            state.consumeCloseSessionManagerDialogRequest(requestNonce = request.requestNonce)
+        }
+
+        LaunchedEffect(sessionUi.showNewSessionDialog) {
+            val hasRoute = navBackStack.any { entry -> entry == NewSessionDirDialogRoute }
+            if (sessionUi.showNewSessionDialog && !hasRoute) {
+                navBackStack.add(NewSessionDirDialogRoute)
+            }
+            if (!sessionUi.showNewSessionDialog && hasRoute) {
+                navBackStack.removeAll { entry -> entry == NewSessionDirDialogRoute }
+            }
+        }
+
+        LaunchedEffect(sessionUi.showSessionDirDialog) {
+            val hasRoute = navBackStack.any { entry -> entry == EditSessionDirDialogRoute }
+            if (sessionUi.showSessionDirDialog && !hasRoute) {
+                navBackStack.add(EditSessionDirDialogRoute)
+            }
+            if (!sessionUi.showSessionDirDialog && hasRoute) {
+                navBackStack.removeAll { entry -> entry == EditSessionDirDialogRoute }
+            }
+        }
+
+        LaunchedEffect(appUi.overlayDialogRequests.openAddModelDialogRequest?.requestNonce) {
+            val request = appUi.overlayDialogRequests.openAddModelDialogRequest ?: return@LaunchedEffect
+            if (navBackStack.none { entry -> entry == AppPage.Models }) {
+                navBackStack.clear()
+                navBackStack.add(AppPage.Models)
+            }
+            navBackStack.upsertDialogRoute(
+                route = AddModelDialogRoute(
+                    preselectedAuthId = request.preselectedAuthId,
+                    requestNonce = request.requestNonce,
+                ),
+                predicate = { entry -> entry is AddModelDialogRoute },
             )
+            state.consumeOpenAddModelDialogRequest(requestNonce = request.requestNonce)
+        }
+
+        LaunchedEffect(appUi.overlayDialogRequests.openEditModelDialogRequest?.requestNonce) {
+            val request = appUi.overlayDialogRequests.openEditModelDialogRequest ?: return@LaunchedEffect
+            if (navBackStack.none { entry -> entry == AppPage.Models }) {
+                navBackStack.clear()
+                navBackStack.add(AppPage.Models)
+            }
+            navBackStack.upsertDialogRoute(
+                route = EditModelDialogRoute(
+                    modelId = request.modelId,
+                    requestNonce = request.requestNonce,
+                ),
+                predicate = { entry -> entry is EditModelDialogRoute },
+            )
+            state.consumeOpenEditModelDialogRequest(requestNonce = request.requestNonce)
+        }
+
+        LaunchedEffect(appUi.overlayDialogRequests.openAddAuthDialogRequest?.requestNonce) {
+            val request = appUi.overlayDialogRequests.openAddAuthDialogRequest ?: return@LaunchedEffect
+            if (navBackStack.none { entry -> entry == AppPage.Models }) {
+                navBackStack.clear()
+                navBackStack.add(AppPage.Models)
+            }
+            navBackStack.upsertDialogRoute(
+                route = AddAuthDialogRoute(requestNonce = request.requestNonce),
+                predicate = { entry -> entry is AddAuthDialogRoute },
+            )
+            state.consumeOpenAddAuthDialogRequest(requestNonce = request.requestNonce)
+        }
+
+        LaunchedEffect(appUi.overlayDialogRequests.openEditAuthDialogRequest?.requestNonce) {
+            val request = appUi.overlayDialogRequests.openEditAuthDialogRequest ?: return@LaunchedEffect
+            if (navBackStack.none { entry -> entry == AppPage.Models }) {
+                navBackStack.clear()
+                navBackStack.add(AppPage.Models)
+            }
+            navBackStack.upsertDialogRoute(
+                route = EditAuthDialogRoute(
+                    authId = request.authId,
+                    requestNonce = request.requestNonce,
+                ),
+                predicate = { entry -> entry is EditAuthDialogRoute },
+            )
+            state.consumeOpenEditAuthDialogRequest(requestNonce = request.requestNonce)
+        }
+
+        LaunchedEffect(appUi.overlayDialogRequests.openDeleteAuthDialogRequest?.requestNonce) {
+            val request = appUi.overlayDialogRequests.openDeleteAuthDialogRequest ?: return@LaunchedEffect
+            if (navBackStack.none { entry -> entry == AppPage.Models }) {
+                navBackStack.clear()
+                navBackStack.add(AppPage.Models)
+            }
+            navBackStack.upsertDialogRoute(
+                route = DeleteAuthConfirmDialogRoute(
+                    authId = request.authId,
+                    requestNonce = request.requestNonce,
+                ),
+                predicate = { entry -> entry is DeleteAuthConfirmDialogRoute },
+            )
+            state.consumeOpenDeleteAuthDialogRequest(requestNonce = request.requestNonce)
         }
 
         Scaffold(
@@ -172,24 +388,69 @@ public fun MainScreen(state: MainViewModel) {
                         .fillMaxHeight()
                         .padding(16.dp)
                 ) {
-                    when (chromeUi.currentPage) {
-                        AppPage.Chat -> ChatRoute(state = state)
-                        AppPage.Sessions -> SessionsRoute(state = state)
-                        AppPage.Models -> ModelsRoute(state = state)
-                        AppPage.Settings -> SettingsRoute(state = state)
-                        AppPage.Tools -> ToolsRoute(state = state)
-                        AppPage.Mcp -> McpRoute(state = state)
-                        AppPage.Acp -> AcpRoute(state = state)
-                        AppPage.Terminal -> TerminalRoute(state = state)
-                        AppPage.Web -> WebRoute(state = state)
-                        AppPage.Info -> InfoRoute(state = state)
-                    }
+                    NavDisplay(
+                        backStack = navBackStack,
+                        onBack = {
+                            when (navBackStack.lastOrNull()) {
+                                ConfigEditorDialogRoute -> {
+                                    state.showConfigEditor = false
+                                    navBackStack.removeLastOrNull()
+                                }
+
+                                SessionManagerDialogRoute -> {
+                                    state.requestCloseSessionManagerDialog()
+                                    navBackStack.removeLastOrNull()
+                                }
+
+                                is AddModelDialogRoute,
+                                is EditModelDialogRoute,
+                                is AddAuthDialogRoute,
+                                is EditAuthDialogRoute,
+                                is DeleteAuthConfirmDialogRoute,
+                                -> {
+                                    navBackStack.removeLastOrNull()
+                                }
+
+                                NewSessionDirDialogRoute -> {
+                                    state.cancelNewSessionDir()
+                                    navBackStack.removeLastOrNull()
+                                }
+
+                                EditSessionDirDialogRoute -> {
+                                    state.cancelSessionDirDialog()
+                                    navBackStack.removeLastOrNull()
+                                }
+
+                                else -> Unit
+                            }
+                        },
+                        sceneStrategy = dialogSceneStrategy,
+                        entryProvider = navEntryProvider,
+                    )
                 }
             }
         }
 
-        SessionDialogs(state = state)
     }
+}
+
+private fun SnapshotStateList<NavKey>.removeDialogRoute(route: NavKey) {
+    if (lastOrNull() == route) {
+        removeLastOrNull()
+        return
+    }
+    removeAll { entry -> entry == route }
+}
+
+private fun SnapshotStateList<NavKey>.upsertDialogRoute(
+    route: NavKey,
+    predicate: (NavKey) -> Boolean,
+) {
+    val existingIndex = indexOfLast { entry -> predicate(entry) }
+    if (existingIndex >= 0) {
+        removeAt(existingIndex)
+    }
+    add(route)
 }
 
 @Composable
@@ -254,39 +515,6 @@ private fun InfoRoute(state: MainViewModel) {
     InfoPage(state = state, ui = ui)
 }
 
-@Composable
-private fun SessionDialogs(state: MainViewModel) {
-    val sessionUi by state.sessionUiState.collectAsStateWithLifecycle()
-
-    if (sessionUi.showNewSessionDialog) {
-        NewSessionDirDialog(
-            value = sessionUi.newSessionDirInput,
-            onValueChange = { state.newSessionDirInput = it },
-            onConfirm = { state.confirmNewSessionDir() },
-            onDismiss = { state.cancelNewSessionDir() }
-        )
-    }
-
-    if (sessionUi.showSessionDirDialog) {
-        EditSessionDirDialog(
-            value = sessionUi.sessionDirDraft,
-            onValueChange = { state.sessionDirDraft = it },
-            onConfirm = { state.confirmSessionDirDialog() },
-            onDismiss = { state.cancelSessionDirDialog() }
-        )
-    }
-
-    if (sessionUi.showContinueRecoveryDialog) {
-        ContinueRecoveryDialog(
-            toolName = sessionUi.continueRecoveryToolName,
-            toolCallId = sessionUi.continueRecoveryToolCallId,
-            onRollbackAndContinue = { state.continueCurrentSessionAfterRollback() },
-            onContinueWithoutRollback = { state.continueCurrentSessionWithoutRollback() },
-            onDismiss = { state.dismissContinueRecoveryDialog() },
-        )
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AppTopBar(state: MainViewModel, currentPage: AppPage) {
@@ -307,7 +535,7 @@ private fun AppTopBar(state: MainViewModel, currentPage: AppPage) {
         },
         actions = {
             FilledTonalIconButton(
-                onClick = { state.currentPage = AppPage.Sessions }
+                onClick = { state.navigateToPage(page = AppPage.Sessions) }
             ) {
                 Icon(
                     imageVector = Icons.Default.FolderOpen,
@@ -318,7 +546,21 @@ private fun AppTopBar(state: MainViewModel, currentPage: AppPage) {
             Spacer(modifier = Modifier.width(8.dp))
 
             FilledTonalIconButton(
-                onClick = { state.currentPage = AppPage.Models }
+                onClick = {
+                    state.loadSessionList()
+                    state.requestOpenSessionManagerDialog()
+                }
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    contentDescription = "Session Manager"
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            FilledTonalIconButton(
+                onClick = { state.navigateToPage(page = AppPage.Models) }
             ) {
                 Icon(
                     imageVector = Icons.Default.Settings,
@@ -343,7 +585,7 @@ private fun AppNavigationRail(
         AppPage.entries.forEach { page ->
             NavigationRailItem(
                 selected = currentPage == page,
-                onClick = { state.currentPage = page },
+                onClick = { state.navigateToPage(page = page) },
                 icon = {
                     Icon(imageVector = page.icon, contentDescription = page.title)
                 },
@@ -368,13 +610,20 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        MessageList(
-            messages = sessionUi.messages,
-            onForkFromMessage = onForkFromMessage,
-            messageAlignment = ui.messageAlignment,
-            messageMaxWidthRatio = ui.messageMaxWidthRatio,
-            modifier = Modifier.weight(1f)
-        )
+        if (ui.debugShowRawMessageList) {
+            RawMessageList(
+                messages = sessionUi.messages,
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            MessageList(
+                messages = sessionUi.messages,
+                onForkFromMessage = onForkFromMessage,
+                messageAlignment = ui.messageAlignment,
+                messageMaxWidthRatio = ui.messageMaxWidthRatio,
+                modifier = Modifier.weight(1f),
+            )
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -428,7 +677,7 @@ private fun SessionsPage(state: MainViewModel, sessionUi: SessionUiState, ui: Se
 @Composable
 private fun ModelsPage(state: MainViewModel, ui: AppUiState) {
     val tabs = listOf("Models", "Auth Providers", "Preferences")
-    var selectedTab by remember { mutableStateOf(0) }
+    val selectedTab = ui.modelsPageSelectedTab
 
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
@@ -442,8 +691,8 @@ private fun ModelsPage(state: MainViewModel, ui: AppUiState) {
             ui = ui,
             modifier = Modifier.fillMaxSize(),
             selectedTab = selectedTab,
-            onTabSelected = { selectedTab = it },
-            tabs = tabs
+            onTabSelected = { state.modelsPageSelectedTab = it },
+            tabs = tabs,
         )
     }
 }
@@ -574,198 +823,6 @@ private fun ToolsPage(state: MainViewModel, ui: ToolsPageUiState) {
 }
 
 @Composable
-private fun McpPage(state: MainViewModel, ui: McpPageUiState) {
-    var showAddDialog by remember { mutableStateOf(false) }
-    var timeoutText by remember { mutableStateOf(ui.mcpToolTimeoutMs.toString()) }
-    var pendingDialogServer by remember { mutableStateOf<String?>(null) }
-    var toolDialogResult by remember { mutableStateOf<MainViewModel.McpTestResult?>(null) }
-    var toolDialogTitle by remember { mutableStateOf("") }
-    val closeAddDialog = {
-        showAddDialog = false
-    }
-    val dismissToolsDialog = {
-        toolDialogResult = null
-    }
-
-    LaunchedEffect(ui.mcpTestResults, pendingDialogServer) {
-        val target = pendingDialogServer ?: return@LaunchedEffect
-        val result = ui.mcpTestResults[target] ?: return@LaunchedEffect
-        if (result.status == MainViewModel.McpTestStatus.Success) {
-            toolDialogTitle = target
-            toolDialogResult = result
-        }
-        pendingDialogServer = null
-    }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "MCP Servers",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
-            FilledTonalButton(onClick = { showAddDialog = true }) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Add")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedTextField(
-                value = timeoutText,
-                onValueChange = { input ->
-                    timeoutText = input
-                    val parsed = input.toIntOrNull()
-                    if (parsed != null) {
-                        state.mcpToolTimeoutMs = parsed
-                    }
-                },
-                label = { Text("Tool call timeout (ms)") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        if (ui.mcpServers.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "No MCP servers configured",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(
-                    items = ui.mcpServers.entries.toList(),
-                    key = { entry -> entry.key },
-                ) { entry ->
-                    val name = entry.key
-                    val server = entry.value
-                    val inFlight = ui.mcpTestsInFlight.contains(name)
-                    val health = ui.mcpHealthResults[name]
-                    val healthStatus = health?.status ?: MainViewModel.McpHealthStatus.Unknown
-                    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = name,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                McpHealthBadge(status = healthStatus)
-                            }
-                            Text(
-                                text = "Transport: ${server.transport}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (server.url != null) {
-                                Text(
-                                    text = "URL: ${server.url}",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            if (server.command != null) {
-                                Text(
-                                    text = "Command: ${server.command} ${server.args.joinToString(" ")}",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-
-                            if (healthStatus == MainViewModel.McpHealthStatus.Unhealthy) {
-                                val message = health?.message.orEmpty()
-                                if (message.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = message,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                FilledTonalButton(
-                                    onClick = {
-                                        pendingDialogServer = name
-                                        toolDialogResult = null
-                                        state.clearMcpTestResult(name)
-                                        state.testMcpServer(name)
-                                    },
-                                    enabled = !inFlight
-                                ) {
-                                    Text(if (inFlight) "Testing..." else "Test")
-                                }
-                                if (server.supportsBrowserOAuth()) {
-                                    FilledTonalButton(onClick = { state.authMcpServer(name) }) {
-                                        Text("Auth")
-                                    }
-                                }
-                                FilledTonalButton(
-                                    onClick = { state.removeMcpServer(name) },
-                                    colors = ButtonDefaults.filledTonalButtonColors(
-                                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                                    )
-                                ) {
-                                    Text("Remove")
-                                }
-                            }
-
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (toolDialogResult != null) {
-        McpToolsDialog(
-            serverName = toolDialogTitle,
-            result = toolDialogResult,
-            onDismiss = dismissToolsDialog,
-        )
-    }
-
-    if (showAddDialog) {
-        McpServerDialog(
-            onDismiss = closeAddDialog,
-            onConfirm = { name, config ->
-                state.addMcpServer(name, config)
-                closeAddDialog()
-            }
-        )
-    }
-}
-
-@Composable
 private fun NewSessionDirDialog(
     value: String,
     onValueChange: (String) -> Unit,
@@ -834,219 +891,6 @@ private fun EditSessionDirDialog(
             }
         }
     )
-}
-
-@Composable
-private fun ContinueRecoveryDialog(
-    toolName: String,
-    toolCallId: String,
-    onRollbackAndContinue: () -> Unit,
-    onContinueWithoutRollback: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Continue needs recovery") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Detected an unfinished tool call without result.")
-                Text(
-                    text = "Tool: $toolName",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (toolCallId.isNotBlank()) {
-                    Text(
-                        text = "Call ID: $toolCallId",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Text(
-                    text = "Rollback to before this tool call and continue?",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        confirmButton = {
-            FilledTonalButton(onClick = onRollbackAndContinue) {
-                Text("Rollback & Continue")
-            }
-        },
-        dismissButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onContinueWithoutRollback) {
-                    Text("Continue Anyway")
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel")
-                }
-            }
-        },
-    )
-}
-
-@Composable
-private fun McpToolsDialog(
-    serverName: String,
-    result: MainViewModel.McpTestResult?,
-    onDismiss: () -> Unit,
-) {
-    if (result == null) {
-        return
-    }
-
-    val tools = result.tools
-    var expandedTools by remember { mutableStateOf(setOf<String>()) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("MCP Tools · $serverName") },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                if (result.message.isNotBlank()) {
-                    Text(
-                        text = result.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-
-                if (tools.isEmpty()) {
-                    Text(
-                        text = "No tools returned",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(
-                            items = tools,
-                            key = { tool -> tool.name },
-                        ) { tool ->
-                            val expanded = expandedTools.contains(tool.name)
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        expandedTools = if (expanded) {
-                                            expandedTools - tool.name
-                                        } else {
-                                            expandedTools + tool.name
-                                        }
-                                    }
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = tool.name,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    Icon(
-                                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                                        contentDescription = null
-                                    )
-                                }
-
-                                if (expanded) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    if (tool.description.isNotBlank()) {
-                                        Text(
-                                            text = tool.description,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-
-                                    ToolParameterSection(
-                                        title = "Required Parameters",
-                                        parameters = tool.requiredParameters
-                                    )
-                                    ToolParameterSection(
-                                        title = "Optional Parameters",
-                                        parameters = tool.optionalParameters
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Close")
-            }
-        }
-    )
-}
-
-@Composable
-private fun ToolParameterSection(
-    title: String,
-    parameters: List<MainViewModel.McpToolParameterSummary>,
-) {
-    if (parameters.isEmpty()) {
-        return
-    }
-
-    Spacer(modifier = Modifier.height(8.dp))
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-    Spacer(modifier = Modifier.height(4.dp))
-
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        parameters.forEach { param ->
-            Text(
-                text = "${param.name} (${param.type})",
-                style = MaterialTheme.typography.bodySmall,
-                fontWeight = FontWeight.Medium
-            )
-            if (param.description.isNotBlank()) {
-                Text(
-                    text = param.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun McpHealthBadge(status: MainViewModel.McpHealthStatus) {
-    val color = when (status) {
-        MainViewModel.McpHealthStatus.Healthy -> MaterialTheme.colorScheme.primary
-        MainViewModel.McpHealthStatus.Unhealthy -> MaterialTheme.colorScheme.error
-        MainViewModel.McpHealthStatus.Checking -> MaterialTheme.colorScheme.onSurfaceVariant
-        MainViewModel.McpHealthStatus.Unknown -> MaterialTheme.colorScheme.outline
-    }
-
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .background(color, CircleShape)
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = status.label,
-            style = MaterialTheme.typography.bodySmall,
-            color = color
-        )
-    }
 }
 
 @Composable
@@ -1390,152 +1234,6 @@ private fun ScriptPanel(state: MainViewModel, ui: TerminalPageUiState) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun McpServerDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (String, io.github.stream29.kode.config.api.McpServerConfig) -> Unit
-) {
-    var name by remember { mutableStateOf("") }
-    var transportType by remember { mutableStateOf(McpTransportType.Stdio) }
-    var urlOrCommand by remember { mutableStateOf("") }
-    var args by remember { mutableStateOf("") }
-    var headers by remember { mutableStateOf("") }
-    var env by remember { mutableStateOf("") }
-    var auth by remember { mutableStateOf("") }
-    var expanded by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add MCP Server") },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-
-                ExposedDropdownMenuBox(
-                    expanded = expanded,
-                    onExpandedChange = { expanded = it }
-                ) {
-                    OutlinedTextField(
-                        value = transportType.configValue,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Transport") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor(
-                            ExposedDropdownMenuAnchorType.PrimaryNotEditable
-                        )
-                    )
-                    ExposedDropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }
-                    ) {
-                        DropdownMenuItem(text = { Text("stdio") }, onClick = {
-                            transportType = McpTransportType.Stdio
-                            expanded = false
-                        })
-                        DropdownMenuItem(text = { Text("http") }, onClick = {
-                            transportType = McpTransportType.Http
-                            expanded = false
-                        })
-                    }
-                }
-
-                OutlinedTextField(
-                    value = urlOrCommand,
-                    onValueChange = { urlOrCommand = it },
-                    label = { Text(if (transportType.usesUrlTransport()) "URL" else "Command") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-
-                if (transportType.usesCommandProcess()) {
-                    OutlinedTextField(
-                        value = args,
-                        onValueChange = { args = it },
-                        label = { Text("Args (space separated)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = env,
-                        onValueChange = { env = it },
-                        label = { Text("Env (KEY=VALUE, per line)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = false,
-                        maxLines = 4
-                    )
-                } else {
-                    OutlinedTextField(
-                        value = headers,
-                        onValueChange = { headers = it },
-                        label = { Text("Headers (Key:Value, per line)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = false,
-                        maxLines = 4
-                    )
-                    OutlinedTextField(
-                        value = auth,
-                        onValueChange = { auth = it },
-                        label = { Text("Auth (e.g. oauth)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val server = when (transportType) {
-                        McpTransportType.Http,
-                        McpTransportType.Sse,
-                        -> {
-                            if (transportType == McpTransportType.Http) {
-                                io.github.stream29.kode.config.api.McpServerConfig.Http(
-                                    url = urlOrCommand.takeIf { it.isNotBlank() },
-                                    headers = parseKeyValueLines(headers, separator = ":"),
-                                    auth = auth.takeIf { it.isNotBlank() },
-                                )
-                            } else {
-                                io.github.stream29.kode.config.api.McpServerConfig.Sse(
-                                    url = urlOrCommand.takeIf { it.isNotBlank() },
-                                    headers = parseKeyValueLines(headers, separator = ":"),
-                                    auth = auth.takeIf { it.isNotBlank() },
-                                )
-                            }
-                        }
-
-                        McpTransportType.Stdio,
-                        McpTransportType.Unsupported,
-                        -> {
-                            io.github.stream29.kode.config.api.McpServerConfig.Stdio(
-                                command = urlOrCommand.takeIf { it.isNotBlank() },
-                                args = args.split(" ").filter { it.isNotBlank() },
-                                env = parseKeyValueLines(env, separator = "="),
-                            )
-                        }
-                    }
-                    if (name.isNotBlank()) {
-                        onConfirm(name, server)
-                    }
-                }
-            ) {
-                Text("Add")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
-    )
-}
-
 private data class ToolItem(
     val key: String,
     val title: String,
@@ -1564,14 +1262,10 @@ private fun InputSection(
     }
 
     val normalizedSendKeyMode = SendKeyModePreference.fromValue(sendKeyMode)
+    val hasActiveSession = sessionUi.currentSessionId != null
 
     fun submitDraftInput() {
-        state.taskInput = localTaskInput
-        if (sessionUi.isWaitingForInput) {
-            state.submitInput()
-        } else {
-            state.runTask()
-        }
+        state.continueFromInput(localTaskInput)
         localTaskInput = ""
     }
 
@@ -1618,12 +1312,16 @@ private fun InputSection(
                             return@onPreviewKeyEvent false
                         }
                         val canSubmitFromKeyboard = when {
-                            sessionUi.isWaitingForInput -> localTaskInput.isNotBlank()
+                            sessionUi.isWaitingForInput -> true
                             sessionUi.isRunning -> false
-                            else -> localTaskInput.isNotBlank()
+                            else -> localTaskInput.isNotBlank() || hasActiveSession
                         }
                         if (canSubmitFromKeyboard) {
-                            submitDraftInput()
+                            if (localTaskInput.isBlank()) {
+                                state.continueCurrentSession()
+                            } else {
+                                submitDraftInput()
+                            }
                         }
                         true
                     },
@@ -1646,16 +1344,14 @@ private fun InputSection(
 
             val isInputValid = localTaskInput.isNotBlank()
             val canClick = when {
-                sessionUi.isWaitingForInput -> isInputValid
+                sessionUi.isWaitingForInput -> true
                 sessionUi.isRunning -> true
-                else -> isInputValid
+                else -> isInputValid || hasActiveSession
             }
 
             FilledIconButton(
                 onClick = {
-                    if (sessionUi.isWaitingForInput) {
-                        submitDraftInput()
-                    } else if (sessionUi.isRunning) {
+                    if (sessionUi.isRunning) {
                         state.stopCurrentSession()
                     } else {
                         submitDraftInput()
@@ -1713,19 +1409,6 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
                 )
             }
         )
-        
-        AssistChip(
-            onClick = { state.continueCurrentSession() },
-            enabled = !sessionUi.isRunning && sessionUi.currentSessionId != null,
-            label = { Text("Continue") },
-            leadingIcon = {
-                Icon(
-                    Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    Modifier.size(AssistChipDefaults.IconSize)
-                )
-            }
-        )
 
         AssistChip(
             onClick = { state.openSessionDirDialog() },
@@ -1738,6 +1421,21 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
                     Modifier.size(AssistChipDefaults.IconSize)
                 )
             }
+        )
+
+        AssistChip(
+            onClick = { state.debugShowRawMessageList = !ui.debugShowRawMessageList },
+            enabled = true,
+            label = {
+                Text(if (ui.debugShowRawMessageList) "Raw Messages: On" else "Raw Messages: Off")
+            },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Default.BugReport,
+                    contentDescription = null,
+                    modifier = Modifier.size(AssistChipDefaults.IconSize),
+                )
+            },
         )
 
         SessionQuickSwitch(state = state, sessionUi = sessionUi, ui = ui)
@@ -1957,7 +1655,7 @@ private fun ModelQuickSwitch(state: MainViewModel, ui: ChatPageUiState) {
 
     if (models.isEmpty()) {
         AssistChip(
-            onClick = { state.currentPage = AppPage.Models },
+            onClick = { state.navigateToPage(page = AppPage.Models) },
             label = { Text("Model: Not configured") },
             leadingIcon = {
                 Icon(
@@ -2009,542 +1707,6 @@ private fun ModelQuickSwitch(state: MainViewModel, ui: ChatPageUiState) {
                         expanded = false
                     }
                 )
-            }
-        }
-    }
-}
-
-private sealed interface MessageListItem {
-    val stableId: String
-}
-
-private data class SingleMessageItem(
-    val message: SessionMessage,
-    val sourceIndex: Int,
-) : MessageListItem {
-    override val stableId: String = message.id
-}
-
-private data class ToolGroupItem(
-    val groupId: String,
-    val entries: List<ToolGroupEntry>,
-    val entryCount: Int,
-    val previewText: String,
-    val sourceIndices: List<Int>,
-) : MessageListItem {
-    override val stableId: String = groupId
-}
-
-private data class ToolGroupEntry(
-    val toolName: String?,
-    val argumentsText: String?,
-    val resultText: String?,
-    val callId: String?,
-    val callMessageId: String?,
-    val resultMessageId: String?,
-    val callSourceIndex: Int?,
-    val resultSourceIndex: Int?,
-)
-
-private data class IndexedMessage(
-    val message: SessionMessage,
-    val sourceIndex: Int,
-)
-
-private fun buildMessageListItems(messages: List<SessionMessage>): List<MessageListItem> {
-    val projected = messages.mapIndexedNotNull { index, message ->
-        when {
-            message.isSayToUserToolResult() -> null
-            message.isSayToUserToolCall() || message.isAwaitUserInputToolCall() -> {
-                val projectedContent = message.extractToolCallPrimaryTextArg()
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                    ?: message.content
-                IndexedMessage(
-                    message = message.copy(
-                        role = MessageRole.ASSISTANT,
-                        content = projectedContent,
-                    ),
-                    sourceIndex = index,
-                )
-            }
-            message.isAwaitUserInputToolResult() -> {
-                val projectedContent = message.extractToolResultText()
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                    ?: message.content
-                IndexedMessage(
-                    message = message.copy(
-                        role = MessageRole.USER,
-                        content = projectedContent,
-                    ),
-                    sourceIndex = index,
-                )
-            }
-            else -> IndexedMessage(message = message, sourceIndex = index)
-        }
-    }
-
-    if (projected.isEmpty()) {
-        return emptyList()
-    }
-
-    val items = mutableListOf<MessageListItem>()
-    var cursor = 0
-    while (cursor < projected.size) {
-        val current = projected[cursor]
-        if (current.message.isToolRoleUi()) {
-            val run = mutableListOf<IndexedMessage>()
-            while (cursor < projected.size) {
-                val candidate = projected[cursor]
-                if (!candidate.message.isToolRoleUi()) {
-                    break
-                }
-                run += candidate
-                cursor += 1
-            }
-            items += buildToolGroupItem(run)
-        } else {
-            items += SingleMessageItem(message = current.message, sourceIndex = current.sourceIndex)
-            cursor += 1
-        }
-    }
-
-    return items
-}
-
-private fun buildToolGroupItem(run: List<IndexedMessage>): ToolGroupItem {
-    val entries = buildToolGroupEntries(run)
-    val previewEntry = entries.lastOrNull()
-    val previewText = previewEntry?.let { buildToolPreviewText(it) } ?: ""
-    val firstId = run.firstOrNull()?.message?.id ?: "group"
-    val groupId = "tool-group-$firstId"
-    val sourceIndices = run.map { it.sourceIndex }
-    return ToolGroupItem(
-        groupId = groupId,
-        entries = entries,
-        entryCount = entries.size,
-        previewText = previewText,
-        sourceIndices = sourceIndices,
-    )
-}
-
-private fun buildToolGroupEntries(run: List<IndexedMessage>): List<ToolGroupEntry> {
-    val entries = mutableListOf<ToolGroupEntry>()
-
-    fun appendEntry(entry: ToolGroupEntry) {
-        entries += entry
-    }
-
-    fun updateEntry(index: Int, updated: ToolGroupEntry) {
-        entries[index] = updated
-    }
-
-    run.forEach { item ->
-        val message = item.message
-        val payload = message.toolGroupPayloadOrNull() ?: return@forEach
-        when (payload) {
-            is ToolGroupPayload.Call -> {
-                appendEntry(
-                    ToolGroupEntry(
-                        toolName = payload.toolName,
-                        argumentsText = payload.argumentsText,
-                        resultText = null,
-                        callId = payload.callId,
-                        callMessageId = payload.messageId,
-                        resultMessageId = null,
-                        callSourceIndex = item.sourceIndex,
-                        resultSourceIndex = null,
-                    )
-                )
-            }
-
-            is ToolGroupPayload.Result -> {
-                val matchIndex = entries.indexOfLast { entry ->
-                    entry.resultMessageId == null && (
-                        (payload.callId != null && entry.callId == payload.callId) || payload.callId == null
-                    )
-                }
-                if (matchIndex >= 0) {
-                    val existing = entries[matchIndex]
-                    updateEntry(
-                        matchIndex,
-                        existing.copy(
-                            resultText = payload.resultText,
-                            resultMessageId = payload.messageId,
-                            resultSourceIndex = item.sourceIndex,
-                            toolName = existing.toolName ?: payload.toolName,
-                            callId = existing.callId ?: payload.callId,
-                        )
-                    )
-                } else {
-                    appendEntry(
-                        ToolGroupEntry(
-                            toolName = payload.toolName,
-                            argumentsText = null,
-                            resultText = payload.resultText,
-                            callId = payload.callId,
-                            callMessageId = null,
-                            resultMessageId = payload.messageId,
-                            callSourceIndex = null,
-                            resultSourceIndex = item.sourceIndex,
-                        )
-                    )
-                }
-            }
-        }
-    }
-
-    return entries
-}
-
-private fun buildToolPreviewText(entry: ToolGroupEntry): String {
-    val toolName = entry.toolName?.takeIf { it.isNotBlank() } ?: "Tool"
-    val rawArgs = entry.argumentsText?.takeIf { it.isNotBlank() }
-        ?: entry.resultText?.takeIf { it.isNotBlank() }
-        ?: "(no parameters)"
-    val normalizedArgs = rawArgs.replace(Regex("\\s+"), " ").trim()
-    val snippet = if (normalizedArgs.length > 120) {
-        normalizedArgs.take(120) + "..."
-    } else {
-        normalizedArgs
-    }
-    return "$toolName: $snippet"
-}
-
-@Composable
-private fun MessageList(
-    messages: List<SessionMessage>,
-    onForkFromMessage: (Int) -> Unit,
-    messageAlignment: String,
-    messageMaxWidthRatio: Float,
-    modifier: Modifier = Modifier
-) {
-    val items = remember(messages) {
-        buildMessageListItems(messages)
-    }
-    val listState = rememberLazyListState()
-    
-    LaunchedEffect(items.size) {
-        if (items.isNotEmpty()) {
-            listState.animateScrollToItem(items.size - 1)
-        }
-    }
-    
-    ElevatedCard(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large
-    ) {
-        if (items.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "Start a conversation by typing below 👇",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                itemsIndexed(items, key = { _, item -> item.stableId }) { _, item ->
-                    when (item) {
-                        is SingleMessageItem -> {
-                            val message = item.message
-                            val sourceMessage = messages.getOrNull(item.sourceIndex)
-                            val defaultExpanded = remember(
-                                message.id,
-                                message.role,
-                                message.isUiToolCallLike(),
-                                message.isUiError(),
-                            ) {
-                                message.shouldExpandByDefaultUi()
-                            }
-                            var expanded by rememberSaveable(message.id) { mutableStateOf(defaultExpanded) }
-
-                            if (!expanded) {
-                                CollapsedMessageRow(
-                                    message = message,
-                                    onExpand = { expanded = true },
-                                )
-                                return@itemsIndexed
-                            }
-
-                            if (message.isSystemRoleUi()) {
-                                SystemMessage(content = message.content)
-                            } else {
-                                MessageBubble(
-                                    message = message,
-                                    isCurrentUser = message.isUserRoleUi(),
-                                    messageAlignment = messageAlignment,
-                                    messageMaxWidthRatio = messageMaxWidthRatio,
-                                    onForkFromHere = if (sourceMessage?.isSystemRoleUi() == true) {
-                                        null
-                                    } else {
-                                        { onForkFromMessage(item.sourceIndex) }
-                                    }
-                                )
-                            }
-
-                            if (!defaultExpanded) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
-                                ) {
-                                    TextButton(onClick = { expanded = false }) {
-                                        Icon(
-                                            imageVector = Icons.Default.ExpandLess,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp),
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Collapse")
-                                    }
-                                }
-                            }
-                        }
-                        is ToolGroupItem -> {
-                            var expanded by rememberSaveable(item.groupId) { mutableStateOf(false) }
-                            if (!expanded) {
-                                CollapsedToolGroupRow(
-                                    entryCount = item.entryCount,
-                                    previewText = item.previewText,
-                                    onExpand = { expanded = true },
-                                )
-                            } else {
-                                ToolGroupDetails(
-                                    groupId = item.groupId,
-                                    entries = item.entries,
-                                    onCollapse = { expanded = false },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CollapsedMessageRow(
-    message: SessionMessage,
-    onExpand: () -> Unit,
-) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onExpand)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = message.collapsedTitleUi(),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = message.collapsedPreviewUi(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Icon(
-                imageVector = Icons.Default.ExpandMore,
-                contentDescription = "Expand",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun CollapsedToolGroupRow(
-    entryCount: Int,
-    previewText: String,
-    onExpand: () -> Unit,
-) {
-    val countLabel = if (entryCount == 1) {
-        "1 tool call"
-    } else {
-        "$entryCount tool calls"
-    }
-    val summary = if (previewText.isBlank()) {
-        countLabel
-    } else {
-        "$countLabel · $previewText"
-    }
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onExpand)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Default.Build,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = summary,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Icon(
-                imageVector = Icons.Default.ExpandMore,
-                contentDescription = "Expand",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ToolGroupDetails(
-    groupId: String,
-    entries: List<ToolGroupEntry>,
-    onCollapse: () -> Unit,
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                entries.forEachIndexed { index, entry ->
-                    ToolGroupEntryRow(
-                        entry = entry,
-                        groupId = groupId,
-                        index = index,
-                    )
-                    if (index != entries.lastIndex) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
-                    }
-                }
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-        ) {
-            TextButton(onClick = onCollapse) {
-                Icon(
-                    imageVector = Icons.Default.ExpandLess,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Collapse")
-            }
-        }
-    }
-}
-
-@Composable
-private fun ToolGroupEntryRow(
-    entry: ToolGroupEntry,
-    groupId: String,
-    index: Int,
-) {
-    val toolName = entry.toolName?.takeIf { it.isNotBlank() } ?: "Tool"
-    val argumentsText = entry.argumentsText?.takeIf { it.isNotBlank() } ?: "(no parameters)"
-    val resultText = entry.resultText?.takeIf { it.isNotBlank() }
-    val pending = resultText == null
-    val resultDisplay = resultText ?: "Pending"
-    val entryKey = entry.callId
-        ?: entry.callMessageId
-        ?: entry.resultMessageId
-        ?: "entry-$index"
-    var expanded by rememberSaveable("$groupId-$entryKey") { mutableStateOf(false) }
-    val previewText = buildToolPreviewText(entry)
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { expanded = !expanded },
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Default.Build,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = toolName,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            Icon(
-                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        Text(
-            text = previewText,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = if (expanded) Int.MAX_VALUE else 1,
-            overflow = if (expanded) TextOverflow.Clip else TextOverflow.Ellipsis,
-        )
-
-        if (expanded) {
-            SelectionContainer {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "Parameters",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = argumentsText,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                    )
-
-                    Text(
-                        text = "Result",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = resultDisplay,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontFamily = FontFamily.Monospace,
-                        color = if (pending) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                    )
-                }
             }
         }
     }

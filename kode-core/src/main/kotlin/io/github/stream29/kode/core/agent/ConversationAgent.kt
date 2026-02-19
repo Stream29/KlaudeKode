@@ -1,7 +1,9 @@
 package io.github.stream29.kode.core.agent
 
 import ai.koog.agents.core.tools.ToolRegistry
+import ai.koog.agents.core.tools.annotations.InternalAgentToolsApi
 import ai.koog.prompt.executor.model.PromptExecutor
+import ai.koog.prompt.executor.clients.openai.OpenAIResponsesParams
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.RequestMetaInfo
@@ -9,6 +11,7 @@ import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.tool.ToolNames
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
@@ -78,21 +81,20 @@ public class ConversationAgent(
         agentId: String?,
         model: LLModel,
         modelParams: LLMParams?,
-        checkpointAfterExecution: Boolean,
-    ): String {
+    ): String? {
         val (systemPrompt, messages) = resolvePromptContext(sessionId = sessionId, agentId = agentId)
-        val finalResponse = executeWithTools(
-            sessionId = sessionId,
-            systemPrompt = systemPrompt,
-            historyMessages = messages,
-            model = model,
-            modelParams = modelParams,
-        )
-        sessionManager.addAssistantMessage(sessionId, finalResponse, null, agentId)
-        if (checkpointAfterExecution) {
-            sessionBridge.checkpoint(sessionId, "After execution")
+        try {
+            executeWithTools(
+                sessionId = sessionId,
+                systemPrompt = systemPrompt,
+                historyMessages = messages,
+                model = model,
+                modelParams = modelParams,
+            )
+        } catch (_: SafeStopSignal) {
+            return null
         }
-        return finalResponse
+        return ""
     }
 
     public suspend fun chat(
@@ -110,9 +112,8 @@ public class ConversationAgent(
                 agentId = runtimeContext.agentId,
                 model = model,
                 modelParams = modelParams,
-                checkpointAfterExecution = true,
             )
-        }
+        }.orEmpty()
     }
 
     public suspend fun continueSession(
@@ -127,9 +128,8 @@ public class ConversationAgent(
                 agentId = runtimeContext.agentId,
                 model = model,
                 modelParams = modelParams,
-                checkpointAfterExecution = true,
             )
-        }
+        }.orEmpty()
     }
 
     public suspend fun runSubAgent(
@@ -144,8 +144,7 @@ public class ConversationAgent(
                 agentId = agentId,
                 model = model,
                 modelParams = modelParams,
-                checkpointAfterExecution = false,
-            )
+            ).orEmpty()
         } catch (signal: SubAgentReturnSignal) {
             signal.result
         }
@@ -158,6 +157,10 @@ public class ConversationAgent(
         messages: List<Message>,
         modelParams: LLMParams?,
     ): ai.koog.prompt.dsl.Prompt {
+        val normalizedParams = withCodexInstructionParams(
+            params = ModelParamsFactory.enforceRequiredToolChoice(modelParams),
+            systemPrompt = systemPrompt,
+        )
         val messagesForPrompt = buildList {
             add(Message.System(systemPrompt, RequestMetaInfo.create(Clock.System.toDeprecatedClock())))
             addAll(messages)
@@ -165,8 +168,23 @@ public class ConversationAgent(
         return ai.koog.prompt.dsl.Prompt(
             id = "conversation_${sessionId}_$iteration",
             messages = messagesForPrompt,
-            params = modelParams ?: LLMParams(),
+            params = normalizedParams,
         )
+    }
+
+    private fun withCodexInstructionParams(
+        params: LLMParams,
+        systemPrompt: String,
+    ): LLMParams {
+        if (params !is OpenAIResponsesParams) {
+            return params
+        }
+        val normalizedInstructions = systemPrompt.trim().ifBlank {
+            "You are a helpful assistant"
+        }
+        val mergedAdditionalProperties = (params.additionalProperties ?: emptyMap()) +
+                mapOf("instructions" to JsonPrimitive(normalizedInstructions))
+        return params.copy(additionalProperties = mergedAdditionalProperties)
     }
 
     private suspend fun executeWithTools(
@@ -175,11 +193,16 @@ public class ConversationAgent(
         historyMessages: List<Message>,
         model: LLModel,
         modelParams: LLMParams?,
-    ): String {
+    ) {
         var allMessages = historyMessages.toMutableList()
         var iteration = 0
 
         while (true) {
+            if (messageHandler.isSafeStopRequested(sessionId)) {
+                messageHandler.onSafeStopReached(sessionId)
+                throw SafeStopSignal()
+            }
+
             iteration++
 
             val refreshedMessages = sessionBridge.prepareMessagesForAgent(sessionId, runtimeContext.agentId)
@@ -195,31 +218,63 @@ public class ConversationAgent(
                 modelParams = modelParams,
             )
 
-            val response = promptExecutor.execute(currentPrompt, model, toolRegistry.tools.map { it.descriptor }).first()
+            val responses = promptExecutor.execute(currentPrompt, model, toolRegistry.tools.map { it.descriptor })
+            validateToolOnlyResponses(responses)
 
-            when (response) {
-                is Message.Assistant -> {
-                    if (!containsToolCall(response.content)) {
-                        val processed = hookManager.applyAssistantResponseHooks(sessionId, response.content)
-                        return processed
+            responses.forEach { response ->
+                when (response) {
+                    is Message.Reasoning -> {
+                        allMessages.add(response)
                     }
-                    sessionManager.addAssistantMessage(
-                        sessionId = sessionId,
-                        content = response.content,
-                        metadata = mapOf("source" to "assistant_tool_plan"),
-                        agentId = runtimeContext.agentId,
-                    )
-                    allMessages.add(response)
-                }
-                is Message.Tool.Call -> {
-                    allMessages.add(response)
-                    val toolResult = executeToolCall(sessionId, response)
-                    allMessages.add(toolResult)
-                }
-                else -> {
-                    return response.content
+
+                    is Message.Assistant -> Unit
+
+                    is Message.Tool.Call -> {
+                        if (messageHandler.isSafeStopRequested(sessionId)) {
+                            messageHandler.onSafeStopReached(sessionId)
+                            throw SafeStopSignal()
+                        }
+                        allMessages.add(response)
+                        val toolResult = executeToolCall(sessionId, response)
+                        allMessages.add(toolResult)
+                        if (messageHandler.isSafeStopRequested(sessionId)) {
+                            messageHandler.onSafeStopReached(sessionId)
+                            throw SafeStopSignal()
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    private fun validateToolOnlyResponses(responses: List<Message.Response>) {
+        if (responses.isEmpty()) {
+            throw IllegalStateException("Tool-only mode violation: model returned empty response batch")
+        }
+
+        val nonEmptyAssistantText = responses
+            .filterIsInstance<Message.Assistant>()
+            .firstOrNull { message -> message.content.isNotBlank() }
+            ?.content
+
+        if (nonEmptyAssistantText != null) {
+            throw IllegalStateException(
+                "Tool-only mode violation: assistant text is not allowed: ${nonEmptyAssistantText.take(200)}"
+            )
+        }
+
+        val hasToolCall = responses.any { response -> response is Message.Tool.Call }
+        if (!hasToolCall) {
+            val responseTypes = responses.joinToString(", ") { response ->
+                when (response) {
+                    is Message.Assistant -> "assistant"
+                    is Message.Tool.Call -> "tool_call"
+                    is Message.Reasoning -> "reasoning"
+                }
+            }
+            throw IllegalStateException(
+                "Tool-only mode violation: model returned no tool call (responses=$responseTypes)"
+            )
         }
     }
 
@@ -269,15 +324,7 @@ public class ConversationAgent(
             sessionId
         )
 
-        saveToolCall(
-            sessionId = sessionId,
-            toolName = resolvedCall.toolName,
-            toolCallId = resolvedCall.toolCallId,
-            arguments = json.parseToJsonElement(finalArgs),
-        )
-
         val result = executeRegisteredTool(
-            rawToolName = resolvedCall.rawToolName,
             toolName = resolvedCall.toolName,
             toolArgs = finalArgs,
         )
@@ -289,10 +336,11 @@ public class ConversationAgent(
             result = result
         )
 
-        saveToolResult(
+        saveToolExchange(
             sessionId = sessionId,
-            toolCallId = resolvedCall.toolCallId,
             toolName = resolvedCall.toolName,
+            toolCallId = resolvedCall.toolCallId,
+            arguments = parseToolArgs(finalArgs),
             result = JsonPrimitive(processedResult),
             isError = false,
             errorMessage = null,
@@ -319,7 +367,7 @@ public class ConversationAgent(
         return ResolvedToolCall(
             call = toolCall,
             rawToolName = rawToolName,
-            toolName = resolveToolName(rawToolName),
+            toolName = rawToolName,
             toolArgs = toolArgs,
             toolCallId = toolCall.id.orEmpty(),
             parsedArgs = parseToolArgs(toolArgs),
@@ -333,16 +381,11 @@ public class ConversationAgent(
         resultToolName: String,
         arguments: JsonElement,
     ): Message.Tool.Result {
-        saveToolCall(
+        saveToolExchange(
             sessionId = sessionId,
             toolName = resolvedCall.toolName,
             toolCallId = resolvedCall.toolCallId,
             arguments = arguments,
-        )
-        saveToolResult(
-            sessionId = sessionId,
-            toolCallId = resolvedCall.toolCallId,
-            toolName = resolvedCall.toolName,
             result = JsonPrimitive(reason),
             isError = true,
             errorMessage = reason,
@@ -381,16 +424,11 @@ public class ConversationAgent(
         }
 
         val result = extractReturnAgentResult(resolvedCall.toolArgs)
-        saveToolCall(
+        saveToolExchange(
             sessionId = sessionId,
             toolName = resolvedCall.toolName,
             toolCallId = resolvedCall.toolCallId,
             arguments = resolvedCall.parsedArgs,
-        )
-        saveToolResult(
-            sessionId = sessionId,
-            toolCallId = resolvedCall.toolCallId,
-            toolName = resolvedCall.toolName,
             result = JsonPrimitive(result),
             isError = false,
             errorMessage = null,
@@ -407,7 +445,7 @@ public class ConversationAgent(
         }
 
         if (!runtimeContext.canInteractWithUser) {
-            val reason = "Subagent cannot call await_user_input."
+            val reason = "Subagent cannot call ${ToolNames.WAIT_FOR_USER_INPUT}."
             return rejectToolCall(
                 sessionId = sessionId,
                 resolvedCall = resolvedCall,
@@ -417,7 +455,7 @@ public class ConversationAgent(
             )
         }
 
-        saveToolCall(
+        saveSuspend(
             sessionId = sessionId,
             toolName = resolvedCall.toolName,
             toolCallId = resolvedCall.toolCallId,
@@ -425,12 +463,11 @@ public class ConversationAgent(
         )
         sessionManager.suspendForUserInput(sessionId)
         val input = messageHandler.requestInput(sessionId)
-        sessionManager.addUserMessage(sessionId, input, runtimeContext.agentId)
         sessionManager.resumeRun(sessionId, currentJob())
-        saveToolResult(
+        saveResume(
             sessionId = sessionId,
-            toolCallId = resolvedCall.toolCallId,
             toolName = resolvedCall.toolName,
+            toolCallId = resolvedCall.toolCallId,
             result = JsonPrimitive(input),
             isError = false,
             errorMessage = null,
@@ -442,13 +479,34 @@ public class ConversationAgent(
         )
     }
 
-    private suspend fun saveToolCall(
+    private suspend fun saveToolExchange(
+        sessionId: String,
+        toolName: String,
+        toolCallId: String,
+        arguments: JsonElement,
+        result: JsonElement,
+        isError: Boolean,
+        errorMessage: String?,
+    ) {
+        sessionBridge.saveToolExchange(
+            sessionId = sessionId,
+            toolName = toolName,
+            toolCallId = toolCallId,
+            arguments = arguments,
+            result = result,
+            isError = isError,
+            errorMessage = errorMessage,
+            agentId = runtimeContext.agentId,
+        )
+    }
+
+    private suspend fun saveSuspend(
         sessionId: String,
         toolName: String,
         toolCallId: String,
         arguments: JsonElement,
     ) {
-        sessionBridge.saveToolCall(
+        sessionBridge.saveSuspend(
             sessionId = sessionId,
             toolName = toolName,
             toolCallId = toolCallId,
@@ -457,18 +515,18 @@ public class ConversationAgent(
         )
     }
 
-    private suspend fun saveToolResult(
+    private suspend fun saveResume(
         sessionId: String,
-        toolCallId: String,
         toolName: String,
+        toolCallId: String,
         result: JsonElement,
         isError: Boolean,
         errorMessage: String?,
     ) {
-        sessionBridge.saveToolResult(
+        sessionBridge.saveResume(
             sessionId = sessionId,
-            toolCallId = toolCallId,
             toolName = toolName,
+            toolCallId = toolCallId,
             result = result,
             isError = isError,
             errorMessage = errorMessage,
@@ -490,49 +548,38 @@ public class ConversationAgent(
     }
 
     private suspend fun executeRegisteredTool(
-        rawToolName: String,
         toolName: String,
         toolArgs: String,
     ): String {
         return try {
-            val tool = toolRegistry.tools.find { it.name == toolName || it.name == rawToolName }
+            val tool = toolRegistry.tools.find { it.name == toolName }
             if (tool == null) {
                 "Error: Tool '$toolName' not found"
             } else {
                 val argsJson = json.parseToJsonElement(toolArgs).jsonObject
-                @Suppress("UNCHECKED_CAST")
-                val decodedArgs = (tool as ai.koog.agents.core.tools.Tool<Any?, Any?>).decodeArgs(argsJson)
-                @Suppress("UNCHECKED_CAST")
-                val toolResult = tool.execute(decodedArgs)
-                toolResult.toString()
+                executeToolSafely(tool = tool, argsJson = argsJson)
             }
         } catch (e: Exception) {
             "Error executing tool $toolName: ${e.message}"
         }
     }
 
-    private fun resolveToolName(toolName: String): String {
-        return when (toolName) {
-            "fork_subagent" -> "forkSubagent"
-            "spawn_subagent" -> "spawnSubagent"
-            "create_agent" -> "forkSubagent"
-            "poll_agent_result" -> "pollAgentResult"
-            "await_agent_result" -> "awaitAgentResult"
-            "kill_agent" -> "killAgent"
-            "list_active_agents" -> "listActiveAgents"
-            "say_to_agent" -> "sayToAgent"
-            "return_agent_result" -> "returnAgentResult"
-            else -> toolName
-        }
+    @OptIn(InternalAgentToolsApi::class)
+    private suspend fun executeToolSafely(
+        tool: ai.koog.agents.core.tools.Tool<*, *>,
+        argsJson: kotlinx.serialization.json.JsonObject,
+    ): String {
+        val decodedArgs = tool.decodeArgs(argsJson)
+        val toolResult = tool.executeUnsafe(decodedArgs)
+        return tool.encodeResultToStringUnsafe(toolResult)
     }
 
     private fun isCreateAgentTool(toolName: String): Boolean {
-        val normalized = resolveToolName(toolName)
-        return normalized == "forkSubagent" || normalized == "spawnSubagent"
+        return toolName == ToolNames.FORK_SUBAGENT || toolName == ToolNames.SPAWN_SUBAGENT
     }
 
     private fun isReturnAgentResultTool(toolName: String): Boolean {
-        return resolveToolName(toolName) == "returnAgentResult"
+        return toolName == ToolNames.RETURN_AGENT_RESULT
     }
 
     private fun extractReturnAgentResult(toolArgs: String): String {
@@ -554,9 +601,7 @@ public class ConversationAgent(
     }
 
     private fun isAwaitUserInputTool(rawToolName: String): Boolean {
-        return AWAIT_USER_INPUT_TOOL_NAMES.any { candidate ->
-            candidate.equals(rawToolName, ignoreCase = true)
-        }
+        return rawToolName == ToolNames.WAIT_FOR_USER_INPUT
     }
 
     private suspend fun currentJob(): Job {
@@ -566,18 +611,9 @@ public class ConversationAgent(
 
     private class SubAgentReturnSignal(val result: String) : RuntimeException()
 
-    private fun containsToolCall(content: String): Boolean {
-        return content.contains("function") || content.contains("tool_call")
-    }
+    private class SafeStopSignal : RuntimeException()
 
     public companion object {
-        private val AWAIT_USER_INPUT_TOOL_NAMES: Set<String> = setOf(
-            "await_user_input",
-            "awaitUserInput",
-            "wait_for_user_input",
-            "waitForUserInput",
-        )
-
         public val DEFAULT_SYSTEM_PROMPT: String = """
             You are a highly skilled AI coding assistant powered by Koog framework with kimi-cli capabilities.
 

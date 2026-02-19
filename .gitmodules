@@ -7,3 +7,6 @@
 [submodule "reference/kimi-cli"]
 	path = reference/kimi-cli
 	url = https://github.com/MoonshotAI/kimi-cli.git
+[submodule "reference/kotlin-multiplatform-oidc"]
+	path = reference/kotlin-multiplatform-oidc
+	url = https://github.com/kalinjul/kotlin-multiplatform-oidc.git

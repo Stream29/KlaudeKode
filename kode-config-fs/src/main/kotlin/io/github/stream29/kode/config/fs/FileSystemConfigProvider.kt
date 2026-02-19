@@ -8,7 +8,6 @@ import io.github.stream29.kode.config.api.AppConfig
 import io.github.stream29.kode.config.api.ConfigProvider
 import io.github.stream29.kode.config.api.ConfigSource
 import io.github.stream29.kode.config.core.ConfigTemplateProvider
-import io.github.stream29.kode.dispatcher.VirtualThread
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
@@ -23,7 +22,7 @@ public class FileSystemConfigProvider(
     private val configFile: File
 ) : ConfigProvider {
 
-    private val ioDispatcher = Dispatchers.VirtualThread
+    private val ioDispatcher = Dispatchers.IO
 
     private val yaml = Yaml(
         configuration = YamlConfiguration(
@@ -89,7 +88,7 @@ public class FileSystemConfigSource(
     private val configFile: File
 ) : ConfigSource {
 
-    private val ioDispatcher = Dispatchers.VirtualThread
+    private val ioDispatcher = Dispatchers.IO
 
     override suspend fun read(): String? {
         return withContext(ioDispatcher) {

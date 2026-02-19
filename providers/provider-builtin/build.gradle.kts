@@ -14,4 +14,6 @@ dependencies {
     implementation(projects.providers.providerGroq)
     implementation(projects.providers.providerMistral)
     implementation(projects.providers.providerXai)
+
+    implementation(libs.koogAgentsTest)
 }

@@ -10,11 +10,12 @@ import io.github.stream29.kode.providers.api.LlmAuth
 import io.github.stream29.kode.providers.api.LlmProvider
 import io.github.stream29.kode.providers.api.ProviderAuthMode
 import io.github.stream29.kode.providers.api.ProviderPreset
+import io.github.stream29.kode.providers.api.requireApiKeyAuth
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.header
 
-public object GeminiApiKeyProvider : LlmProvider<LlmAuth.ApiKey> {
+public object GeminiApiKeyProvider : LlmProvider {
     override val id: String = "gemini"
     override val displayName: String = "Google Gemini (API Key)"
     override val llmProvider: LLMProvider = LLMProvider.Google
@@ -33,12 +34,13 @@ public object GeminiApiKeyProvider : LlmProvider<LlmAuth.ApiKey> {
 
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
-    override fun createClient(auth: LlmAuth.ApiKey): LLMClient {
-        val settings = createSettings(auth.baseUrl)
+    override fun createClient(auth: LlmAuth): LLMClient {
+        val apiKeyAuth = requireApiKeyAuth(providerId = id, auth = auth)
+        val settings = createSettings(apiKeyAuth.baseUrl)
         return GoogleLLMClient(
-            apiKey = auth.apiKey,
+            apiKey = apiKeyAuth.apiKey,
             settings = settings,
-            baseClient = createBaseClient(auth.customHeaders),
+            baseClient = createBaseClient(apiKeyAuth.customHeaders),
         )
     }
 }

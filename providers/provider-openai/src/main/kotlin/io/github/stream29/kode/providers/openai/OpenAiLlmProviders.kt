@@ -12,11 +12,13 @@ import io.github.stream29.kode.providers.api.ProviderAuthMode
 import io.github.stream29.kode.providers.api.ProviderOAuthAuthCodePkcePreset
 import io.github.stream29.kode.providers.api.ProviderOAuthDeviceFlowPreset
 import io.github.stream29.kode.providers.api.ProviderPreset
+import io.github.stream29.kode.providers.api.requireApiKeyAuth
+import io.github.stream29.kode.providers.api.requireOAuthAccessTokenAuth
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.header
 
-public object OpenAiApiKeyProvider : LlmProvider<LlmAuth.ApiKey> {
+public object OpenAiApiKeyProvider : LlmProvider {
     override val id: String = "openai-api-key"
     override val displayName: String = "OpenAI (API Key)"
     override val llmProvider: LLMProvider = OpenAiApiKeyProviderKey
@@ -35,17 +37,18 @@ public object OpenAiApiKeyProvider : LlmProvider<LlmAuth.ApiKey> {
 
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
-    override fun createClient(auth: LlmAuth.ApiKey): LLMClient {
-        val settings = createSettings(auth.baseUrl)
+    override fun createClient(auth: LlmAuth): LLMClient {
+        val apiKeyAuth = requireApiKeyAuth(providerId = id, auth = auth)
+        val settings = createSettings(apiKeyAuth.baseUrl)
         return OpenAILLMClient(
-            apiKey = auth.apiKey,
+            apiKey = apiKeyAuth.apiKey,
             settings = settings,
-            baseClient = createBaseClient(auth.customHeaders),
+            baseClient = createBaseClient(apiKeyAuth.customHeaders),
         )
     }
 }
 
-public object OpenAiSubscriptionBrowserProvider : LlmProvider<LlmAuth.OAuthAccessToken> {
+public object OpenAiSubscriptionBrowserProvider : LlmProvider {
     override val id: String = "openai-subscription-browser"
     override val displayName: String = "OpenAI Subscription (Browser OAuth)"
     override val llmProvider: LLMProvider = OpenAiSubscriptionBrowserProviderKey
@@ -57,7 +60,7 @@ public object OpenAiSubscriptionBrowserProvider : LlmProvider<LlmAuth.OAuthAcces
         displayName = displayName,
         authModes = setOf(ProviderAuthMode.OAuthSubscription),
         envKeys = listOf("OPENAI_API_KEY"),
-        defaultBaseUrl = OPENAI_BASE_URL,
+        defaultBaseUrl = OPENAI_CODEX_BASE_URL,
         description = "OpenAI ChatGPT Plus/Pro OAuth via browser callback",
         models = models(),
         oauthAuthCodePkceByMode = mapOf(
@@ -78,17 +81,18 @@ public object OpenAiSubscriptionBrowserProvider : LlmProvider<LlmAuth.OAuthAcces
 
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.OAuthAccessToken
 
-    override fun createClient(auth: LlmAuth.OAuthAccessToken): LLMClient {
-        val settings = createSettings(auth.baseUrl)
+    override fun createClient(auth: LlmAuth): LLMClient {
+        val oauthAuth = requireOAuthAccessTokenAuth(providerId = id, auth = auth)
+        val settings = createSubscriptionSettings(oauthAuth.baseUrl)
         return OpenAILLMClient(
-            apiKey = auth.accessToken,
+            apiKey = oauthAuth.accessToken,
             settings = settings,
-            baseClient = createBaseClient(auth.customHeaders),
+            baseClient = createBaseClient(oauthAuth.customHeaders),
         )
     }
 }
 
-public object OpenAiSubscriptionDeviceProvider : LlmProvider<LlmAuth.OAuthAccessToken> {
+public object OpenAiSubscriptionDeviceProvider : LlmProvider {
     override val id: String = "openai-subscription-device"
     override val displayName: String = "OpenAI Subscription (Headless OAuth)"
     override val llmProvider: LLMProvider = OpenAiSubscriptionDeviceProviderKey
@@ -100,7 +104,7 @@ public object OpenAiSubscriptionDeviceProvider : LlmProvider<LlmAuth.OAuthAccess
         displayName = displayName,
         authModes = setOf(ProviderAuthMode.OAuthDevice),
         envKeys = listOf("OPENAI_API_KEY"),
-        defaultBaseUrl = OPENAI_BASE_URL,
+        defaultBaseUrl = OPENAI_CODEX_BASE_URL,
         description = "OpenAI ChatGPT Plus/Pro OAuth device flow for headless environments",
         models = models(),
         oauthDeviceFlowByMode = mapOf(
@@ -119,17 +123,18 @@ public object OpenAiSubscriptionDeviceProvider : LlmProvider<LlmAuth.OAuthAccess
 
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.OAuthAccessToken
 
-    override fun createClient(auth: LlmAuth.OAuthAccessToken): LLMClient {
-        val settings = createSettings(auth.baseUrl)
+    override fun createClient(auth: LlmAuth): LLMClient {
+        val oauthAuth = requireOAuthAccessTokenAuth(providerId = id, auth = auth)
+        val settings = createSubscriptionSettings(oauthAuth.baseUrl)
         return OpenAILLMClient(
-            apiKey = auth.accessToken,
+            apiKey = oauthAuth.accessToken,
             settings = settings,
-            baseClient = createBaseClient(auth.customHeaders),
+            baseClient = createBaseClient(oauthAuth.customHeaders),
         )
     }
 }
 
-public object OpenAiCompatibleProvider : LlmProvider<LlmAuth.ApiKey> {
+public object OpenAiCompatibleProvider : LlmProvider {
     override val id: String = "openai-compatible"
     override val displayName: String = "OpenAI-Compatible"
     override val llmProvider: LLMProvider = OpenAiCompatibleProviderKey
@@ -148,13 +153,14 @@ public object OpenAiCompatibleProvider : LlmProvider<LlmAuth.ApiKey> {
 
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
-    override fun createClient(auth: LlmAuth.ApiKey): LLMClient {
-        val baseUrl = requireNotNull(auth.baseUrl) { "baseUrl is required for OpenAI-Compatible" }
+    override fun createClient(auth: LlmAuth): LLMClient {
+        val apiKeyAuth = requireApiKeyAuth(providerId = id, auth = auth)
+        val baseUrl = requireNotNull(apiKeyAuth.baseUrl) { "baseUrl is required for OpenAI-Compatible" }
         val settings = createSettings(baseUrl)
         return OpenAILLMClient(
-            apiKey = auth.apiKey,
+            apiKey = apiKeyAuth.apiKey,
             settings = settings,
-            baseClient = createBaseClient(auth.customHeaders),
+            baseClient = createBaseClient(apiKeyAuth.customHeaders),
         )
     }
 }
@@ -183,6 +189,15 @@ private fun createSettings(baseUrlInput: String?): OpenAIClientSettings {
     }
 }
 
+private fun createSubscriptionSettings(baseUrlInput: String?): OpenAIClientSettings {
+    val normalizedBaseUrl = normalizeOpenAiSubscriptionBaseUrl(baseUrlInput)
+    return OpenAIClientSettings(
+        baseUrl = normalizedBaseUrl,
+        chatCompletionsPath = OPENAI_CODEX_RESPONSES_PATH,
+        responsesAPIPath = OPENAI_CODEX_RESPONSES_PATH,
+    )
+}
+
 private fun normalizeOpenAiBaseUrl(baseUrl: String?): String? {
     val trimmed = baseUrl?.trim().orEmpty()
     if (trimmed.isBlank()) {
@@ -190,6 +205,24 @@ private fun normalizeOpenAiBaseUrl(baseUrl: String?): String? {
     }
     val withoutSlash = trimmed.trimEnd('/')
     return withoutSlash.removeSuffix("/v1")
+}
+
+private fun normalizeOpenAiSubscriptionBaseUrl(baseUrl: String?): String {
+    val trimmed = baseUrl?.trim().orEmpty()
+    if (trimmed.isBlank()) {
+        return OPENAI_CODEX_BASE_URL
+    }
+    val normalized = trimmed.trimEnd('/').lowercase()
+    if (normalized == OPENAI_BASE_URL || normalized == OPENAI_BASE_URL_HOST_ONLY) {
+        return OPENAI_CODEX_BASE_URL
+    }
+    if (normalized.startsWith("$OPENAI_CODEX_BASE_URL/backend-api/codex")) {
+        return OPENAI_CODEX_BASE_URL
+    }
+    if (normalized.startsWith(OPENAI_CODEX_BASE_URL)) {
+        return OPENAI_CODEX_BASE_URL
+    }
+    return trimmed.trimEnd('/')
 }
 
 private val OPENAI_MODELS: List<LLModel> = listOf(
@@ -225,4 +258,7 @@ private object OpenAiSubscriptionDeviceProviderKey : LLMProvider(
 private object OpenAiCompatibleProviderKey : LLMProvider("openai-compatible", "OpenAI-Compatible")
 
 private const val OPENAI_BASE_URL: String = "https://api.openai.com/v1"
+private const val OPENAI_BASE_URL_HOST_ONLY: String = "https://api.openai.com"
+private const val OPENAI_CODEX_BASE_URL: String = "https://chatgpt.com"
+private const val OPENAI_CODEX_RESPONSES_PATH: String = "backend-api/codex/responses"
 private const val OPENAI_CLIENT_ID: String = "app_EMoamEEZ73f0CkXaXp7hrann"

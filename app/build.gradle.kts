@@ -4,6 +4,11 @@ import org.gradle.internal.os.OperatingSystem
 val os: OperatingSystem = OperatingSystem.current()
 val arch: String = System.getProperty("os.arch").lowercase()
 val isAarch64: Boolean = arch.contains("aarch64") || arch.contains("arm64")
+val composeDesktopCurrentOs: String = when {
+    os.isWindows -> if (isAarch64) "desktop-jvm-windows-arm64" else "desktop-jvm-windows-x64"
+    os.isMacOsX -> if (isAarch64) "desktop-jvm-macos-arm64" else "desktop-jvm-macos-x64"
+    else -> if (isAarch64) "desktop-jvm-linux-arm64" else "desktop-jvm-linux-x64"
+}
 val javafxPlatform: String = when {
     os.isWindows -> "win"
     os.isMacOsX -> "mac"
@@ -21,12 +26,14 @@ plugins {
 dependencies {
     // New modular architecture
     implementation(projects.kodeCore)
-    implementation(projects.kodeTools)
-    implementation(projects.kodeConfigApi)
-    implementation(projects.kodeConfigCore)
-    implementation(projects.kodeConfigFs)
+    implementation(projects.tools.webTool)
+    implementation(projects.config.api)
+    implementation(projects.config.core)
+    implementation(projects.config.fs)
     implementation(projects.kodeOauthCore)
-    implementation(projects.kodeUiCore)
+    implementation(projects.ui.core)
+    implementation(projects.ui.components)
+    implementation(projects.ui.bridge)
     implementation(projects.kodeSessionCore)
     implementation(projects.providers.providerApi)
     implementation(projects.providers.providerBuiltin)
@@ -40,20 +47,21 @@ dependencies {
     implementation(projects.providers.providerMistral)
     implementation(projects.providers.providerXai)
     
-    // Legacy modules
-    implementation(projects.scriptingTool)
-    implementation(projects.virtualThreadDispatcher)
+    // Script engine + script tool module
+    implementation(projects.tools.kotlinScriptTool)
     
     // External dependencies
     implementation(libs.bundles.koog)
     implementation(libs.bundles.compose)
+    implementation(libs.jetbrainsLifecycleViewmodelNavigation3)
+    implementation(libs.jetbrainsNavigation3Ui)
     implementation(libs.bundles.serialization)
     implementation(libs.kotlinxDatetime)
     implementation(libs.koinCore)
     implementation(libs.koinCompose)
-    implementation(compose.desktop.currentOs)
-    implementation(compose.material3)
-    implementation(compose.materialIconsExtended)
+    implementation("org.jetbrains.compose.desktop:$composeDesktopCurrentOs:${libs.versions.compose.get()}")
+    implementation("org.jetbrains.compose.material3:material3:${libs.versions.compose.get()}")
+    implementation("org.jetbrains.compose.material:material-icons-extended:1.7.3")
     implementation(libs.markdownRendererM3)
     implementation("org.openjfx:javafx-base:$javafxVersion:$javafxPlatform")
     implementation("org.openjfx:javafx-graphics:$javafxVersion:$javafxPlatform")

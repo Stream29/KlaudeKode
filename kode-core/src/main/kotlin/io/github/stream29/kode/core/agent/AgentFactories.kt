@@ -11,6 +11,8 @@ import ai.koog.prompt.llm.LLMProvider
 import ai.koog.rag.base.files.JVMFileSystemProvider
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmAuth as ConfigLlmAuth
+import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER
+import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE
 import io.github.stream29.kode.oauth.core.DefaultOAuthAuthCodePkceClient
 import io.github.stream29.kode.oauth.core.DefaultOAuthCredentialManager
 import io.github.stream29.kode.oauth.core.DefaultOAuthDeviceFlowClient
@@ -47,12 +49,17 @@ internal object MultiLLMExecutorFactory {
             if (existingOwner != null && existingOwner.id != auth.id) {
                 throw IllegalArgumentException(
                     "Auth '${auth.id}' conflicts with '${existingOwner.id}': " +
-                            "${providerId} and ${existingOwner.providerId} share runtime provider '${provider.llmProvider.id}'."
+                            "$providerId and ${existingOwner.providerId} share runtime provider '${provider.llmProvider.id}'."
                 )
             }
             if (existingOwner == null) {
                 val runtimeAuth = resolveRuntimeAuth(auth)
-                val client = provider.createClientAny(runtimeAuth)
+                if (!provider.supportsAuth(runtimeAuth)) {
+                    throw IllegalArgumentException(
+                        "Provider '$providerId' does not support auth for config '${auth.id}': ${runtimeAuth::class.simpleName}."
+                    )
+                }
+                val client = provider.createClient(runtimeAuth)
                 clients[provider.llmProvider] = client
                 ownerByProvider[provider.llmProvider] = auth
             }
@@ -151,8 +158,8 @@ internal object MultiLLMExecutorFactory {
     }
 
     private val OPENAI_SUBSCRIPTION_PROVIDER_IDS: Set<String> = setOf(
-        "openai-subscription-browser",
-        "openai-subscription-device",
+        PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER,
+        PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE,
     )
     private const val OPENAI_ACCOUNT_HEADER: String = "ChatGPT-Account-Id"
 }

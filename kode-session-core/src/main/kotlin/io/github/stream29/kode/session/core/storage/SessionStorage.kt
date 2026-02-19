@@ -26,12 +26,12 @@ public interface SessionStorage {
     /**
      * List all sessions with optional filtering.
      */
-    public suspend fun listSessions(filter: SessionFilter? = null): List<SessionSummary>
+    public suspend fun listSessions(filter: SessionFilter?): List<SessionSummary>
     
     /**
      * Delete a session (soft or hard delete based on implementation).
      */
-    public suspend fun deleteSession(sessionId: String, hardDelete: Boolean = false)
+    public suspend fun deleteSession(sessionId: String, hardDelete: Boolean)
     
     /**
      * Save a checkpoint for a session.

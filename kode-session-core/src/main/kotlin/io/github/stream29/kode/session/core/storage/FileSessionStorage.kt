@@ -2,35 +2,41 @@ package io.github.stream29.kode.session.core.storage
 
 import app.softwork.serialization.csv.CSVFormat
 import io.github.stream29.kode.config.fs.FileSystemLocations
-import io.github.stream29.kode.dispatcher.VirtualThread
 import io.github.stream29.kode.session.core.SessionRepository
+import io.github.stream29.kode.session.core.model.AgentMessage
+import io.github.stream29.kode.session.core.model.Agent
+import io.github.stream29.kode.session.core.model.AgentConfig
+import io.github.stream29.kode.session.core.model.AgentState
 import io.github.stream29.kode.session.core.model.ConversationSession
 import io.github.stream29.kode.session.core.model.Session
 import io.github.stream29.kode.session.core.model.SessionCheckpoint
 import io.github.stream29.kode.session.core.model.SessionConfig
-import io.github.stream29.kode.session.core.model.SessionDataSnapshot
+import io.github.stream29.kode.session.core.model.SessionMessage
 import io.github.stream29.kode.session.core.model.SessionMetadata
 import io.github.stream29.kode.session.core.model.SessionMetadataCsvRow
 import io.github.stream29.kode.session.core.model.SessionState
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
+import io.github.stream29.kode.session.core.model.SubAgent
+import io.github.stream29.kode.session.core.model.toConversationSession
 import io.github.stream29.kode.session.core.model.toCsvRow
 import io.github.stream29.kode.session.core.model.toMetadata
-import io.github.stream29.kode.session.core.model.toSnapshot
-import io.github.stream29.kode.session.core.model.toConversationSession
 import io.github.stream29.kode.session.core.model.toSessionRuntime
-import io.github.stream29.kode.session.core.model.toRuntime
 import kotlinx.collections.immutable.PersistentList
+import kotlinx.collections.immutable.persistentHashMapOf
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.util.Base64
 
 @OptIn(ExperimentalSerializationApi::class)
 public class FileSessionStorage(
@@ -52,65 +58,160 @@ public class FileSessionStorage(
     }
 
     override suspend fun listSessions(): List<SessionMetadata> {
-        return withContext(Dispatchers.VirtualThread) {
+        return withContext(Dispatchers.IO) {
             rwMutex.withLock {
-                readMetadataRows().map { it.toMetadata() }
+                readMetadataRows().map { row -> row.toMetadata() }
             }
         }
     }
 
     override suspend fun loadSession(id: String): Session {
-        return withContext(Dispatchers.VirtualThread) {
+        return withContext(Dispatchers.IO) {
             rwMutex.withLock {
-                val metadataMap = readMetadataRows().associateBy { it.id }
-                val metadataRow = metadataMap[id]
+                val metadataRow = readMetadataRows().firstOrNull { row -> row.id == id }
                     ?: throw IllegalArgumentException("Session not found: $id")
                 val metadata = metadataRow.toMetadata()
-                val sessionDataFile = getSessionDataFile(id)
+                val sessionMeta = readSessionMeta(sessionId = id) ?: SessionFileMeta(config = emptySessionConfig())
+                val storedAgentMetas = readAllAgentMetas(sessionId = id)
 
-                val loadedRuntime = if (sessionDataFile.isFile) {
-                    val snapshot = json.decodeFromString(SessionDataSnapshot.serializer(), sessionDataFile.readText())
-                    snapshot.toRuntime(metadata)
-                } else {
-                    buildEmptyRuntime(metadata)
+                val mainAgentId = mainAgentId(sessionId = id)
+                val mainAgentMeta = storedAgentMetas
+                    .firstOrNull { item -> item.kind == AgentKind.MAIN && item.agentId == mainAgentId }
+                    ?: storedAgentMetas.firstOrNull { item -> item.kind == AgentKind.MAIN }
+                    ?: defaultAgentMeta(
+                        agentId = mainAgentId,
+                        kind = AgentKind.MAIN,
+                        config = AgentConfig(
+                            systemPrompt = sessionMeta.config.systemPrompt,
+                            taskDescription = null,
+                            expectedResult = null,
+                            canInteractWithUser = true,
+                        ),
+                    )
+
+                val mainAgentMessages = loadWindowMessages(
+                    sessionId = id,
+                    agentId = mainAgentMeta.agentId,
+                    agentMeta = mainAgentMeta,
+                ).messages.toPersistentList()
+
+                val subagentMetas = storedAgentMetas.filter { item ->
+                    item.kind == AgentKind.SUBAGENT && item.agentId != mainAgentMeta.agentId
+                }
+                var subagentMap = persistentHashMapOf<String, SubAgent>()
+                subagentMetas.forEach { subMeta ->
+                    val subMessages = loadWindowMessages(
+                        sessionId = id,
+                        agentId = subMeta.agentId,
+                        agentMeta = subMeta,
+                    ).messages.toPersistentList()
+                    val deferred = CompletableDeferred<String>()
+                    if (subMeta.completed) {
+                        deferred.complete(subMeta.result.orEmpty())
+                    }
+                    val subAgent = SubAgent(
+                        delegate = Agent(
+                            state = MutableStateFlow(normalizeAgentState(subMeta.state)),
+                            config = MutableStateFlow(subMeta.config),
+                            messages = MutableStateFlow(subMessages),
+                        ),
+                        result = deferred,
+                    )
+                    subagentMap = subagentMap.put(subMeta.agentId, subAgent)
                 }
 
-                val normalizedMetadata = if (loadedRuntime.metadata.value.state == SessionState.Running) {
-                    loadedRuntime.metadata.value.copy(state = SessionState.Suspended)
+                val normalizedSessionState = if (metadata.state == SessionState.Running) {
+                    SessionState.Suspended
                 } else {
-                    loadedRuntime.metadata.value
+                    metadata.state
                 }
+                val totalMainMessageCount = clampToInt(mainAgentMeta.nextSeq)
 
-                loadedRuntime.metadata.value = metadata.copy(
-                    state = normalizedMetadata.state,
+                Session(
+                    metadata = MutableStateFlow(
+                        metadata.copy(
+                            state = normalizedSessionState,
+                            messageCount = totalMainMessageCount,
+                        )
+                    ),
+                    config = MutableStateFlow(sessionMeta.config),
+                    agent = MutableStateFlow(
+                        Agent(
+                            state = MutableStateFlow(normalizeAgentState(mainAgentMeta.state)),
+                            config = MutableStateFlow(mainAgentMeta.config),
+                            messages = MutableStateFlow(mainAgentMessages),
+                        )
+                    ),
+                    subagents = MutableStateFlow(subagentMap),
+                    checkpoints = MutableStateFlow(persistentListOf()),
+                    runJob = MutableStateFlow(null),
+                    mutex = Mutex(),
                 )
-                loadedRuntime
             }
         }
     }
 
     override suspend fun persistSession(id: String, session: Session) {
-        withContext(Dispatchers.VirtualThread) {
+        withContext(Dispatchers.IO) {
             rwMutex.withLock {
+                val sessionFolder = getSessionDirectory(sessionId = id)
+                sessionFolder.mkdirs()
+
+                val mainAgentId = mainAgentId(sessionId = id)
+                val mainAgentValue = session.agent.value
+                val mainMeta = persistAgent(
+                    sessionId = id,
+                    agentId = mainAgentId,
+                    kind = AgentKind.MAIN,
+                    state = mainAgentValue.state.value,
+                    config = mainAgentValue.config.value,
+                    messages = mainAgentValue.messages.value,
+                    result = null,
+                    completed = false,
+                )
+
+                val subagentIds = mutableSetOf(mainAgentId)
+                session.subagents.value.forEach { (agentId, subAgent) ->
+                    val completed = subAgent.result.isCompleted
+                    val resultText = if (completed) {
+                        runCatching { subAgent.result.await() }.getOrNull()
+                    } else {
+                        null
+                    }
+                    persistAgent(
+                        sessionId = id,
+                        agentId = agentId,
+                        kind = AgentKind.SUBAGENT,
+                        state = subAgent.delegate.state.value,
+                        config = subAgent.delegate.config.value,
+                        messages = subAgent.delegate.messages.value,
+                        result = resultText,
+                        completed = completed,
+                    )
+                    subagentIds += agentId
+                }
+
+                cleanupStaleAgentDirectories(
+                    sessionId = id,
+                    validAgentIds = subagentIds,
+                )
+
+                writeSessionMeta(
+                    sessionId = id,
+                    meta = SessionFileMeta(config = session.config.value),
+                )
+
                 val metadata = session.metadata.value.copy(
-                    messageCount = session.agent.value.messages.value.size,
+                    messageCount = clampToInt(mainMeta.nextSeq),
                 )
                 session.metadata.value = metadata
                 upsertMetadata(metadata)
-
-                val sessionFolder = getSessionDirectory(id)
-                sessionFolder.mkdirs()
-                val sessionDataFile = getSessionDataFile(id)
-                val snapshot = session.toSnapshot()
-                sessionDataFile.writeText(
-                    text = json.encodeToString(SessionDataSnapshot.serializer(), snapshot),
-                )
             }
         }
     }
 
     override suspend fun removeSession(id: String) {
-        withContext(Dispatchers.VirtualThread) {
+        withContext(Dispatchers.IO) {
             rwMutex.withLock {
                 val filtered = readMetadataRows().filterNot { row -> row.id == id }
                 writeMetadataRows(filtered)
@@ -124,11 +225,9 @@ public class FileSessionStorage(
     }
 
     override suspend fun getSession(sessionId: String): ConversationSession? {
-        return try {
+        return runCatching {
             loadSession(sessionId).toConversationSession()
-        } catch (_: IllegalArgumentException) {
-            null
-        }
+        }.getOrNull()
     }
 
     override suspend fun listSessions(filter: SessionFilter?): List<SessionSummary> {
@@ -180,23 +279,313 @@ public class FileSessionStorage(
         persistSession(sessionId, runtime)
     }
 
-    private fun buildEmptyRuntime(metadata: SessionMetadata): Session {
-        val emptySession = ConversationSession(
-            id = metadata.id,
-            title = metadata.title,
-            createdAt = metadata.createdAt,
-            updatedAt = metadata.updatedAt,
-            messages = emptyList(),
-            status = metadata.status,
-            parentSessionId = metadata.parentSessionId,
-            forkedFromMessageId = metadata.forkedFromMessageId,
-            version = metadata.version,
-            configuration = emptySessionConfig(),
-            tags = metadata.tags,
-            childSessionIds = metadata.childSessionIds,
-            runtimeState = SessionState.Suspended,
+    private fun persistAgent(
+        sessionId: String,
+        agentId: String,
+        kind: AgentKind,
+        state: AgentState,
+        config: AgentConfig,
+        messages: List<SessionMessage>,
+        result: String?,
+        completed: Boolean,
+    ): AgentFileMeta {
+        val existingMeta = readAgentMeta(sessionId = sessionId, agentId = agentId)
+        val fallbackMeta = defaultAgentMeta(
+            agentId = agentId,
+            kind = kind,
+            config = config,
         )
-        return emptySession.toSessionRuntime()
+        val baseMeta = (existingMeta ?: fallbackMeta).copy(
+            agentId = agentId,
+            kind = kind,
+            state = state,
+            config = config,
+            result = if (kind == AgentKind.SUBAGENT) result else null,
+            completed = if (kind == AgentKind.SUBAGENT) completed else false,
+        )
+
+        val existingWindow = loadWindowMessages(
+            sessionId = sessionId,
+            agentId = agentId,
+            agentMeta = baseMeta,
+        )
+
+        val reconciledMeta = reconcileAgentWindow(
+            sessionId = sessionId,
+            agentId = agentId,
+            existingMeta = baseMeta,
+            existingWindow = existingWindow,
+            runtimeMessages = messages,
+        )
+
+        writeAgentMeta(sessionId = sessionId, meta = reconciledMeta)
+        return reconciledMeta
+    }
+
+    private fun reconcileAgentWindow(
+        sessionId: String,
+        agentId: String,
+        existingMeta: AgentFileMeta,
+        existingWindow: LoadedWindow,
+        runtimeMessages: List<SessionMessage>,
+    ): AgentFileMeta {
+        val activeStartSeq = existingMeta.activeStartSeq.coerceAtLeast(0)
+        val nextSeq = existingMeta.nextSeq.coerceAtLeast(activeStartSeq)
+        val normalizedMeta = existingMeta.copy(
+            activeStartSeq = activeStartSeq,
+            nextSeq = nextSeq,
+        )
+
+        if (runtimeMessages.isEmpty()) {
+            return normalizedMeta.copy(
+                activeStartSeq = nextSeq,
+                nextSeq = nextSeq,
+            )
+        }
+
+        if (!existingWindow.complete) {
+            val segmentStart = nextSeq
+            writeMessages(
+                sessionId = sessionId,
+                agentId = agentId,
+                startSeq = segmentStart,
+                messages = runtimeMessages,
+            )
+            return normalizedMeta.copy(
+                activeStartSeq = segmentStart,
+                nextSeq = segmentStart + runtimeMessages.size,
+            )
+        }
+
+        val existingMessages = existingWindow.messages
+        if (existingMessages.isEmpty()) {
+            val segmentStart = nextSeq
+            writeMessages(
+                sessionId = sessionId,
+                agentId = agentId,
+                startSeq = segmentStart,
+                messages = runtimeMessages,
+            )
+            return normalizedMeta.copy(
+                activeStartSeq = segmentStart,
+                nextSeq = segmentStart + runtimeMessages.size,
+            )
+        }
+
+        if (existingMessages == runtimeMessages) {
+            return normalizedMeta
+        }
+
+        val suffixShift = findSuffixShift(
+            existing = existingMessages,
+            runtime = runtimeMessages,
+        )
+        if (suffixShift != null) {
+            return normalizedMeta.copy(activeStartSeq = activeStartSeq + suffixShift)
+        }
+
+        val divergence = firstDivergenceIndex(
+            existing = existingMessages,
+            runtime = runtimeMessages,
+        )
+
+        if (divergence == 0) {
+            val segmentStart = nextSeq
+            writeMessages(
+                sessionId = sessionId,
+                agentId = agentId,
+                startSeq = segmentStart,
+                messages = runtimeMessages,
+            )
+            return normalizedMeta.copy(
+                activeStartSeq = segmentStart,
+                nextSeq = segmentStart + runtimeMessages.size,
+            )
+        }
+
+        val rewriteStartSeq = activeStartSeq + divergence
+        deleteMessageRange(
+            sessionId = sessionId,
+            agentId = agentId,
+            startInclusive = rewriteStartSeq,
+            endExclusive = nextSeq,
+        )
+        writeMessages(
+            sessionId = sessionId,
+            agentId = agentId,
+            startSeq = rewriteStartSeq,
+            messages = runtimeMessages.drop(divergence),
+        )
+        return normalizedMeta.copy(nextSeq = activeStartSeq + runtimeMessages.size)
+    }
+
+    private fun findSuffixShift(existing: List<SessionMessage>, runtime: List<SessionMessage>): Long? {
+        if (runtime.isEmpty() || runtime.size >= existing.size) {
+            return null
+        }
+        val maxStart = existing.size - runtime.size
+        var start = 1
+        while (start <= maxStart) {
+            if (existing.subList(start, existing.size) == runtime) {
+                return start.toLong()
+            }
+            start += 1
+        }
+        return null
+    }
+
+    private fun firstDivergenceIndex(existing: List<SessionMessage>, runtime: List<SessionMessage>): Int {
+        val minSize = minOf(existing.size, runtime.size)
+        var index = 0
+        while (index < minSize) {
+            if (existing[index] != runtime[index]) {
+                return index
+            }
+            index += 1
+        }
+        return minSize
+    }
+
+    private fun loadWindowMessages(
+        sessionId: String,
+        agentId: String,
+        agentMeta: AgentFileMeta,
+    ): LoadedWindow {
+        val start = agentMeta.activeStartSeq.coerceAtLeast(0)
+        val end = agentMeta.nextSeq.coerceAtLeast(start)
+        if (start == end) {
+            return LoadedWindow(messages = emptyList(), complete = true)
+        }
+
+        val messages = mutableListOf<SessionMessage>()
+        var seq = start
+        while (seq < end) {
+            val messageFile = getAgentMessageFile(
+                sessionId = sessionId,
+                agentId = agentId,
+                seq = seq,
+            )
+            if (!messageFile.isFile) {
+                return LoadedWindow(messages = messages, complete = false)
+            }
+            val decoded = runCatching {
+                json.decodeFromString(AgentMessage.serializer(), messageFile.readText())
+            }.getOrNull()
+            if (decoded == null) {
+                return LoadedWindow(messages = messages, complete = false)
+            }
+            messages += decoded
+            seq += 1
+        }
+        return LoadedWindow(messages = messages, complete = true)
+    }
+
+    private fun writeMessages(
+        sessionId: String,
+        agentId: String,
+        startSeq: Long,
+        messages: List<SessionMessage>,
+    ) {
+        if (messages.isEmpty()) {
+            return
+        }
+        val messagesDir = getAgentMessagesDirectory(sessionId = sessionId, agentId = agentId)
+        messagesDir.mkdirs()
+        messages.forEachIndexed { index, message ->
+            val seq = startSeq + index
+            val messageFile = getAgentMessageFile(
+                sessionId = sessionId,
+                agentId = agentId,
+                seq = seq,
+            )
+            messageFile.writeText(
+                text = json.encodeToString(AgentMessage.serializer(), message),
+            )
+        }
+    }
+
+    private fun deleteMessageRange(
+        sessionId: String,
+        agentId: String,
+        startInclusive: Long,
+        endExclusive: Long,
+    ) {
+        var seq = startInclusive
+        while (seq < endExclusive) {
+            getAgentMessageFile(
+                sessionId = sessionId,
+                agentId = agentId,
+                seq = seq,
+            ).delete()
+            seq += 1
+        }
+    }
+
+    private fun cleanupStaleAgentDirectories(sessionId: String, validAgentIds: Set<String>) {
+        val agentsDir = getAgentsDirectory(sessionId = sessionId)
+        if (!agentsDir.isDirectory) {
+            return
+        }
+        val validNames = validAgentIds.map { agentId -> encodeAgentId(agentId) }.toSet()
+        agentsDir.listFiles()
+            ?.filter { file -> file.isDirectory && file.name !in validNames }
+            ?.forEach { directory -> directory.deleteRecursively() }
+    }
+
+    private fun readSessionMeta(sessionId: String): SessionFileMeta? {
+        val file = getSessionMetaFile(sessionId = sessionId)
+        if (!file.isFile) {
+            return null
+        }
+        return runCatching {
+            json.decodeFromString(SessionFileMeta.serializer(), file.readText())
+        }.getOrNull()
+    }
+
+    private fun writeSessionMeta(sessionId: String, meta: SessionFileMeta) {
+        val file = getSessionMetaFile(sessionId = sessionId)
+        file.parentFile?.mkdirs()
+        file.writeText(
+            text = json.encodeToString(SessionFileMeta.serializer(), meta),
+        )
+    }
+
+    private fun readAgentMeta(sessionId: String, agentId: String): AgentFileMeta? {
+        val file = getAgentMetaFile(sessionId = sessionId, agentId = agentId)
+        if (!file.isFile) {
+            return null
+        }
+        return runCatching {
+            json.decodeFromString(AgentFileMeta.serializer(), file.readText())
+        }.getOrNull()
+    }
+
+    private fun writeAgentMeta(sessionId: String, meta: AgentFileMeta) {
+        val file = getAgentMetaFile(sessionId = sessionId, agentId = meta.agentId)
+        file.parentFile?.mkdirs()
+        file.writeText(
+            text = json.encodeToString(AgentFileMeta.serializer(), meta),
+        )
+    }
+
+    private fun readAllAgentMetas(sessionId: String): List<AgentFileMeta> {
+        val agentsDir = getAgentsDirectory(sessionId = sessionId)
+        if (!agentsDir.isDirectory) {
+            return emptyList()
+        }
+        return agentsDir.listFiles()
+            ?.filter { file -> file.isDirectory }
+            ?.mapNotNull { directory ->
+                val metaFile = File(directory, AGENT_META_FILE_NAME)
+                if (!metaFile.isFile) {
+                    null
+                } else {
+                    runCatching {
+                        json.decodeFromString(AgentFileMeta.serializer(), metaFile.readText())
+                    }.getOrNull()
+                }
+            }
+            ?: emptyList()
     }
 
     private fun readMetadataRows(): List<SessionMetadataCsvRow> {
@@ -281,12 +670,69 @@ public class FileSessionStorage(
         writeMetadataRows(rows)
     }
 
+    private fun normalizeAgentState(state: AgentState): AgentState {
+        return if (state == AgentState.Running) {
+            AgentState.Suspended
+        } else {
+            state
+        }
+    }
+
+    private fun mainAgentId(sessionId: String): String {
+        return "main-$sessionId"
+    }
+
+    private fun defaultAgentMeta(
+        agentId: String,
+        kind: AgentKind,
+        config: AgentConfig,
+    ): AgentFileMeta {
+        return AgentFileMeta(
+            agentId = agentId,
+            kind = kind,
+            state = AgentState.Suspended,
+            config = config,
+            activeStartSeq = 0,
+            nextSeq = 0,
+            result = null,
+            completed = false,
+        )
+    }
+
+    private fun clampToInt(value: Long): Int {
+        return value.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
+    }
+
     private fun getSessionDirectory(sessionId: String): File {
         return File(sessionDirRoot, sessionId)
     }
 
-    private fun getSessionDataFile(sessionId: String): File {
-        return File(getSessionDirectory(sessionId), "session.json")
+    private fun getSessionMetaFile(sessionId: String): File {
+        return File(getSessionDirectory(sessionId), SESSION_META_FILE_NAME)
+    }
+
+    private fun getAgentsDirectory(sessionId: String): File {
+        return File(getSessionDirectory(sessionId), AGENTS_DIR_NAME)
+    }
+
+    private fun getAgentDirectory(sessionId: String, agentId: String): File {
+        return File(getAgentsDirectory(sessionId), encodeAgentId(agentId))
+    }
+
+    private fun getAgentMetaFile(sessionId: String, agentId: String): File {
+        return File(getAgentDirectory(sessionId, agentId), AGENT_META_FILE_NAME)
+    }
+
+    private fun getAgentMessagesDirectory(sessionId: String, agentId: String): File {
+        return File(getAgentDirectory(sessionId, agentId), MESSAGES_DIR_NAME)
+    }
+
+    private fun getAgentMessageFile(sessionId: String, agentId: String, seq: Long): File {
+        return File(getAgentMessagesDirectory(sessionId, agentId), "$seq.json")
+    }
+
+    private fun encodeAgentId(agentId: String): String {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(agentId.toByteArray(Charsets.UTF_8))
     }
 
     private fun <E> List<E>.toPersistentList(): PersistentList<E> {
@@ -307,4 +753,39 @@ public class FileSessionStorage(
         val tags: String,
         val childSessionIds: String,
     )
+
+    @Serializable
+    private data class SessionFileMeta(
+        val config: SessionConfig,
+    )
+
+    @Serializable
+    private data class AgentFileMeta(
+        val agentId: String,
+        val kind: AgentKind,
+        val state: AgentState,
+        val config: AgentConfig,
+        val activeStartSeq: Long,
+        val nextSeq: Long,
+        val result: String?,
+        val completed: Boolean,
+    )
+
+    @Serializable
+    private enum class AgentKind {
+        MAIN,
+        SUBAGENT,
+    }
+
+    private data class LoadedWindow(
+        val messages: List<SessionMessage>,
+        val complete: Boolean,
+    )
+
+    private companion object {
+        private const val SESSION_META_FILE_NAME: String = "meta.json"
+        private const val AGENTS_DIR_NAME: String = "agents"
+        private const val AGENT_META_FILE_NAME: String = "meta.json"
+        private const val MESSAGES_DIR_NAME: String = "messages"
+    }
 }

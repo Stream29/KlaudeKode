@@ -1,12 +1,9 @@
 package io.github.stream29.kode.app.di
 
-import io.github.stream29.kode.app.service.DefaultWebToolsProvider
-import io.github.stream29.kode.app.service.WebToolsProvider
 import io.github.stream29.kode.app.viewmodel.MainViewModel
 import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemConfigFactory
 import io.github.stream29.kode.config.fs.FileSystemLocations
-import io.github.stream29.kode.core.agent.SessionAwareAgentFactoryProvider
 import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.oauth.core.DefaultOAuthAuthCodePkceClient
 import io.github.stream29.kode.oauth.core.DefaultOAuthCredentialManager
@@ -53,15 +50,6 @@ public val coreModule: Module = module {
     single {
         HookManager.empty()
     }
-    single<WebToolsProvider> {
-        DefaultWebToolsProvider()
-    }
-    single {
-        SessionAwareAgentFactoryProvider(
-            sessionManager = get(),
-            hookManager = get(),
-        )
-    }
 
     single<OAuthAuthCodePkceClient> {
         DefaultOAuthAuthCodePkceClient()
@@ -94,8 +82,6 @@ public val viewModelModule: Module = module {
         MainViewModel(
             configManager = get(),
             sessionManager = get(),
-            agentFactoryProvider = get(),
-            webToolsProvider = get(),
             hookManager = get(),
             oauthCredentialManager = get(),
         )

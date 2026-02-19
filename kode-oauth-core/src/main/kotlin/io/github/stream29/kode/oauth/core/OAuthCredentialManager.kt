@@ -2,6 +2,7 @@ package io.github.stream29.kode.oauth.core
 
 import io.github.stream29.kode.config.api.OAuthConfig
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
@@ -9,7 +10,9 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import java.net.URI
 import java.util.concurrent.atomic.AtomicReference
 
@@ -81,56 +84,23 @@ public class DefaultOAuthCredentialManager(
         val expectedStateRef = AtomicReference<String?>(null)
         val codeDeferred = CompletableDeferred<String>()
 
-        val server = embeddedServer(factory = CIO, host = binding.host, port = binding.requestedPort) {
+        val server = embeddedServer(factory = CIO, port = binding.requestedPort) {
             routing {
                 get(binding.path) {
-                    val expectedState = expectedStateRef.get()
-                    val state = call.request.queryParameters["state"].orEmpty()
-                    val code = call.request.queryParameters["code"].orEmpty()
-                    val error = call.request.queryParameters["error"].orEmpty()
-                    if (error.isNotBlank()) {
-                        if (!codeDeferred.isCompleted) {
-                            codeDeferred.completeExceptionally(
-                                IllegalStateException("OAuth callback returned error: $error")
-                            )
-                        }
-                        call.respondText(
-                            text = "OAuth authorization failed: $error",
-                            status = HttpStatusCode.BadRequest,
-                        )
-                        return@get
-                    }
-                    if (expectedState.isNullOrBlank() || state != expectedState) {
-                        if (!codeDeferred.isCompleted) {
-                            codeDeferred.completeExceptionally(
-                                IllegalStateException("OAuth callback state mismatch")
-                            )
-                        }
-                        call.respondText(
-                            text = "OAuth state mismatch",
-                            status = HttpStatusCode.BadRequest,
-                        )
-                        return@get
-                    }
-                    if (code.isBlank()) {
-                        if (!codeDeferred.isCompleted) {
-                            codeDeferred.completeExceptionally(
-                                IllegalStateException("OAuth callback missing code")
-                            )
-                        }
-                        call.respondText(
-                            text = "OAuth callback missing code",
-                            status = HttpStatusCode.BadRequest,
-                        )
-                        return@get
-                    }
-                    if (!codeDeferred.isCompleted) {
-                        codeDeferred.complete(code)
-                    }
-                    call.respondText(
-                        text = "OAuth authorization completed. You can close this tab.",
-                        status = HttpStatusCode.OK,
+                    processOAuthCallbackCall(
+                        call = call,
+                        expectedStateRef = expectedStateRef,
+                        codeDeferred = codeDeferred,
                     )
+                }
+                resolveCallbackAliasPath(binding.path)?.let { aliasPath ->
+                    get(aliasPath) {
+                        processOAuthCallbackCall(
+                            call = call,
+                            expectedStateRef = expectedStateRef,
+                            codeDeferred = codeDeferred,
+                        )
+                    }
                 }
             }
         }
@@ -146,7 +116,13 @@ public class DefaultOAuthCredentialManager(
             expectedStateRef.set(pending.state)
             onProgress("Opening browser for OAuth authorization")
             openBrowser(pending.authorizationUrl)
-            val code = codeDeferred.await()
+            val code = try {
+                withTimeout(timeMillis = CALLBACK_TIMEOUT_MS) {
+                    codeDeferred.await()
+                }
+            } catch (_: TimeoutCancellationException) {
+                throw IllegalStateException("OAuth callback timeout - authorization took too long")
+            }
             val token = authCodePkceClient.exchangeAuthorizationCode(
                 oauthConfig = oauth,
                 pending = pending,
@@ -265,6 +241,68 @@ public class DefaultOAuthCredentialManager(
         return "${binding.scheme}://${binding.host}:$boundPort${binding.path}"
     }
 
+    private fun resolveCallbackAliasPath(path: String): String? {
+        return when (path) {
+            "/auth/callback" -> "/oauth/callback"
+            "/oauth/callback" -> "/auth/callback"
+            else -> null
+        }
+    }
+
+    private suspend fun processOAuthCallbackCall(
+        call: ApplicationCall,
+        expectedStateRef: AtomicReference<String?>,
+        codeDeferred: CompletableDeferred<String>,
+    ) {
+        val expectedState = expectedStateRef.get()
+        val state = call.request.queryParameters["state"].orEmpty()
+        val code = call.request.queryParameters["code"].orEmpty()
+        val error = call.request.queryParameters["error"].orEmpty()
+        if (error.isNotBlank()) {
+            if (!codeDeferred.isCompleted) {
+                codeDeferred.completeExceptionally(
+                    IllegalStateException("OAuth callback returned error: $error")
+                )
+            }
+            call.respondText(
+                text = "OAuth authorization failed: $error",
+                status = HttpStatusCode.BadRequest,
+            )
+            return
+        }
+        if (expectedState.isNullOrBlank() || state != expectedState) {
+            if (!codeDeferred.isCompleted) {
+                codeDeferred.completeExceptionally(
+                    IllegalStateException("OAuth callback state mismatch")
+                )
+            }
+            call.respondText(
+                text = "OAuth state mismatch",
+                status = HttpStatusCode.BadRequest,
+            )
+            return
+        }
+        if (code.isBlank()) {
+            if (!codeDeferred.isCompleted) {
+                codeDeferred.completeExceptionally(
+                    IllegalStateException("OAuth callback missing code")
+                )
+            }
+            call.respondText(
+                text = "OAuth callback missing code",
+                status = HttpStatusCode.BadRequest,
+            )
+            return
+        }
+        if (!codeDeferred.isCompleted) {
+            codeDeferred.complete(code)
+        }
+        call.respondText(
+            text = "OAuth authorization completed. You can close this tab.",
+            status = HttpStatusCode.OK,
+        )
+    }
+
     private fun currentEpochSecond(): Long {
         return System.currentTimeMillis() / 1000L
     }
@@ -286,6 +324,7 @@ public class DefaultOAuthCredentialManager(
         private const val DEFAULT_CALLBACK_HOST: String = "127.0.0.1"
         private const val DEFAULT_CALLBACK_PORT: Int = 1455
         private const val DEFAULT_CALLBACK_PATH: String = "/oauth/callback"
+        private const val CALLBACK_TIMEOUT_MS: Long = 5 * 60 * 1000L
         private const val DEFAULT_CALLBACK_URI_TEMPLATE: String =
             "$DEFAULT_CALLBACK_SCHEME://$DEFAULT_CALLBACK_HOST:$PORT_PLACEHOLDER$DEFAULT_CALLBACK_PATH"
     }

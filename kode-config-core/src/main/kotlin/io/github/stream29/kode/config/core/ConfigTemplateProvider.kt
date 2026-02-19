@@ -48,7 +48,7 @@ public object ConfigTemplateProvider {
                   codex_cli_simplified_flow: "true"
                   originator: opencode
                 token_additional_params: {}
-              base_url: https://api.openai.com/v1
+  base_url: https://chatgpt.com
               custom_headers: {}
           # Add more auths as needed:
           # - id: openai-main

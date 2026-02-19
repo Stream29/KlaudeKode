@@ -10,11 +10,12 @@ import io.github.stream29.kode.providers.api.LlmAuth
 import io.github.stream29.kode.providers.api.LlmProvider
 import io.github.stream29.kode.providers.api.ProviderAuthMode
 import io.github.stream29.kode.providers.api.ProviderPreset
+import io.github.stream29.kode.providers.api.requireApiKeyAuth
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.header
 
-public object MistralApiKeyProvider : LlmProvider<LlmAuth.ApiKey> {
+public object MistralApiKeyProvider : LlmProvider {
     override val id: String = "mistral"
     override val displayName: String = "Mistral (API Key)"
     override val llmProvider: LLMProvider = MistralProviderKey
@@ -33,13 +34,14 @@ public object MistralApiKeyProvider : LlmProvider<LlmAuth.ApiKey> {
 
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
-    override fun createClient(auth: LlmAuth.ApiKey): LLMClient {
-        val baseUrl = normalizeBaseUrl(auth.baseUrl) ?: DEFAULT_BASE_URL
+    override fun createClient(auth: LlmAuth): LLMClient {
+        val apiKeyAuth = requireApiKeyAuth(providerId = id, auth = auth)
+        val baseUrl = normalizeBaseUrl(apiKeyAuth.baseUrl) ?: DEFAULT_BASE_URL
         val settings = OpenAIClientSettings(baseUrl = baseUrl)
         return OpenAILLMClient(
-            apiKey = auth.apiKey,
+            apiKey = apiKeyAuth.apiKey,
             settings = settings,
-            baseClient = createBaseClient(auth.customHeaders),
+            baseClient = createBaseClient(apiKeyAuth.customHeaders),
         )
     }
 }

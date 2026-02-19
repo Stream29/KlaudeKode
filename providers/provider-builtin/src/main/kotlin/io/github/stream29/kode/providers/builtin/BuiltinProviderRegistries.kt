@@ -1,7 +1,6 @@
 package io.github.stream29.kode.providers.builtin
 
 import io.github.stream29.kode.providers.anthropic.AnthropicApiKeyProvider
-import io.github.stream29.kode.providers.api.LlmAuth
 import io.github.stream29.kode.providers.api.LlmProvider
 import io.github.stream29.kode.providers.api.ProviderPreset
 import io.github.stream29.kode.providers.deepseek.DeepSeekApiKeyProvider
@@ -17,7 +16,7 @@ import io.github.stream29.kode.providers.openrouter.OpenRouterApiKeyProvider
 import io.github.stream29.kode.providers.xai.XaiApiKeyProvider
 
 public object BuiltinLlmProviderRegistry {
-    private val providersById: Map<String, LlmProvider<out LlmAuth>> by lazy {
+    private val providersById: Map<String, LlmProvider> by lazy {
         val all = buildList {
             add(AnthropicApiKeyProvider)
             add(OpenAiApiKeyProvider)
@@ -31,6 +30,7 @@ public object BuiltinLlmProviderRegistry {
             add(GroqApiKeyProvider)
             add(MistralApiKeyProvider)
             add(XaiApiKeyProvider)
+            add(TestDeterministicProvider)
         }
 
         val duplicates = all.groupBy { it.id }.filterValues { list -> list.size > 1 }.keys
@@ -39,11 +39,11 @@ public object BuiltinLlmProviderRegistry {
         all.associateBy { it.id }
     }
 
-    public fun listProviders(): List<LlmProvider<out LlmAuth>> {
+    public fun listProviders(): List<LlmProvider> {
         return providersById.values.sortedBy { it.displayName.lowercase() }
     }
 
-    public fun findProvider(id: String): LlmProvider<out LlmAuth>? {
+    public fun findProvider(id: String): LlmProvider? {
         val normalized = id.trim()
         if (normalized.isBlank()) {
             return null
@@ -67,6 +67,7 @@ public object BuiltinProviderPresetRegistry {
             add(GroqApiKeyProvider.preset)
             add(MistralApiKeyProvider.preset)
             add(XaiApiKeyProvider.preset)
+            add(TestDeterministicProvider.preset)
         }
 
         val duplicates = all.groupBy { it.id }.filterValues { list -> list.size > 1 }.keys

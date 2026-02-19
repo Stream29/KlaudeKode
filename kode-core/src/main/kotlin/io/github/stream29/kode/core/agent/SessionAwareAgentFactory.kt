@@ -19,7 +19,6 @@ import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
 import io.github.stream29.kode.core.hooks.HookManager
 import kotlinx.datetime.toDeprecatedClock
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.time.Clock
@@ -45,10 +44,6 @@ public class SessionAwareAgentFactory(
     public val sessionBridge: KoogSessionBridge by lazy {
         KoogSessionBridge(
             sessionManager = sessionManager,
-            json = Json {
-                ignoreUnknownKeys = true
-                isLenient = true
-            }
         )
     }
     
@@ -104,7 +99,7 @@ public class SessionAwareAgentFactory(
     }
 
     public suspend fun generateSessionTitleFromConversation(sessionId: String, modelId: String): String? {
-        val history = sessionBridge.prepareMessagesForAgent(sessionId = sessionId)
+        val history = sessionBridge.prepareMessagesForAgent(sessionId = sessionId, agentId = null)
         if (history.isEmpty()) {
             return null
         }
@@ -209,6 +204,7 @@ public class SessionAwareAgentFactory(
                 val workingDirectory = resolveWorkingDir(session)
                 val modelId = resolveModelIdForSession(session)
                 val modelRuntime = ModelFactory.resolveModelRuntime(modelId, models, auths)
+                val enforcedParams = ModelParamsFactory.enforceRequiredToolChoice(modelRuntime.params)
                 val subConversationAgent = createConversationAgent(
                     sessionId = sessionId,
                     workingDir = workingDirectory,
@@ -222,7 +218,7 @@ public class SessionAwareAgentFactory(
                 return subConversationAgent.runSubAgent(
                     sessionId = sessionId,
                     model = modelRuntime.model,
-                    modelParams = modelRuntime.params,
+                    modelParams = enforcedParams,
                 )
             }
         }
@@ -232,10 +228,11 @@ public class SessionAwareAgentFactory(
         val session = requireSession(sessionId)
         val workingDir = resolveWorkingDir(session)
         val modelRuntime = ModelFactory.resolveModelRuntime(modelId, models, auths)
+        val enforcedParams = ModelParamsFactory.enforceRequiredToolChoice(modelRuntime.params)
         return SessionExecutionContext(
             conversationAgent = createConversationAgent(sessionId, workingDir),
             model = modelRuntime.model,
-            modelParams = modelRuntime.params,
+            modelParams = enforcedParams,
         )
     }
 
@@ -347,6 +344,14 @@ public class SessionAwareAgentFactory(
 
         override suspend fun requestInput(): String {
             return delegate.requestInput(sessionId)
+        }
+
+        override fun isSafeStopRequested(sessionId: String): Boolean {
+            return delegate.isSafeStopRequested(this.sessionId)
+        }
+
+        override fun onSafeStopReached(sessionId: String) {
+            delegate.onSafeStopReached(this.sessionId)
         }
     }
 

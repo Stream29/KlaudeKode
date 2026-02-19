@@ -4,9 +4,8 @@ plugins {
 }
 
 dependencies {
-    api(projects.kodeConfigApi)
-    implementation(projects.kodeConfigCore)
-    implementation(projects.virtualThreadDispatcher)
+    api(projects.config.api)
+    implementation(projects.config.core)
     
     implementation(libs.bundles.serialization)
     implementation(libs.kotlinxCoroutinesCore)

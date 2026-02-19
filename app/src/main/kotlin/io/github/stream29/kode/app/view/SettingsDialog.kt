@@ -17,10 +17,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import ai.koog.prompt.llm.LLMCapability
-import ai.koog.prompt.llm.LLModel
-import io.github.stream29.kode.app.model.MessageAlignmentPreference
-import io.github.stream29.kode.app.model.SendKeyModePreference
+import io.github.stream29.kode.ui.core.preferences.MessageAlignmentPreference
+import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
 import io.github.stream29.kode.app.util.formatModelDisplayName
 import io.github.stream29.kode.app.viewmodel.AppUiState
 import io.github.stream29.kode.app.viewmodel.MainViewModel
@@ -39,11 +37,12 @@ import io.github.stream29.kode.config.api.OpenAiReasoningEffortConfig
 import io.github.stream29.kode.config.api.OpenAiReasoningSummaryConfig
 import io.github.stream29.kode.config.api.OpenAiServiceTierConfig
 import io.github.stream29.kode.config.api.OpenAiTruncationConfig
-import io.github.stream29.kode.providers.api.ProviderAuthMode
-import io.github.stream29.kode.providers.api.ProviderOAuthAuthCodePkcePreset
-import io.github.stream29.kode.providers.api.ProviderOAuthDeviceFlowPreset
-import io.github.stream29.kode.providers.api.ProviderPreset
-import io.github.stream29.kode.app.viewmodel.OAuthStatusUi
+import io.github.stream29.kode.ui.bridge.auth.OAuthStatusUi
+import io.github.stream29.kode.ui.bridge.provider.UiProviderAuthMode
+import io.github.stream29.kode.ui.bridge.provider.UiProviderModelPreset
+import io.github.stream29.kode.ui.bridge.provider.UiProviderOAuthAuthCodePkcePreset
+import io.github.stream29.kode.ui.bridge.provider.UiProviderOAuthDeviceFlowPreset
+import io.github.stream29.kode.ui.bridge.provider.UiProviderPreset
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
@@ -120,10 +119,10 @@ public fun SettingsContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(top = 16.dp)
+            .padding(top = 16.dp)
         ) {
             when (selectedTab) {
-                0 -> ModelsTab(viewModel, ui)
+                0 -> ModelsTab(viewModel = viewModel, ui = ui)
                 1 -> AuthTab(viewModel, ui)
                 2 -> PreferencesTab(viewModel, ui)
             }
@@ -134,9 +133,10 @@ public fun SettingsContent(
 
 
 @Composable
-public fun ModelsTab(viewModel: MainViewModel, ui: AppUiState) {
-    var showAddDialog by remember { mutableStateOf(false) }
-    var editingModel by remember { mutableStateOf<LlmModelConfig?>(null) }
+public fun ModelsTab(
+    viewModel: MainViewModel,
+    ui: AppUiState,
+) {
     val models = ui.models
     val auths = ui.auths
     val authById = remember(auths) { auths.associateBy { auth -> auth.id } }
@@ -156,7 +156,7 @@ public fun ModelsTab(viewModel: MainViewModel, ui: AppUiState) {
                 fontWeight = FontWeight.SemiBold
             )
             Button(
-                onClick = { showAddDialog = true },
+                onClick = { viewModel.requestOpenAddModelDialog(preselectedAuthId = null) },
                 enabled = auths.isNotEmpty()
             ) {
                 Icon(Icons.Default.Add, contentDescription = null)
@@ -207,39 +207,12 @@ public fun ModelsTab(viewModel: MainViewModel, ui: AppUiState) {
                         auth = authById[model.authId],
                         isActive = model.id == ui.activeModelId,
                         onActivate = { viewModel.switchModel(model.id) },
-                        onEdit = { editingModel = model },
+                        onEdit = { viewModel.requestOpenEditModelDialog(modelId = model.id) },
                         onDelete = { viewModel.deleteModel(model.id) }
                     )
                 }
             }
         }
-    }
-
-    if (showAddDialog) {
-        ModelDialog(
-            viewModel = viewModel,
-            _ui = ui,
-            auths = auths,
-            onDismiss = { showAddDialog = false },
-            onConfirm = { model ->
-                viewModel.addModel(model)
-                showAddDialog = false
-            }
-        )
-    }
-
-    editingModel?.let { model ->
-        ModelDialog(
-            viewModel = viewModel,
-            _ui = ui,
-            model = model,
-            auths = auths,
-            onDismiss = { editingModel = null },
-            onConfirm = { updated ->
-                viewModel.updateModel(model.id, updated)
-                editingModel = null
-            }
-        )
     }
 }
 
@@ -645,14 +618,14 @@ private interface ProviderModelDialogAdapter {
     @Composable
     fun RenderEditorSection(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         onParamsErrorChange: (String?) -> Unit,
     )
 
     fun validateBeforeConfirm(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         modelName: String,
     ): String? {
@@ -689,7 +662,7 @@ private abstract class FamilyBasedProviderModelDialogAdapter(
     @Composable
     abstract override fun RenderEditorSection(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         onParamsErrorChange: (String?) -> Unit,
     )
@@ -709,7 +682,7 @@ private object OpenAiNativeModelDialogAdapter : FamilyBasedProviderModelDialogAd
     @Composable
     override fun RenderEditorSection(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         onParamsErrorChange: (String?) -> Unit,
     ) {
@@ -723,7 +696,7 @@ private object OpenAiNativeModelDialogAdapter : FamilyBasedProviderModelDialogAd
 
     override fun validateBeforeConfirm(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         modelName: String,
     ): String? {
@@ -746,7 +719,7 @@ private object OpenAiCompatibleModelDialogAdapter : FamilyBasedProviderModelDial
     @Composable
     override fun RenderEditorSection(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         onParamsErrorChange: (String?) -> Unit,
     ) {
@@ -760,7 +733,7 @@ private object OpenAiCompatibleModelDialogAdapter : FamilyBasedProviderModelDial
 
     override fun validateBeforeConfirm(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         modelName: String,
     ): String? {
@@ -783,7 +756,7 @@ private object AnthropicModelDialogAdapter : FamilyBasedProviderModelDialogAdapt
     @Composable
     override fun RenderEditorSection(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         onParamsErrorChange: (String?) -> Unit,
     ) {
@@ -801,7 +774,7 @@ private object GeminiModelDialogAdapter : FamilyBasedProviderModelDialogAdapter(
     @Composable
     override fun RenderEditorSection(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         onParamsErrorChange: (String?) -> Unit,
     ) {
@@ -819,7 +792,7 @@ private object DeepSeekModelDialogAdapter : FamilyBasedProviderModelDialogAdapte
     @Composable
     override fun RenderEditorSection(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         onParamsErrorChange: (String?) -> Unit,
     ) {
@@ -837,7 +810,7 @@ private object OpenRouterModelDialogAdapter : FamilyBasedProviderModelDialogAdap
     @Composable
     override fun RenderEditorSection(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         onParamsErrorChange: (String?) -> Unit,
     ) {
@@ -854,7 +827,7 @@ private object UnsupportedProviderModelDialogAdapter : ProviderModelDialogAdapte
     @Composable
     override fun RenderEditorSection(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         onParamsErrorChange: (String?) -> Unit,
     ) {
@@ -862,7 +835,7 @@ private object UnsupportedProviderModelDialogAdapter : ProviderModelDialogAdapte
 
     override fun validateBeforeConfirm(
         runtimeManager: ModelDialogRuntimeManager,
-        matchedModelPreset: LLModel?,
+        matchedModelPreset: UiProviderModelPreset?,
         configuredCapabilities: List<String>?,
         modelName: String,
     ): String? {
@@ -898,7 +871,7 @@ private fun resolveModelDialogProviderAdapter(providerId: String): ProviderModel
 @Composable
 private fun OpenAiLikeModelDialogEditorSection(
     runtimeManager: ModelDialogRuntimeManager,
-    matchedModelPreset: LLModel?,
+    matchedModelPreset: UiProviderModelPreset?,
     configuredCapabilities: List<String>?,
     onParamsErrorChange: (String?) -> Unit,
 ) {
@@ -929,7 +902,7 @@ private fun OpenAiLikeModelDialogEditorSection(
     var endpointExpanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(
         expanded = endpointExpanded,
-        onExpandedChange = { endpointExpanded = it },
+        onExpandedChange = { endpointExpanded = !endpointExpanded },
     ) {
         OutlinedTextField(
             value = openAiLikeState.endpoint.asConfigValue(),
@@ -982,7 +955,7 @@ private fun OpenAiLikeModelDialogEditorSection(
     var reasoningExpanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(
         expanded = reasoningExpanded,
-        onExpandedChange = { reasoningExpanded = it },
+        onExpandedChange = { reasoningExpanded = !reasoningExpanded },
     ) {
         OutlinedTextField(
             value = reasoningOptions.firstOrNull { it.second == openAiLikeState.reasoningEffort }?.first ?: "Default",
@@ -1031,7 +1004,7 @@ private fun OpenAiLikeModelDialogEditorSection(
         var chatServiceTierExpanded by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(
             expanded = chatServiceTierExpanded,
-            onExpandedChange = { chatServiceTierExpanded = it },
+            onExpandedChange = { chatServiceTierExpanded = !chatServiceTierExpanded },
         ) {
             OutlinedTextField(
                 value = openAiServiceTierOptions.firstOrNull { it.second == openAiLikeState.chatServiceTier }?.first
@@ -1213,7 +1186,7 @@ private fun OpenAiLikeModelDialogEditorSection(
         var reasoningSummaryExpanded by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(
             expanded = reasoningSummaryExpanded,
-            onExpandedChange = { reasoningSummaryExpanded = it },
+            onExpandedChange = { reasoningSummaryExpanded = !reasoningSummaryExpanded },
         ) {
             OutlinedTextField(
                 value = reasoningSummaryOptions.firstOrNull { it.second == openAiLikeState.reasoningSummary }?.first
@@ -1250,7 +1223,7 @@ private fun OpenAiLikeModelDialogEditorSection(
         var responsesServiceTierExpanded by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(
             expanded = responsesServiceTierExpanded,
-            onExpandedChange = { responsesServiceTierExpanded = it },
+            onExpandedChange = { responsesServiceTierExpanded = !responsesServiceTierExpanded },
         ) {
             OutlinedTextField(
                 value = openAiServiceTierOptions.firstOrNull { it.second == openAiLikeState.responsesServiceTier }?.first
@@ -1287,7 +1260,7 @@ private fun OpenAiLikeModelDialogEditorSection(
         var truncationExpanded by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(
             expanded = truncationExpanded,
-            onExpandedChange = { truncationExpanded = it },
+            onExpandedChange = { truncationExpanded = !truncationExpanded },
         ) {
             OutlinedTextField(
                 value = truncationOptions.firstOrNull { it.second == openAiLikeState.responsesTruncation }?.first
@@ -1498,7 +1471,7 @@ private fun AnthropicModelDialogEditorSection(
     var anthropicServiceTierExpanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(
         expanded = anthropicServiceTierExpanded,
-        onExpandedChange = { anthropicServiceTierExpanded = it },
+        onExpandedChange = { anthropicServiceTierExpanded = !anthropicServiceTierExpanded },
     ) {
         OutlinedTextField(
             value = anthropicServiceTierOptions.firstOrNull { it.second == anthropicState.serviceTier }?.first ?: "Default",
@@ -1628,7 +1601,7 @@ private fun GeminiModelDialogEditorSection(
     var geminiLevelExpanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(
         expanded = geminiLevelExpanded,
-        onExpandedChange = { geminiLevelExpanded = it },
+        onExpandedChange = { geminiLevelExpanded = !geminiLevelExpanded },
     ) {
         OutlinedTextField(
             value = geminiState.thinkingLevel?.name?.lowercase() ?: "Default",
@@ -1753,7 +1726,7 @@ private fun DeepSeekModelDialogEditorSection(
     var deepSeekLogprobsExpanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(
         expanded = deepSeekLogprobsExpanded,
-        onExpandedChange = { deepSeekLogprobsExpanded = it },
+        onExpandedChange = { deepSeekLogprobsExpanded = !deepSeekLogprobsExpanded },
     ) {
         OutlinedTextField(
             value = deepSeekState.logprobs.label,
@@ -1978,7 +1951,7 @@ private fun OpenRouterModelDialogEditorSection(
     var openRouterLogprobsExpanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(
         expanded = openRouterLogprobsExpanded,
-        onExpandedChange = { openRouterLogprobsExpanded = it },
+        onExpandedChange = { openRouterLogprobsExpanded = !openRouterLogprobsExpanded },
     ) {
         OutlinedTextField(
             value = openRouterState.logprobs.label,
@@ -2016,16 +1989,16 @@ private fun OpenRouterModelDialogEditorSection(
 @Composable
 private fun ModelDialog(
     viewModel: MainViewModel,
-    _ui: AppUiState,
     model: LlmModelConfig? = null,
     auths: List<LlmAuthConfig>,
+    initialAuthId: String? = null,
     onDismiss: () -> Unit,
     onConfirm: (LlmModelConfig) -> Unit
 ) {
     var id by remember { mutableStateOf(model?.id ?: "") }
     var displayName by remember { mutableStateOf(model?.displayName ?: "") }
     var modelName by remember { mutableStateOf(model?.model ?: "") }
-    var selectedAuthId by remember { mutableStateOf(model?.authId ?: auths.firstOrNull()?.id ?: "") }
+    var selectedAuthId by remember { mutableStateOf(model?.authId ?: initialAuthId ?: auths.firstOrNull()?.id ?: "") }
     var idError by remember { mutableStateOf<String?>(null) }
     var paramsError by remember { mutableStateOf<String?>(null) }
 
@@ -2128,7 +2101,7 @@ private fun ModelDialog(
                     var expandedPreset by remember { mutableStateOf(false) }
                     ExposedDropdownMenuBox(
                         expanded = expandedPreset,
-                        onExpandedChange = { expandedPreset = it },
+                        onExpandedChange = { expandedPreset = !expandedPreset },
                     ) {
                         OutlinedTextField(
                             value = matchedModelPreset?.id ?: "Custom",
@@ -2175,7 +2148,7 @@ private fun ModelDialog(
 
                     ExposedDropdownMenuBox(
                         expanded = expanded,
-                        onExpandedChange = { expanded = it }
+                        onExpandedChange = { expanded = !expanded }
                     ) {
                         OutlinedTextField(
                             value = selectedAuth?.let { "${it.name ?: it.providerId} (${it.id})" } ?: "Select Provider",
@@ -2231,6 +2204,7 @@ private fun ModelDialog(
                     }
                     if (resolvedId.isBlank()) {
                         idError = "Unable to generate ID"
+                        idError?.length
                         return@TextButton
                     }
                     if (modelName.isBlank()) {
@@ -2247,6 +2221,7 @@ private fun ModelDialog(
                     )
                     if (adapterValidationError != null) {
                         paramsError = adapterValidationError
+                        paramsError?.length
                         return@TextButton
                     }
 
@@ -2257,11 +2232,13 @@ private fun ModelDialog(
                     )
                     if (builtParams.error != null) {
                         paramsError = builtParams.error
+                        paramsError?.length
                         return@TextButton
                     }
                     val resolvedParams = builtParams.params
                     if (resolvedParams != null && !resolvedParams.supportsProvider(selectedProviderId)) {
                         paramsError = "Params '${resolvedParams.summaryText()}' do not match provider '$selectedProviderId'"
+                        paramsError?.length
                         return@TextButton
                     }
 
@@ -2288,6 +2265,167 @@ private fun ModelDialog(
                 Text("Cancel")
             }
         }
+    )
+}
+
+@Composable
+public fun AddModelDialogDestination(
+    viewModel: MainViewModel,
+    ui: AppUiState,
+    preselectedAuthId: String?,
+    onDismiss: () -> Unit,
+) {
+    ModelDialog(
+        viewModel = viewModel,
+        auths = ui.auths,
+        initialAuthId = preselectedAuthId,
+        onDismiss = onDismiss,
+        onConfirm = { model ->
+            viewModel.addModel(model)
+            onDismiss()
+        },
+    )
+}
+
+@Composable
+public fun EditModelDialogDestination(
+    viewModel: MainViewModel,
+    ui: AppUiState,
+    modelId: String,
+    onDismiss: () -> Unit,
+) {
+    val model = remember(ui.models, modelId) {
+        ui.models.firstOrNull { item -> item.id == modelId }
+    }
+    if (model == null) {
+        LaunchedEffect(modelId) {
+            onDismiss()
+        }
+        return
+    }
+
+    ModelDialog(
+        viewModel = viewModel,
+        model = model,
+        auths = ui.auths,
+        onDismiss = onDismiss,
+        onConfirm = { updated ->
+            viewModel.updateModel(model.id, updated)
+            onDismiss()
+        },
+    )
+}
+
+@Composable
+public fun AddAuthDialogDestination(
+    viewModel: MainViewModel,
+    ui: AppUiState,
+    onDismiss: () -> Unit,
+) {
+    AuthDialog(
+        viewModel = viewModel,
+        onDismiss = onDismiss,
+        onConfirm = { auth ->
+            viewModel.addAuth(auth)
+            onDismiss()
+        },
+    )
+}
+
+@Composable
+public fun EditAuthDialogDestination(
+    viewModel: MainViewModel,
+    ui: AppUiState,
+    authId: String,
+    onDismiss: () -> Unit,
+) {
+    val auth = remember(ui.auths, authId) {
+        ui.auths.firstOrNull { item -> item.id == authId }
+    }
+    if (auth == null) {
+        LaunchedEffect(authId) {
+            onDismiss()
+        }
+        return
+    }
+
+    AuthDialog(
+        viewModel = viewModel,
+        auth = auth,
+        onDismiss = onDismiss,
+        onConfirm = { updated ->
+            viewModel.updateAuth(auth.id, updated)
+            onDismiss()
+        },
+    )
+}
+
+@Composable
+public fun DeleteAuthConfirmDialogDestination(
+    viewModel: MainViewModel,
+    ui: AppUiState,
+    authId: String,
+    onDismiss: () -> Unit,
+) {
+    val auth = remember(ui.auths, authId) {
+        ui.auths.firstOrNull { item -> item.id == authId }
+    }
+    if (auth == null) {
+        LaunchedEffect(authId) {
+            onDismiss()
+        }
+        return
+    }
+
+    val dependentModels = remember(ui.models, auth.id) {
+        ui.models.filter { model -> model.authId == auth.id }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete Auth Provider") },
+        icon = { Icon(Icons.Default.Warning, contentDescription = null) },
+        text = {
+            Column {
+                Text("Are you sure you want to delete ${auth.name ?: auth.providerId} (${auth.id})?")
+                if (dependentModels.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        "Warning: ${dependentModels.size} model(s) depend on this auth:",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    dependentModels.forEach { model ->
+                        Text(
+                            "  • ${model.displayName ?: model.model}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Text(
+                        "These models will stop working.",
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    viewModel.deleteAuth(auth.id)
+                    onDismiss()
+                },
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
+            ) {
+                Text("Delete")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
     )
 }
 
@@ -2440,7 +2578,7 @@ private val OPENAI_INCLUDE_VALUES: Set<String> = setOf(
 )
 
 private fun resolveOpenAiEndpointSupport(
-    modelPreset: LLModel?,
+    modelPreset: UiProviderModelPreset?,
     configuredCapabilities: List<String>?,
 ): OpenAiEndpointSupport {
     val fromConfig = resolveOpenAiEndpointSupportFromConfiguredCapabilities(configuredCapabilities)
@@ -2450,8 +2588,8 @@ private fun resolveOpenAiEndpointSupport(
 
     modelPreset ?: return OpenAiEndpointSupport.unspecified()
 
-    val supportsChat = modelPreset.capabilities.contains(LLMCapability.OpenAIEndpoint.Completions)
-    val supportsResponses = modelPreset.capabilities.contains(LLMCapability.OpenAIEndpoint.Responses)
+    val supportsChat = modelPreset.supportsOpenAiChatEndpoint
+    val supportsResponses = modelPreset.supportsOpenAiResponsesEndpoint
     val hasEndpointCapability = supportsChat || supportsResponses
     if (!hasEndpointCapability) {
         return OpenAiEndpointSupport.unspecified()
@@ -2738,7 +2876,6 @@ private enum class ParamsUiFamily {
             }
             val providerPreferencesResult = parseOptionalJsonObjectField(
                 input = input.openRouterProviderPreferencesInput,
-                fieldName = "OpenRouter providerPreferences",
             )
             if (providerPreferencesResult.error != null) {
                 return ParamsBuildResult(params = null, error = providerPreferencesResult.error)
@@ -3297,7 +3434,7 @@ private fun OpenAiBaseParamsEditor(
     var toolChoiceExpanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(
         expanded = toolChoiceExpanded,
-        onExpandedChange = { toolChoiceExpanded = it },
+        onExpandedChange = { toolChoiceExpanded = !toolChoiceExpanded },
     ) {
         OutlinedTextField(
             value = state.toolChoiceMode.label,
@@ -3341,7 +3478,7 @@ private fun OpenAiBaseParamsEditor(
     var schemaLevelExpanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(
         expanded = schemaLevelExpanded,
-        onExpandedChange = { schemaLevelExpanded = it },
+        onExpandedChange = { schemaLevelExpanded = !schemaLevelExpanded },
     ) {
         OutlinedTextField(
             value = state.schemaLevel.label,
@@ -3417,7 +3554,7 @@ private fun OptionalBooleanDropdownField(
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(
         expanded = expanded,
-        onExpandedChange = { expanded = it },
+        onExpandedChange = { expanded = !expanded },
     ) {
         OutlinedTextField(
             value = choice.label,
@@ -3513,7 +3650,6 @@ private fun parseOpenAiIncludeValuesField(input: String): OptionalNumberParseRes
 
 private fun parseOptionalJsonObjectField(
     input: String,
-    fieldName: String,
 ): OptionalNumberParseResult<JsonObject> {
     val trimmed = input.trim()
     if (trimmed.isBlank()) {
@@ -3522,7 +3658,10 @@ private fun parseOptionalJsonObjectField(
     val parsed = runCatching {
         SETTINGS_JSON.parseToJsonElement(trimmed)
     }.getOrNull() as? JsonObject
-        ?: return OptionalNumberParseResult(value = null, error = "$fieldName must be a valid JSON object")
+        ?: return OptionalNumberParseResult(
+            value = null,
+            error = "OpenRouter providerPreferences must be a valid JSON object",
+        )
     return OptionalNumberParseResult(value = parsed)
 }
 
@@ -3826,9 +3965,6 @@ private val SETTINGS_JSON: Json = Json {
 
 @Composable
 public fun AuthTab(viewModel: MainViewModel, ui: AppUiState) {
-    var showAddDialog by remember { mutableStateOf(false) }
-    var editingAuth by remember { mutableStateOf<LlmAuthConfig?>(null) }
-    var deletingAuth by remember { mutableStateOf<LlmAuthConfig?>(null) }
     val auths = ui.auths
     val models = ui.models
     val dependentModelsByAuthId = remember(models) { models.groupBy { model -> model.authId } }
@@ -3846,7 +3982,7 @@ public fun AuthTab(viewModel: MainViewModel, ui: AppUiState) {
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
-            Button(onClick = { showAddDialog = true }) {
+            Button(onClick = { viewModel.requestOpenAddAuthDialog() }) {
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("Add Provider")
@@ -3878,8 +4014,11 @@ public fun AuthTab(viewModel: MainViewModel, ui: AppUiState) {
                         auth = auth,
                         oauthStatus = ui.oauthStatusByAuthId[auth.id],
                         dependentModels = dependentModels,
-                        onEdit = { editingAuth = auth },
-                        onDelete = { deletingAuth = auth },
+                        onEdit = { viewModel.requestOpenEditAuthDialog(authId = auth.id) },
+                        onDelete = { viewModel.requestOpenDeleteAuthDialog(authId = auth.id) },
+                        onAddModelForProvider = {
+                            viewModel.navigateToModelsAndOpenAddModelDialog(preselectedAuthId = auth.id)
+                        },
                         onConnect = {
                             viewModel.connectOAuth(auth.id)
                         },
@@ -3896,81 +4035,6 @@ public fun AuthTab(viewModel: MainViewModel, ui: AppUiState) {
                 }
             }
         }
-    }
-
-    if (showAddDialog) {
-        AuthDialog(
-            viewModel = viewModel,
-            _ui = ui,
-            onDismiss = { showAddDialog = false },
-            onConfirm = { auth ->
-                viewModel.addAuth(auth)
-                showAddDialog = false
-            }
-        )
-    }
-
-    editingAuth?.let { auth ->
-        AuthDialog(
-            viewModel = viewModel,
-            _ui = ui,
-            auth = auth,
-            onDismiss = { editingAuth = null },
-            onConfirm = { updated ->
-                viewModel.updateAuth(auth.id, updated)
-                editingAuth = null
-            }
-        )
-    }
-
-    deletingAuth?.let { auth ->
-        val dependentModels = dependentModelsByAuthId[auth.id].orEmpty()
-        AlertDialog(
-            onDismissRequest = { deletingAuth = null },
-            title = { Text("Delete Auth Provider") },
-            icon = { Icon(Icons.Default.Warning, contentDescription = null) },
-            text = {
-                Column {
-                    Text("Are you sure you want to delete ${auth.name ?: auth.providerId} (${auth.id})?")
-                    if (dependentModels.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            "Warning: ${dependentModels.size} model(s) depend on this auth:",
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        dependentModels.forEach { model ->
-                            Text(
-                                "  • ${model.displayName ?: model.model}",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        Text(
-                            "These models will stop working.",
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(top = 8.dp)
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.deleteAuth(auth.id)
-                        deletingAuth = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { deletingAuth = null }) {
-                    Text("Cancel")
-                }
-            }
-        )
     }
 }
 
@@ -3991,7 +4055,7 @@ private val BASE_URL_REQUIRED_PROVIDER_IDS: Set<String> = setOf(
 )
 
 private fun buildAuthProviderEntries(
-    presets: List<ProviderPreset>,
+    presets: List<UiProviderPreset>,
     editingAuth: LlmAuthConfig?,
 ): List<AuthProviderEntry> {
     val generated = presets.flatMap { preset ->
@@ -4037,13 +4101,13 @@ private fun buildAuthProviderEntries(
         .sortedBy { entry -> entry.label.lowercase() }
 }
 
-private fun ProviderAuthMode.toDialogAuthModeOrNull(): AuthMode? {
+private fun UiProviderAuthMode.toDialogAuthModeOrNull(): AuthMode? {
     return when (this) {
-        ProviderAuthMode.ApiKey -> AuthMode.ApiKey
-        ProviderAuthMode.OAuthSubscription -> AuthMode.OAuthSubscription
-        ProviderAuthMode.OAuthDevice -> AuthMode.OAuthDevice
-        ProviderAuthMode.CloudCredentialChain,
-        ProviderAuthMode.WellKnown,
+        UiProviderAuthMode.ApiKey -> AuthMode.ApiKey
+        UiProviderAuthMode.OAuthSubscription -> AuthMode.OAuthSubscription
+        UiProviderAuthMode.OAuthDevice -> AuthMode.OAuthDevice
+        UiProviderAuthMode.CloudCredentialChain,
+        UiProviderAuthMode.WellKnown,
         -> null
     }
 }
@@ -4078,7 +4142,7 @@ private fun resolveProviderIcon(providerId: String): ImageVector {
 private fun resolveOAuthPreset(
     viewModel: MainViewModel,
     providerEntry: AuthProviderEntry,
-): ProviderOAuthAuthCodePkcePreset? {
+): UiProviderOAuthAuthCodePkcePreset? {
     val mode = providerEntry.authMode.authCodePresetMode ?: return null
     val presetId = providerConfigNameToPresetId(providerId = providerEntry.providerId) ?: return null
     val preset = viewModel.getProviderPresets().firstOrNull { item -> item.id == presetId } ?: return null
@@ -4088,7 +4152,7 @@ private fun resolveOAuthPreset(
 private fun resolveOAuthDevicePreset(
     viewModel: MainViewModel,
     providerEntry: AuthProviderEntry,
-): ProviderOAuthDeviceFlowPreset? {
+): UiProviderOAuthDeviceFlowPreset? {
     val mode = providerEntry.authMode.devicePresetMode ?: return null
     val presetId = providerConfigNameToPresetId(providerId = providerEntry.providerId) ?: return null
     val preset = viewModel.getProviderPresets().firstOrNull { item -> item.id == presetId } ?: return null
@@ -4097,8 +4161,8 @@ private fun resolveOAuthDevicePreset(
 
 private enum class AuthMode(
     val isApiKey: Boolean,
-    val authCodePresetMode: ProviderAuthMode?,
-    val devicePresetMode: ProviderAuthMode?,
+    val authCodePresetMode: UiProviderAuthMode?,
+    val devicePresetMode: UiProviderAuthMode?,
     val deviceFlowByDefault: Boolean,
     val label: String,
     val priority: Int,
@@ -4113,7 +4177,7 @@ private enum class AuthMode(
     ),
     OAuthSubscription(
         isApiKey = false,
-        authCodePresetMode = ProviderAuthMode.OAuthSubscription,
+        authCodePresetMode = UiProviderAuthMode.OAuthSubscription,
         devicePresetMode = null,
         deviceFlowByDefault = false,
         label = "OAuth Browser",
@@ -4122,7 +4186,7 @@ private enum class AuthMode(
     OAuthDevice(
         isApiKey = false,
         authCodePresetMode = null,
-        devicePresetMode = ProviderAuthMode.OAuthDevice,
+        devicePresetMode = UiProviderAuthMode.OAuthDevice,
         deviceFlowByDefault = true,
         label = "OAuth Device",
         priority = 2,
@@ -4145,6 +4209,7 @@ private fun AuthCard(
     dependentModels: List<LlmModelConfig>,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onAddModelForProvider: () -> Unit,
     onConnect: () -> Unit,
     onRefresh: () -> Unit,
     onDisconnect: () -> Unit,
@@ -4192,6 +4257,13 @@ private fun AuthCard(
                 }
 
                 Row {
+                    IconButton(onClick = onAddModelForProvider) {
+                        Icon(
+                            Icons.Default.AddCircle,
+                            contentDescription = "Create Model",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     IconButton(onClick = onEdit) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit")
                     }
@@ -4346,7 +4418,6 @@ private fun AuthCard(
 @Composable
 private fun AuthDialog(
     viewModel: MainViewModel,
-    _ui: AppUiState,
     auth: LlmAuthConfig? = null,
     onDismiss: () -> Unit,
     onConfirm: (LlmAuthConfig) -> Unit
@@ -4479,7 +4550,7 @@ private fun AuthDialog(
                 var providerExpanded by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(
                     expanded = providerExpanded,
-                    onExpandedChange = { providerExpanded = it }
+                    onExpandedChange = { providerExpanded = !providerExpanded }
                 ) {
                     OutlinedTextField(
                         value = selectedProviderLabel,
@@ -4501,6 +4572,9 @@ private fun AuthDialog(
                                 text = { Text(providerEntry.label) },
                                 onClick = {
                                     selectedProviderEntryKey = providerEntry.entryKey
+                                    if (selectedProviderEntryKey.isBlank()) {
+                                        return@DropdownMenuItem
+                                    }
                                     providerExpanded = false
                                 }
                             )
@@ -4759,10 +4833,12 @@ private fun AuthDialog(
                     }
                     if (resolvedId.isBlank()) {
                         idError = "Unable to generate ID"
+                        idError?.length
                         return@TextButton
                     }
                     if (selectedProviderEntry == null || selectedProviderId.isBlank()) {
                         idError = "Provider is required"
+                        idError?.length
                         return@TextButton
                     }
                     if (isApiKeyMode && apiKey.isBlank()) {
@@ -4781,24 +4857,23 @@ private fun AuthDialog(
                             .map { token -> token.trim() }
                             .filter { token -> token.isNotBlank() }
                             .distinct()
-                        val base = existingOauth
-                        val baseAuthCode = base as? io.github.stream29.kode.config.api.OAuthConfig.AuthCodePkce
-                        val baseDevice = base as? io.github.stream29.kode.config.api.OAuthConfig.DeviceFlow
+                        val baseAuthCode = existingOauth as? OAuthConfig.AuthCodePkce
+                        val baseDevice = existingOauth as? OAuthConfig.DeviceFlow
                         val resolvedStorage = oauthStorage.trim().ifBlank {
-                            base?.storage?.trim().orEmpty().ifBlank { "file" }
+                            existingOauth?.storage?.trim().orEmpty().ifBlank { "file" }
                         }
                         val resolvedKey = oauthKey.trim().ifBlank {
-                            base?.key?.trim().orEmpty().ifBlank { defaultOAuthKey }
+                            existingOauth?.key?.trim().orEmpty().ifBlank { defaultOAuthKey }
                         }
                         val resolvedTokenEndpoint = oauthTokenEndpoint.trim().ifBlank {
-                            base?.tokenEndpoint.orEmpty()
+                            existingOauth?.tokenEndpoint.orEmpty()
                         }.ifBlank {
                             oauthPreset?.tokenEndpoint ?: oauthDevicePreset?.tokenEndpoint.orEmpty()
                         }.ifBlank {
                             ""
                         }
                         val resolvedClientId = oauthClientId.trim().ifBlank {
-                            base?.clientId.orEmpty()
+                            existingOauth?.clientId.orEmpty()
                         }.ifBlank {
                             oauthPreset?.clientId ?: oauthDevicePreset?.clientId.orEmpty()
                         }.ifBlank {
@@ -4806,7 +4881,7 @@ private fun AuthDialog(
                         }
                         val resolvedScopes = when {
                             scopesFromInput.isNotEmpty() -> scopesFromInput
-                            !base?.scopes.isNullOrEmpty() -> base.scopes
+                            !existingOauth?.scopes.isNullOrEmpty() -> existingOauth.scopes
                             else -> oauthPreset?.scopes ?: oauthDevicePreset?.scopes.orEmpty()
                         }
 
@@ -4846,7 +4921,7 @@ private fun AuthDialog(
                             }.ifBlank {
                                 ""
                             }
-                            io.github.stream29.kode.config.api.OAuthConfig.DeviceFlow(
+                            OAuthConfig.DeviceFlow(
                                 storage = resolvedStorage,
                                 key = resolvedKey,
                                 tokenEndpoint = resolvedTokenEndpoint.ifBlank { null },
@@ -4880,7 +4955,7 @@ private fun AuthDialog(
                             val resolvedTokenAdditionalParams = baseAuthCode?.tokenAdditionalParams
                                 .orEmpty()
                                 .ifEmpty { oauthPreset?.tokenAdditionalParams.orEmpty() }
-                            io.github.stream29.kode.config.api.OAuthConfig.AuthCodePkce(
+                            OAuthConfig.AuthCodePkce(
                                 storage = resolvedStorage,
                                 key = resolvedKey,
                                 authorizationEndpoint = resolvedAuthorizationEndpoint.ifBlank { null },
@@ -4894,34 +4969,38 @@ private fun AuthDialog(
                         }
                     }
                     if (!isApiKeyMode) {
-                        val oauthConfig = resolvedOauth
-                        val storageValue = oauthConfig?.storage?.trim().orEmpty().ifBlank { "file" }
-                        val keyValue = oauthConfig?.key?.trim().orEmpty()
-                        if (oauthConfig == null || keyValue.isBlank()) {
+                        val storageValue = resolvedOauth?.storage?.trim().orEmpty().ifBlank { "file" }
+                        val keyValue = resolvedOauth?.key?.trim().orEmpty()
+                        if (resolvedOauth == null || keyValue.isBlank()) {
                             idError = "OAuth token key is required for $selectedProviderLabel"
+                            idError?.length
                             return@TextButton
                         }
                         if (storageValue != "file" && storageValue != "env") {
                             idError = "OAuth storage must be 'file' or 'env'"
+                            idError?.length
                             return@TextButton
                         }
-                        val isDeviceFlow = oauthConfig.isDeviceFlow(providerId = selectedProviderId)
-                        val hasAuthCodeFields = oauthConfig.hasAuthCodeRequiredFields()
-                        val hasDeviceFlowFields = oauthConfig.hasDeviceFlowRequiredFields()
-                        val requiresDeviceBridgeTokenPoll = oauthConfig.requiresDeviceTokenPollEndpoint()
+                        val isDeviceFlow = resolvedOauth.isDeviceFlow(providerId = selectedProviderId)
+                        val hasAuthCodeFields = resolvedOauth.hasAuthCodeRequiredFields()
+                        val hasDeviceFlowFields = resolvedOauth.hasDeviceFlowRequiredFields()
+                        val requiresDeviceBridgeTokenPoll = resolvedOauth.requiresDeviceTokenPollEndpoint()
 
                         if (isDeviceFlow) {
                             if (!hasDeviceFlowFields) {
                                 idError = "OAuth device fields are incomplete for $selectedProviderLabel"
+                                idError?.length
                                 return@TextButton
                             }
-                            if (requiresDeviceBridgeTokenPoll && oauthConfig.deviceTokenEndpoint.isNullOrBlank()) {
+                            if (requiresDeviceBridgeTokenPoll && resolvedOauth.deviceTokenEndpoint.isNullOrBlank()) {
                                 idError = "OAuth device token poll endpoint is required for openai_codex_bridge"
+                                idError?.length
                                 return@TextButton
                             }
                         } else {
                             if (!hasAuthCodeFields) {
                                 idError = "OAuth auth code fields are incomplete for $selectedProviderLabel"
+                                idError?.length
                                 return@TextButton
                             }
                         }
@@ -5232,6 +5311,9 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
 
             Spacer(modifier = Modifier.height(12.dp))
             ChatLayoutSection(viewModel, ui)
+
+            Spacer(modifier = Modifier.height(12.dp))
+            DebugMessageViewSection(viewModel, ui)
         }
 
         item {
@@ -5561,7 +5643,7 @@ private fun DefaultModelSelectionSection(viewModel: MainViewModel, ui: AppUiStat
     } else {
         ExposedDropdownMenuBox(
             expanded = expanded,
-            onExpandedChange = { expanded = it }
+            onExpandedChange = { expanded = !expanded }
         ) {
             OutlinedTextField(
                 value = defaultModel?.let { formatModelDisplayName(it, auths) } ?: "Select default model",
@@ -5668,7 +5750,7 @@ private fun ThemeSelectionSection(viewModel: MainViewModel, ui: AppUiState) {
 
     ExposedDropdownMenuBox(
         expanded = expanded,
-        onExpandedChange = { expanded = it }
+        onExpandedChange = { expanded = !expanded }
     ) {
         OutlinedTextField(
             value = ui.uiTheme,
@@ -5714,7 +5796,7 @@ private fun ChatLayoutSection(viewModel: MainViewModel, ui: AppUiState) {
 
         ExposedDropdownMenuBox(
             expanded = alignmentExpanded,
-            onExpandedChange = { alignmentExpanded = it },
+            onExpandedChange = { alignmentExpanded = !alignmentExpanded },
         ) {
             OutlinedTextField(
                 value = selectedAlignment.label,
@@ -5776,6 +5858,42 @@ private fun ChatLayoutSection(viewModel: MainViewModel, ui: AppUiState) {
     }
 }
 
+@Composable
+private fun DebugMessageViewSection(viewModel: MainViewModel, ui: AppUiState) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = "Debug: raw message list",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "Show unmerged underlying session messages in Chat, with each item's content collapsed by default.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Switch(
+                checked = ui.debugShowRawMessageList,
+                onCheckedChange = { enabled ->
+                    viewModel.debugShowRawMessageList = enabled
+                },
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModelSelectionSection(viewModel: MainViewModel, ui: AppUiState) {
@@ -5794,7 +5912,7 @@ private fun ModelSelectionSection(viewModel: MainViewModel, ui: AppUiState) {
     } else {
         ExposedDropdownMenuBox(
             expanded = expanded,
-            onExpandedChange = { expanded = it }
+            onExpandedChange = { expanded = !expanded }
         ) {
             OutlinedTextField(
                 value = activeModel?.let { formatModelDisplayName(it, auths) } ?: "Select a model",

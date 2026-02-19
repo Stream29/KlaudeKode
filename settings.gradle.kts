@@ -22,24 +22,40 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 include(":app")
 include(":agent-api-test")
-include(":scripting-tool")
-include(":virtual-thread-dispatcher")
 
 // New modules for kimi-cli inspired architecture
 include(":kode-core")
-include(":kode-tools")
-include(":kode-ui-core")
+include(":kode-oauth-core")
+include(":kode-session-core")
+
+// UI modules
+include(":ui:core")
+project(":ui:core").projectDir = file("kode-ui-core")
+include(":ui:components")
+project(":ui:components").projectDir = file("kode-ui-components")
+include(":ui:bridge")
+project(":ui:bridge").projectDir = file("kode-ui-bridge")
+
+// Tool modules (one module per tool)
+include(":tools:kotlin-script-tool")
+include(":tools:communication-tool")
+include(":tools:file-search-tool")
+include(":tools:shell-tool")
+include(":tools:task-tool")
+include(":tools:think-tool")
+include(":tools:todo-tool")
+include(":tools:web-tool")
 
 // Config modules (separated into API, core logic, and filesystem implementation)
-include(":kode-config-api")
-include(":kode-config-core")
-include(":kode-config-fs")
-include(":kode-oauth-core")
+include(":config:api")
+project(":config:api").projectDir = file("kode-config-api")
+include(":config:core")
+project(":config:core").projectDir = file("kode-config-core")
+include(":config:fs")
+project(":config:fs").projectDir = file("kode-config-fs")
 // Legacy config module (deprecated, kept for compatibility)
-include(":kode-config")
-
-// Session management module (independent from Koog)
-include(":kode-session-core")
+include(":config:legacy")
+project(":config:legacy").projectDir = file("kode-config")
 
 // Provider preset modules
 include(":providers:provider-api")

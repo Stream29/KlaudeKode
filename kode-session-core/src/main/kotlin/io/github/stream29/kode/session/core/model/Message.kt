@@ -4,246 +4,121 @@ import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.message.ResponseMetaInfo
 import kotlinx.datetime.toDeprecatedInstant
-import kotlinx.datetime.toStdlibInstant
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.time.Instant
 
-/**
- * Represents a single message in a conversation.
- * SessionMessage keeps session-domain fields while composing Koog's Message model.
- */
 @Serializable
-public data class SessionMessage(
-    /**
-     * Unique identifier for the message.
-     */
-    val id: String,
+public sealed interface AgentMessage {
+    public val id: String
+    public val timestamp: Instant
+    public val metadata: Map<String, String>?
+}
 
-    /**
-     * Session-level role used by session operations and UI rendering.
-     */
-    val role: MessageRole,
+public typealias SessionMessage = AgentMessage
 
-    /**
-     * Session-level display content.
-     */
+@Serializable
+@SerialName("user")
+public data class UserMessage(
+    override val id: String,
     val content: String,
+    override val timestamp: Instant,
+    override val metadata: Map<String, String>? = null,
+) : AgentMessage
 
-    /**
-     * Additional structured data for tool calls and tool results.
-     */
-    val structuredData: JsonElement?,
-
-    /**
-     * Type of the message content.
-     */
-    val contentType: ContentType,
-
-    /**
-     * Timestamp when the message was created.
-     */
-    val timestamp: Instant,
-
-    /**
-     * Optional metadata for extensions.
-     */
-    val metadata: Map<String, String>?,
-
-    /**
-     * Koog-native message payload for agent runtime.
-     */
-    val koogMessage: Message = role.toKoogMessage(
-        content = content,
-        timestamp = timestamp,
-        structuredData = structuredData,
-    ),
-) {
-    public companion object {
-        @Suppress("DEPRECATION")
-        public fun fromKoogMessage(
-            id: String,
-            message: Message,
-            structuredData: JsonElement?,
-            contentType: ContentType,
-            metadata: Map<String, String>?,
-        ): SessionMessage {
-            return SessionMessage(
-                id = id,
-                role = message.toSessionRole(),
-                content = message.toSessionDisplayContent(),
-                structuredData = structuredData,
-                contentType = contentType,
-                timestamp = message.metaInfo.timestamp.toStdlibInstant(),
-                metadata = metadata,
-                koogMessage = message,
-            )
-        }
-    }
-}
-
-/**
- * Role of the message sender.
- */
 @Serializable
-public enum class MessageRole {
-    /**
-     * Human user.
-     */
-    USER {
-        override fun toKoogMessage(
-            content: String,
-            timestamp: Instant,
-            structuredData: JsonElement?,
-        ): Message {
-            return Message.User(
-                content = content,
-                metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
-            )
-        }
-    },
-
-    /**
-     * AI assistant/agent.
-     */
-    ASSISTANT {
-        override fun toKoogMessage(
-            content: String,
-            timestamp: Instant,
-            structuredData: JsonElement?,
-        ): Message {
-            return Message.Assistant(
-                content = content,
-                metaInfo = ResponseMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
-            )
-        }
-    },
-
-    /**
-     * System prompt/instruction.
-     */
-    SYSTEM {
-        override fun toKoogMessage(
-            content: String,
-            timestamp: Instant,
-            structuredData: JsonElement?,
-        ): Message {
-            return Message.System(
-                content = content,
-                metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
-            )
-        }
-    },
-
-    /**
-     * Tool call request from the agent.
-     */
-    TOOL_CALL {
-        override fun toKoogMessage(
-            content: String,
-            timestamp: Instant,
-            structuredData: JsonElement?,
-        ): Message {
-            val data = structuredData?.let { element ->
-                runCatching {
-                    Json.decodeFromJsonElement(ToolCallData.serializer(), element)
-                }.getOrNull()
-            }
-            return Message.Tool.Call(
-                id = data?.toolCallId,
-                tool = data?.toolName ?: "",
-                content = data?.arguments?.toString() ?: content,
-                metaInfo = ResponseMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
-            )
-        }
-    },
-
-    /**
-     * Tool execution result.
-     */
-    TOOL_RESULT {
-        override fun toKoogMessage(
-            content: String,
-            timestamp: Instant,
-            structuredData: JsonElement?,
-        ): Message {
-            val data = structuredData?.let { element ->
-                runCatching {
-                    Json.decodeFromJsonElement(ToolResultData.serializer(), element)
-                }.getOrNull()
-            }
-            return Message.Tool.Result(
-                id = data?.toolCallId,
-                tool = data?.toolName ?: "",
-                content = data?.result?.toMessageContent() ?: content,
-                metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
-            )
-        }
-    },
-
-    ;
-
-    @Suppress("DEPRECATION")
-    public abstract fun toKoogMessage(
-        content: String,
-        timestamp: Instant,
-        structuredData: JsonElement?,
-    ): Message
-}
-
-/**
- * Type of content in the message.
- */
-@Serializable
-public enum class ContentType {
-    TEXT,
-    MARKDOWN,
-    JSON,
-    TOOL_CALL,
-    TOOL_RESULT,
-    ERROR,
-}
-
-/**
- * Structured data for tool calls.
- */
-@Serializable
-public data class ToolCallData(
+@SerialName("tool_exchange")
+public data class ToolExchangeMessage(
+    override val id: String,
     val toolName: String,
     val toolCallId: String,
     val arguments: JsonElement,
-    val displayName: String?,
-)
-
-/**
- * Structured data for tool results.
- */
-@Serializable
-public data class ToolResultData(
-    val toolCallId: String,
-    val toolName: String,
     val result: JsonElement,
     val isError: Boolean,
     val errorMessage: String?,
-)
+    val displayName: String? = null,
+    override val timestamp: Instant,
+    override val metadata: Map<String, String>? = null,
+) : AgentMessage
 
-public fun Message.toSessionRole(): MessageRole {
-    return when (this) {
-        is Message.User -> MessageRole.USER
-        is Message.Assistant -> MessageRole.ASSISTANT
-        is Message.System -> MessageRole.SYSTEM
-        is Message.Tool.Call -> MessageRole.TOOL_CALL
-        is Message.Tool.Result -> MessageRole.TOOL_RESULT
-        is Message.Reasoning -> MessageRole.ASSISTANT
-    }
-}
+@Serializable
+@SerialName("suspend")
+public data class SuspendMessage(
+    override val id: String,
+    val toolName: String,
+    val toolCallId: String,
+    val arguments: JsonElement,
+    val displayName: String? = null,
+    override val timestamp: Instant,
+    override val metadata: Map<String, String>? = null,
+) : AgentMessage
 
-public fun Message.toSessionDisplayContent(): String {
+@Serializable
+@SerialName("resume")
+public data class ResumeMessage(
+    override val id: String,
+    val toolName: String,
+    val toolCallId: String,
+    val result: JsonElement,
+    val isError: Boolean,
+    val errorMessage: String?,
+    override val timestamp: Instant,
+    override val metadata: Map<String, String>? = null,
+) : AgentMessage
+
+@Suppress("DEPRECATION")
+public fun AgentMessage.toKoogMessages(): List<Message> {
     return when (this) {
-        is Message.Tool.Call -> "Calling tool: ${this.tool}"
-        else -> this.content
+        is UserMessage -> {
+            listOf(
+                Message.User(
+                    content = content,
+                    metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+                )
+            )
+        }
+
+        is ToolExchangeMessage -> {
+            listOf(
+                Message.Tool.Call(
+                    id = toolCallId,
+                    tool = toolName,
+                    content = arguments.toString(),
+                    metaInfo = ResponseMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+                ),
+                Message.Tool.Result(
+                    id = toolCallId,
+                    tool = toolName,
+                    content = result.toMessageContent(),
+                    metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+                )
+            )
+        }
+
+        is SuspendMessage -> {
+            listOf(
+                Message.Tool.Call(
+                    id = toolCallId,
+                    tool = toolName,
+                    content = arguments.toString(),
+                    metaInfo = ResponseMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+                )
+            )
+        }
+
+        is ResumeMessage -> {
+            listOf(
+                Message.Tool.Result(
+                    id = toolCallId,
+                    tool = toolName,
+                    content = result.toMessageContent(),
+                    metaInfo = RequestMetaInfo(timestamp = timestamp.toDeprecatedInstant()),
+                )
+            )
+        }
     }
 }
 
