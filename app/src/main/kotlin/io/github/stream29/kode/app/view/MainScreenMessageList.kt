@@ -2,7 +2,6 @@ package io.github.stream29.kode.app.view
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -11,10 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -22,7 +21,6 @@ import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,21 +30,21 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.stream29.kode.session.core.model.AgentScript
 import io.github.stream29.kode.session.core.model.AgentScriptStatus
 import io.github.stream29.kode.session.core.model.SessionMessage
+import io.github.stream29.kode.session.core.model.UserMessage
 import io.github.stream29.kode.ui.core.components.message.MessageBubble
-import io.github.stream29.kode.ui.core.components.message.SystemMessage
-import io.github.stream29.kode.ui.core.message.collapsedPreviewUi
-import io.github.stream29.kode.ui.core.message.collapsedTitleUi
-import io.github.stream29.kode.ui.core.message.isSystemRoleUi
-import io.github.stream29.kode.ui.core.message.isUiError
-import io.github.stream29.kode.ui.core.message.isUiToolCallLike
-import io.github.stream29.kode.ui.core.message.isUserRoleUi
-import io.github.stream29.kode.ui.core.message.shouldExpandByDefaultUi
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+private val scriptArgsJson: Json = Json { ignoreUnknownKeys = true }
 
 @Composable
 internal fun MessageList(
@@ -56,12 +54,11 @@ internal fun MessageList(
     messageMaxWidthRatio: Float,
     modifier: Modifier = Modifier,
 ) {
-    val displayedMessages = remember(messages) { buildDisplayedMessages(messages) }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(displayedMessages.size) {
-        if (displayedMessages.isNotEmpty()) {
-            listState.animateScrollToItem(displayedMessages.size - 1)
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
         }
     }
 
@@ -70,148 +67,188 @@ internal fun MessageList(
         shape = MaterialTheme.shapes.large,
     ) {
         if (messages.isEmpty()) {
-            Box(
+            androidx.compose.foundation.layout.Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    "Start a conversation by typing below 👇",
+                    text = "Start a conversation by typing below 👇",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                itemsIndexed(
-                    items = displayedMessages,
-                    key = { index, row -> "${row.renderedMessage.id}-$index" },
-                ) { _, row ->
-                    val message = row.renderedMessage
-                    val defaultExpanded = remember(
-                        message.id,
-                        message.isUiToolCallLike(),
-                        message.isUiError(),
-                    ) {
-                        message.shouldExpandByDefaultUi()
-                    }
-                    var expanded by rememberSaveable(message.id) { mutableStateOf(defaultExpanded) }
+            return@ElevatedCard
+        }
 
-                    if (!expanded) {
-                        CollapsedMessageRow(
-                            message = message,
-                            onExpand = { expanded = true },
-                        )
-                        return@itemsIndexed
-                    }
-
-                    if (message.isSystemRoleUi()) {
-                        SystemMessage(content = message.collapsedPreviewUi(maxLength = Int.MAX_VALUE))
-                    } else {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            itemsIndexed(
+                items = messages,
+                key = { index, message -> "${message.id}-$index" },
+            ) { index, message ->
+                when (message) {
+                    is UserMessage -> {
                         MessageBubble(
                             message = message,
-                            isCurrentUser = message.isUserRoleUi(),
+                            isCurrentUser = true,
                             messageAlignment = messageAlignment,
                             messageMaxWidthRatio = messageMaxWidthRatio,
-                            onForkFromHere = {
-                                onForkFromMessage(row.sourceIndex)
-                            },
+                            onForkFromHere = { onForkFromMessage(index) },
                         )
                     }
 
-                    if (!defaultExpanded) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                        ) {
-                            TextButton(onClick = { expanded = false }) {
-                                Icon(
-                                    imageVector = Icons.Default.ExpandLess,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Collapse")
-                            }
-                        }
+                    is AgentScript -> {
+                        ScriptMessageBlock(
+                            scriptMessage = message,
+                            sourceIndex = index,
+                            onForkFromMessage = onForkFromMessage,
+                            messageAlignment = messageAlignment,
+                            messageMaxWidthRatio = messageMaxWidthRatio,
+                        )
                     }
                 }
-            }
-        }
-    }
-}
-
-private data class DisplayMessageRow(
-    val renderedMessage: SessionMessage,
-    val sourceIndex: Int,
-)
-
-private fun buildDisplayedMessages(messages: List<SessionMessage>): List<DisplayMessageRow> {
-    return buildList {
-        messages.forEachIndexed { sourceIndex, message ->
-            if (message is AgentScript && message.outputList.isNotEmpty()) {
-                message.outputList.forEachIndexed { outputIndex, output ->
-                    add(
-                        DisplayMessageRow(
-                            renderedMessage = message.copy(
-                                id = "${message.id}#output-$outputIndex",
-                                status = AgentScriptStatus.COMPLETED,
-                                scriptReturnValue = output,
-                                scriptStdout = "",
-                                error = null,
-                                outputList = listOf(output),
-                            ),
-                            sourceIndex = sourceIndex,
-                        )
-                    )
-                }
-                if (message.status != AgentScriptStatus.COMPLETED) {
-                    add(DisplayMessageRow(renderedMessage = message, sourceIndex = sourceIndex))
-                }
-            } else {
-                add(DisplayMessageRow(renderedMessage = message, sourceIndex = sourceIndex))
             }
         }
     }
 }
 
 @Composable
-private fun CollapsedMessageRow(
-    message: SessionMessage,
-    onExpand: () -> Unit,
+private fun ScriptMessageBlock(
+    scriptMessage: AgentScript,
+    sourceIndex: Int,
+    onForkFromMessage: (Int) -> Unit,
+    messageAlignment: String,
+    messageMaxWidthRatio: Float,
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
+    var expanded by rememberSaveable(scriptMessage.id) { mutableStateOf(false) }
+    val scriptBody = remember(scriptMessage.id, scriptMessage.scriptStdout) { extractScriptBody(scriptMessage) }
+    val scriptResult = remember(scriptMessage.id, scriptMessage.scriptReturnValue, scriptMessage.error) {
+        extractScriptResult(scriptMessage)
+    }
+    val collapsedPreview = remember(scriptBody) {
+        scriptBody.replace(Regex("\\s+"), " ").trim().ifBlank { "(empty script)" }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ElevatedCard(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onExpand)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .clickable { expanded = !expanded },
+            shape = MaterialTheme.shapes.medium,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = message.collapsedTitleUi(),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = message.collapsedPreviewUi(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Script Preview",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = scriptMessage.status.name,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Icon(
+                            imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                if (!expanded) {
+                    Text(
+                        text = collapsedPreview,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                } else {
+                    Text(
+                        text = "Script",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    SelectionContainer {
+                        Text(
+                            text = scriptBody.ifBlank { "(empty script)" },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                    Spacer(modifier = Modifier.size(2.dp))
+                    Text(
+                        text = "Result",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    SelectionContainer {
+                        Text(
+                            text = scriptResult,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
             }
-            Icon(
-                imageVector = Icons.Default.ExpandMore,
-                contentDescription = "Expand",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        }
+
+        scriptMessage.outputList.forEachIndexed { outputIndex, output ->
+            val outputMessage = scriptMessage.copy(
+                id = "${scriptMessage.id}#output-$outputIndex",
+                status = AgentScriptStatus.COMPLETED,
+                scriptReturnValue = output,
+                scriptStdout = "",
+                error = null,
+                outputList = listOf(output),
+            )
+            MessageBubble(
+                message = outputMessage,
+                isCurrentUser = false,
+                messageAlignment = messageAlignment,
+                messageMaxWidthRatio = messageMaxWidthRatio,
+                onForkFromHere = { onForkFromMessage(sourceIndex) },
             )
         }
+    }
+}
+
+private fun extractScriptBody(message: AgentScript): String {
+    val rawArgs = message.scriptStdout
+    if (rawArgs.isBlank()) {
+        return ""
+    }
+    return runCatching {
+        val json = scriptArgsJson.parseToJsonElement(rawArgs).jsonObject
+        json["script"]?.jsonPrimitive?.contentOrNull ?: rawArgs
+    }.getOrDefault(rawArgs)
+}
+
+private fun extractScriptResult(message: AgentScript): String {
+    val resultBody = message.scriptReturnValue?.takeIf { it.isNotBlank() } ?: "(no result)"
+    val errorLine = message.error?.takeIf { it.isNotBlank() }
+    return if (errorLine == null) {
+        resultBody
+    } else {
+        "Error: $errorLine\n$resultBody"
     }
 }

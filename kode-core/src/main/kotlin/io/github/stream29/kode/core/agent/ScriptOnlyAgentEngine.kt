@@ -482,6 +482,7 @@ internal class ScriptOnlyAgentEngine(
             - You must call `suspendForUserInput()` to finish your output. Otherwise, you will be forced to continue.
             - Runtime behavior: the run enters pending-input and resumes after the user provides input.
             - Do not call consumeAwaitForUserInputSignal(); it is runtime-internal.
+            - You can do other works in script and call this method in the and of the script.
         """.trimIndent()
     }
 }

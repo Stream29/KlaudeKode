@@ -274,7 +274,6 @@ public data class UiConfig(
     val messageAlignment: String = "left",
     val messageMaxWidthRatio: Float = 0.9f,
     val sendKeyMode: String = "ctrl_or_cmd_enter_send",
-    val debugShowRawMessageList: Boolean = false,
     val lastOpenedSessionId: String? = null,
 )
 

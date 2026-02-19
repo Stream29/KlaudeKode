@@ -610,20 +610,13 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        if (ui.debugShowRawMessageList) {
-            RawMessageList(
-                messages = sessionUi.messages,
-                modifier = Modifier.weight(1f),
-            )
-        } else {
-            MessageList(
-                messages = sessionUi.messages,
-                onForkFromMessage = onForkFromMessage,
-                messageAlignment = ui.messageAlignment,
-                messageMaxWidthRatio = ui.messageMaxWidthRatio,
-                modifier = Modifier.weight(1f),
-            )
-        }
+        MessageList(
+            messages = sessionUi.messages,
+            onForkFromMessage = onForkFromMessage,
+            messageAlignment = ui.messageAlignment,
+            messageMaxWidthRatio = ui.messageMaxWidthRatio,
+            modifier = Modifier.weight(1f),
+        )
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -1421,21 +1414,6 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
                     Modifier.size(AssistChipDefaults.IconSize)
                 )
             }
-        )
-
-        AssistChip(
-            onClick = { state.debugShowRawMessageList = !ui.debugShowRawMessageList },
-            enabled = true,
-            label = {
-                Text(if (ui.debugShowRawMessageList) "Raw Messages: On" else "Raw Messages: Off")
-            },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.BugReport,
-                    contentDescription = null,
-                    modifier = Modifier.size(AssistChipDefaults.IconSize),
-                )
-            },
         )
 
         SessionQuickSwitch(state = state, sessionUi = sessionUi, ui = ui)

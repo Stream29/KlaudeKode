@@ -175,7 +175,6 @@ public class MainViewModel(
                 messageAlignment = state.messageAlignment,
                 messageMaxWidthRatio = state.messageMaxWidthRatio,
                 sendKeyMode = state.sendKeyMode,
-                debugShowRawMessageList = state.debugShowRawMessageList,
                 agentPresets = state.agentPresets,
                 activePresetName = state.activePresetName,
                 models = state.models,
@@ -805,10 +804,6 @@ public class MainViewModel(
         get() = _appUiState.value.sendKeyMode
         set(value) = updateAppUiState { it.copy(sendKeyMode = normalizeSendKeyMode(value)) }
 
-    public var debugShowRawMessageList: Boolean
-        get() = _appUiState.value.debugShowRawMessageList
-        set(value) = updateAppUiState { it.copy(debugShowRawMessageList = value) }
-
     public var mcpToolTimeoutMs: Int
         get() = _appUiState.value.mcpToolTimeoutMs
         set(value) = updateAppUiState { it.copy(mcpToolTimeoutMs = value) }
@@ -1099,7 +1094,6 @@ public class MainViewModel(
         messageAlignment = normalizeMessageAlignment(config.ui.messageAlignment)
         messageMaxWidthRatio = normalizeMessageWidthRatio(config.ui.messageMaxWidthRatio)
         sendKeyMode = normalizeSendKeyMode(config.ui.sendKeyMode)
-        debugShowRawMessageList = config.ui.debugShowRawMessageList
         applyAgentPresetFromConfig()
         val webSearch = config.services.webSearch
         webSearchProvider = webSearch?.provider ?: "none"
@@ -2614,7 +2608,6 @@ logging:
                     messageAlignment = messageAlignment,
                     messageMaxWidthRatio = messageMaxWidthRatio,
                     sendKeyMode = sendKeyMode,
-                    debugShowRawMessageList = debugShowRawMessageList,
                     lastOpenedSessionId = lastOpenedSessionId,
                 ),
                 tools = current.tools.copy(
@@ -3248,7 +3241,6 @@ logging:
             messageAlignment = messageAlignment,
             messageMaxWidthRatio = messageMaxWidthRatio,
             sendKeyMode = sendKeyMode,
-            debugShowRawMessageList = debugShowRawMessageList,
             disabledTools = disabledTools,
             webSearchProvider = webSearchProvider,
             webSearchApiKey = webSearchApiKey,
@@ -4550,7 +4542,6 @@ public data class ChatPageUiState(
     val messageAlignment: String = "left",
     val messageMaxWidthRatio: Float = 0.9f,
     val sendKeyMode: String = "ctrl_or_cmd_enter_send",
-    val debugShowRawMessageList: Boolean = false,
     val agentPresets: List<AgentPreset> = emptyList(),
     val activePresetName: String = "build",
     val models: List<LlmModelConfig> = emptyList(),
@@ -4690,7 +4681,6 @@ public data class AppUiState(
     val messageAlignment: String = "left",
     val messageMaxWidthRatio: Float = 0.9f,
     val sendKeyMode: String = "ctrl_or_cmd_enter_send",
-    val debugShowRawMessageList: Boolean = false,
     val mcpToolTimeoutMs: Int = 60000,
     val mcpServers: Map<String, io.github.stream29.kode.config.api.McpServerConfig> = emptyMap(),
     val mcpTestResults: Map<String, McpTestResult> = emptyMap(),
@@ -4790,7 +4780,6 @@ private data class PreferencesSnapshot(
     val messageAlignment: String,
     val messageMaxWidthRatio: Float,
     val sendKeyMode: String,
-    val debugShowRawMessageList: Boolean,
     val disabledTools: Set<String>,
     val webSearchProvider: String,
     val webSearchApiKey: String,

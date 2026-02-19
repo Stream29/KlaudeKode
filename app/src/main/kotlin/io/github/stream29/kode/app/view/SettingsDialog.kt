@@ -5311,9 +5311,6 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
 
             Spacer(modifier = Modifier.height(12.dp))
             ChatLayoutSection(viewModel, ui)
-
-            Spacer(modifier = Modifier.height(12.dp))
-            DebugMessageViewSection(viewModel, ui)
         }
 
         item {
@@ -5855,42 +5852,6 @@ private fun ChatLayoutSection(viewModel: MainViewModel, ui: AppUiState) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    }
-}
-
-@Composable
-private fun DebugMessageViewSection(viewModel: MainViewModel, ui: AppUiState) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text = "Debug: raw message list",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = "Show unmerged underlying session messages in Chat, with each item's content collapsed by default.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Switch(
-                checked = ui.debugShowRawMessageList,
-                onCheckedChange = { enabled ->
-                    viewModel.debugShowRawMessageList = enabled
-                },
-            )
-        }
     }
 }
 

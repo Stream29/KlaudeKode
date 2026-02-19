@@ -130,6 +130,9 @@ plugin-name = { id = "plugin.id", version.ref = "version-ref" }
 - 2026-02-19：`ScriptOnlyAgentEngine.DEFAULT_SYSTEM_PROMPT` 明确声明 `ScriptContext` receiver API（含 `suspendForUserInput`）的调用时机与停止语义；后续新增 receiver 方法必须同步写入 system prompt 使用约定。
 - 2026-02-19：`ScriptContext` 新增 `sayToUser(text)` 用户输出通道：脚本侧 `println` 仅用于 agent 自检/调试；运行时每轮消费 `ScriptContext.outputList` 并落盘到 `AgentScript.outputList`，主聊天 UI 将该 list 按元素展开为独立消息展示。
 - 2026-02-19：会话存储 schema 版本升级到 `5`，以硬切引入 `AgentScript.outputList` 的消息结构变更。
+- 2026-02-19：聊天主视图移除 RawMessage 模式：`Chat` 统一直接消费 `SessionUiState.messages`（仅 `UserMessage`/`AgentScript`），不再提供 debug raw 列表切换入口。
+- 2026-02-19：`AgentScript` UI 展示协议升级：每条脚本消息先展示可折叠 script preview（展开显示脚本内容与脚本结果），再按顺序逐条渲染 `outputList` 为 assistant 消息。
+- 2026-02-19：配置模型移除 `UiConfig.debugShowRawMessageList`，RawMessage 视图切换配置不再生效（硬切）。
 
 ## Critical Interaction Contract
 
@@ -146,6 +149,6 @@ plugin-name = { id = "plugin.id", version.ref = "version-ref" }
 - Script receiver contract: each agent run owns an isolated `ScriptContext`; script-side `suspendForUserInput()` only flips await signal, and engine must consume this signal after tool execution to enter pending-input state.
 - System prompt contract: `ScriptOnlyAgentEngine.DEFAULT_SYSTEM_PROMPT` must explicitly document currently supported `ScriptContext` receiver methods and usage constraints; adding a new receiver method requires updating this prompt in the same change.
 - User output contract: script-side user-visible text must use `ScriptContext.sayToUser(text)`; `println` output is debug-only and must not be treated as user message.
-- Output projection contract: engine must persist per-turn `ScriptContext.outputList` into `AgentScript.outputList`; chat UI must render each list element as one assistant message, while raw-view keeps original `SessionMessage` serialization.
+- Output projection contract: engine must persist per-turn `ScriptContext.outputList` into `AgentScript.outputList`; chat UI must render each list element as one assistant message.
+- Chat rendering contract: `Chat` 页面只渲染 `SessionUiState.messages` 原始 `AgentMessage` 序列；`UserMessage` 直接渲染，`AgentScript` 先渲染折叠脚本预览再渲染 `outputList`。不再维护 RawMessage 模式。
 - Session persistence contract: persist `UserMessage`/`AgentScript` only, and each message must include `koogMessages` raw payload; do not persist synthetic/fallback assistant text.
-- Debug raw-view contract: raw message panel serializes `SessionMessage` (including `koogMessages`) directly from `SessionUiState.messages`; keep isolated from friendly projection/grouping logic.
