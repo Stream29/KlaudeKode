@@ -7,21 +7,21 @@ import io.github.stream29.kode.session.core.model.AgentMessage
 import io.github.stream29.kode.session.core.model.Agent
 import io.github.stream29.kode.session.core.model.AgentConfig
 import io.github.stream29.kode.session.core.model.AgentState
-import io.github.stream29.kode.session.core.model.ConversationSession
-import io.github.stream29.kode.session.core.model.Session
+import io.github.stream29.kode.session.core.model.SessionSnapshot
+import io.github.stream29.kode.session.core.model.SessionState
 import io.github.stream29.kode.session.core.model.SessionCheckpoint
 import io.github.stream29.kode.session.core.model.SessionConfig
 import io.github.stream29.kode.session.core.model.SessionMessage
 import io.github.stream29.kode.session.core.model.SessionMetadata
 import io.github.stream29.kode.session.core.model.SessionMetadataCsvRow
-import io.github.stream29.kode.session.core.model.SessionState
+import io.github.stream29.kode.session.core.model.SessionRunState
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.model.SubAgent
-import io.github.stream29.kode.session.core.model.toConversationSession
+import io.github.stream29.kode.session.core.model.toSessionSnapshot
 import io.github.stream29.kode.session.core.model.toCsvRow
 import io.github.stream29.kode.session.core.model.toMetadata
-import io.github.stream29.kode.session.core.model.toSessionRuntime
+import io.github.stream29.kode.session.core.model.toSessionState
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.persistentHashMapOf
 import kotlinx.collections.immutable.persistentListOf
@@ -78,7 +78,7 @@ public class FileSessionStorage(
         }
     }
 
-    override suspend fun loadSession(id: String): Session {
+    override suspend fun loadSession(id: String): SessionState {
         return withContext(Dispatchers.IO) {
             rwMutex.withLock {
                 val metadataRow = readMetadataRows().firstOrNull { row -> row.id == id }
@@ -124,14 +124,14 @@ public class FileSessionStorage(
                     subagentMap = subagentMap.put(subMeta.agentId, subAgent)
                 }
 
-                val normalizedSessionState = if (metadata.state == SessionState.Running) {
-                    SessionState.Suspended
+                val normalizedSessionState = if (metadata.state == SessionRunState.Running) {
+                    SessionRunState.Suspended
                 } else {
                     metadata.state
                 }
                 val totalMainMessageCount = clampToInt(mainAgentMeta.nextSeq)
 
-                Session(
+                SessionState(
                     metadata = MutableStateFlow(
                         metadata.copy(
                             state = normalizedSessionState,
@@ -155,7 +155,7 @@ public class FileSessionStorage(
         }
     }
 
-    override suspend fun persistSession(id: String, session: Session) {
+    override suspend fun persistSession(id: String, session: SessionState) {
         withContext(Dispatchers.IO) {
             rwMutex.withLock {
                 val sessionFolder = getSessionDirectory(sessionId = id)
@@ -224,13 +224,13 @@ public class FileSessionStorage(
         }
     }
 
-    override suspend fun saveSession(session: ConversationSession) {
-        persistSession(session.id, session.toSessionRuntime())
+    override suspend fun saveSession(session: SessionSnapshot) {
+        persistSession(session.id, session.toSessionState())
     }
 
-    override suspend fun getSession(sessionId: String): ConversationSession? {
+    override suspend fun getSession(sessionId: String): SessionSnapshot? {
         return try {
-            loadSession(sessionId).toConversationSession()
+            loadSession(sessionId).toSessionSnapshot()
         } catch (error: IllegalArgumentException) {
             if (error.message == "Session not found: $sessionId") {
                 null

@@ -1,6 +1,6 @@
 package io.github.stream29.kode.session.core.storage
 
-import io.github.stream29.kode.session.core.model.ConversationSession
+import io.github.stream29.kode.session.core.model.SessionSnapshot
 import io.github.stream29.kode.session.core.model.SessionCheckpoint
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
@@ -15,13 +15,13 @@ public interface SessionStorage {
     /**
      * Save or update a session.
      */
-    public suspend fun saveSession(session: ConversationSession)
+    public suspend fun saveSession(session: SessionSnapshot)
     
     /**
      * Get a session by ID.
      * @return The session, or null if not found.
      */
-    public suspend fun getSession(sessionId: String): ConversationSession?
+    public suspend fun getSession(sessionId: String): SessionSnapshot?
     
     /**
      * List all sessions with optional filtering.

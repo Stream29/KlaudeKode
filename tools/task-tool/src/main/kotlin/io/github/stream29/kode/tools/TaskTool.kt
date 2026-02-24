@@ -25,11 +25,11 @@ import java.util.concurrent.atomic.AtomicLong
 @Suppress("unused")
 @LLMDescription(
     "Create and manage sub-agents (tasks) that can work in parallel. " +
-        "Use this to delegate work to specialized sub-agents that can run concurrently."
+            "Use this to delegate work to specialized sub-agents that can run concurrently."
 )
 public class TaskTool public constructor(
     private val messageHandler: MessageHandler,
-    private val agentFactory: AgentFactory,
+    private val taskAgentFactory: TaskAgentFactory,
     private val logger: (String) -> Unit = { println(it) },
     private val sessionManager: SessionManager? = null,
     private val ownerSessionId: String? = null,
@@ -51,7 +51,7 @@ public class TaskTool public constructor(
         val taskScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val deferred = taskScope.async {
             try {
-                val subAgent = agentFactory.createAgent()
+                val subAgent = taskAgentFactory.createTaskAgent()
                 logger("▶️ Task #$taskId running: $task")
                 val result = subAgent.run(task)
                 logger("✅ Task #$taskId completed")
@@ -88,7 +88,7 @@ public class TaskTool public constructor(
         @LLMDescription("Expected result format and completion criteria")
         expectedResult: String,
     ): AgentCreationResult {
-        return createAgent(
+        return createTaskAgent(
             mode = "fork",
             taskDescription = taskDescription,
             expectedResult = expectedResult,
@@ -103,14 +103,14 @@ public class TaskTool public constructor(
         @LLMDescription("Expected result format and completion criteria")
         expectedResult: String,
     ): AgentCreationResult {
-        return createAgent(
+        return createTaskAgent(
             mode = "spawn",
             taskDescription = taskDescription,
             expectedResult = expectedResult,
         )
     }
 
-    private suspend fun createAgent(
+    private suspend fun createTaskAgent(
         mode: String,
         taskDescription: String,
         expectedResult: String,
@@ -159,7 +159,7 @@ public class TaskTool public constructor(
             val currentJob = requireNotNull(currentCoroutineContext()[Job]) { "Subagent requires job context" }
             manager.registerSubAgentJob(sessionId, agentId, currentJob)
             try {
-                val result = agentFactory.runSubAgent(
+                val result = taskAgentFactory.runSubAgent(
                     sessionId = sessionId,
                     agentId = agentId,
                     parentAgentId = parentAgentId,
@@ -204,7 +204,7 @@ public class TaskTool public constructor(
     @Tool(customName = ToolNames.POLL_AGENT_RESULT)
     @LLMDescription(
         "Poll subagent result without blocking. " +
-            "Returns pending if the subagent has not finished."
+                "Returns pending if the subagent has not finished."
     )
     public suspend fun pollAgentResult(
         @LLMDescription("Target agent ID")
@@ -339,7 +339,7 @@ public class TaskTool public constructor(
     @Tool(customName = ToolNames.SAY_TO_AGENT)
     @LLMDescription(
         "Send message to another agent. " +
-            "It injects receiveAgentMessage into target agent history immediately."
+                "It injects receiveAgentMessage into target agent history immediately."
     )
     public suspend fun sayToAgent(
         @LLMDescription("Target agent ID")
@@ -581,7 +581,8 @@ public class TaskTool public constructor(
             }
 
             val successCount = results.count { it.success }
-            val message = "Completed ${results.size} tasks: $successCount successful, ${results.size - successCount} failed"
+            val message =
+                "Completed ${results.size} tasks: $successCount successful, ${results.size - successCount} failed"
             logger("✅ $message")
             messageHandler.addMessageToUser("✅ $message")
 
@@ -695,8 +696,8 @@ public class TaskTool public constructor(
     }
 }
 
-public interface AgentFactory {
-    public fun createAgent(): SimpleAgent
+public interface TaskAgentFactory {
+    public fun createTaskAgent(): TaskAgent
 
     public suspend fun runSubAgent(
         sessionId: String,
@@ -708,7 +709,7 @@ public interface AgentFactory {
     ): String
 }
 
-public interface SimpleAgent {
+public interface TaskAgent {
     public suspend fun run(task: String): String
 }
 

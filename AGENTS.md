@@ -115,7 +115,7 @@ plugin-name = { id = "plugin.id", version.ref = "version-ref" }
 - 2026-02-19：OpenAI provider/auth-mode 常量在 `kode-core`/`app` 统一引用 `kode-config-api` 常量，减少跨模块硬编码漂移。
 - 2026-02-19：`agent-api-test` 默认执行离线确定性校验；需要设置 `KODE_AGENT_API_TEST_ENABLE_LIVE=true` 才运行 Anthropic live 链路。
 - 2026-02-19：新增内置 `test-deterministic` provider（`provider-builtin`）用于测试链路；基于 Koog mock executor，`execute` 固定返回 deterministic tool-call，避免 tool-only 协议下 assistant 文本违规，供 `agent-api-test` 稳定复现 continue/no-pending 路径。
-- 2026-02-19：模块收纳调整：脚本相关模块合并到 `:tools:kotlin-script-tool`（整合原根模块 `:scripting-tool` 与工具模块脚本能力）；工具模块统一为 `:tools:{communication,file-search,kotlin-script,shell,task,think,todo,web}-tool`；配置与 UI 模块分别收纳为 `:config:{api,core,fs,legacy}` 与 `:ui:{core,components,bridge}`（通过 `projectDir` 映射保留现有目录）。
+- 2026-02-19：模块收纳调整：脚本相关模块合并到 `:tools:kotlin-script-tool`（整合原根模块 `:scripting-tool` 与工具模块脚本能力）；工具模块统一为 `:tools:{communication,kotlin-script,shell,task,think,todo,web}-tool`；配置与 UI 模块分别收纳为 `:config:{api,core,fs,legacy}` 与 `:ui:{core,components,bridge}`（通过 `projectDir` 映射保留现有目录）。
 - 2026-02-19：Session 存储改为 `sessions/<id>/meta.json + agents/<agentId>/{meta.json,messages/<seq>.json}`；会话加载仅按 agent `activeStartSeq..nextSeq` 读取活跃窗口，UI 继续只消费 `SessionUiState.messages`；本阶段停用自动 checkpoint 落盘。
 - 2026-02-19：会话消息模型硬切为仅两种 `AgentMessage`：`UserMessage` 与 `AgentScript`，并在两者上强制携带 `koogMessages` 原始协议消息列表；LLM 请求历史统一由 `SessionUiState.messages -> koogMessages` 还原，不再依赖 metadata 反推。
 - 2026-02-19：会话存储执行无兼容硬切：`FileSessionStorage` 引入 schema 版本门禁，版本变更时直接清空历史 `sessions` 与 `session-meta.csv`，不做旧消息格式迁移。
@@ -133,6 +133,13 @@ plugin-name = { id = "plugin.id", version.ref = "version-ref" }
 - 2026-02-19：聊天主视图移除 RawMessage 模式：`Chat` 统一直接消费 `SessionUiState.messages`（仅 `UserMessage`/`AgentScript`），不再提供 debug raw 列表切换入口。
 - 2026-02-19：`AgentScript` UI 展示协议升级：每条脚本消息先展示可折叠 script preview（展开显示脚本内容与脚本结果），再按顺序逐条渲染 `outputList` 为 assistant 消息。
 - 2026-02-19：配置模型移除 `UiConfig.debugShowRawMessageList`，RawMessage 视图切换配置不再生效（硬切）。
+- 2026-02-19：移除 `:tools:file-search-tool` 模块与 `kode-core` 对该模块依赖；文件检索能力收敛到 script-only 路线（由 `executeKotlinScript` + `ScriptContext` 统一承载）。
+- 2026-02-19：会话主体设计回归：运行态以 `SessionState` 作为聚合根（内部 `MutableStateFlow` 持有会话全量状态），任何状态变更都必须先校验后原子持久化，再对外发布新状态。
+- 2026-02-19：会话快照边界明确：`SessionSnapshot` 仅用于序列化/导入导出/跨层传输；UI 与运行循环不得依赖快照回推运行态。
+- 2026-02-19：执行边界收敛：`Session*Runtime` 只负责执行（run/continue + 模型解析），不再承担 `createSession` 等生命周期写操作。
+- 2026-02-19：会话命名统一：`ConversationSession -> SessionSnapshot`（序列化 DTO），`Session -> SessionState`（运行态聚合根），原 `SessionState` 枚举重命名为 `SessionRunState`。
+- 2026-02-19：移除未使用会话二级快照模型 `SessionDataSnapshot/AgentSnapshot/SubAgentSnapshot`，避免与 `SessionSnapshot` 边界重复。
+- 2026-02-20：会话编排继续下沉到 `SessionManager`：新增 `createConversationSession` / `prepareConversationContinuation` / `updateSessionWorkDir`，由 session/core 统一处理创建、continue 输入插入合法性与工作目录更新；`MainViewModel` 仅保留 UI 输入归一化与展示状态。
 
 ## Critical Interaction Contract
 
@@ -152,3 +159,5 @@ plugin-name = { id = "plugin.id", version.ref = "version-ref" }
 - Output projection contract: engine must persist per-turn `ScriptContext.outputList` into `AgentScript.outputList`; chat UI must render each list element as one assistant message.
 - Chat rendering contract: `Chat` 页面只渲染 `SessionUiState.messages` 原始 `AgentMessage` 序列；`UserMessage` 直接渲染，`AgentScript` 先渲染折叠脚本预览再渲染 `outputList`。不再维护 RawMessage 模式。
 - Session persistence contract: persist `UserMessage`/`AgentScript` only, and each message must include `koogMessages` raw payload; do not persist synthetic/fallback assistant text.
+- Session aggregate contract: `SessionState` 是会话唯一写入口；状态迁移必须遵循“合法性校验 -> 状态更新 -> 持久化提交 -> 状态发布”的顺序。
+- Snapshot boundary contract: `SessionSnapshot` 只作为持久化/导入导出 DTO；运行态逻辑与 UI 订阅以 `SessionState` 为准，不允许用 snapshot 反推临时运行字段。

@@ -225,7 +225,7 @@ public fun MainScreen(state: MainViewModel) {
                     is AddAuthDialogRoute,
                     is EditAuthDialogRoute,
                     is DeleteAuthConfirmDialogRoute,
-                    -> chromeUi.currentPage == AppPage.Models
+                        -> chromeUi.currentPage == AppPage.Models
 
                     NewSessionDirDialogRoute -> sessionUi.showNewSessionDialog
                     EditSessionDirDialogRoute -> sessionUi.showSessionDirDialog
@@ -407,7 +407,7 @@ public fun MainScreen(state: MainViewModel) {
                                 is AddAuthDialogRoute,
                                 is EditAuthDialogRoute,
                                 is DeleteAuthConfirmDialogRoute,
-                                -> {
+                                    -> {
                                     navBackStack.removeLastOrNull()
                                 }
 
@@ -1073,13 +1073,22 @@ private fun InfoPage(state: MainViewModel, ui: InfoPageUiState) {
                 InfoRow(label = "OS", value = System.getProperty("os.name") + " " + System.getProperty("os.version"))
                 InfoRow(label = "Java", value = System.getProperty("java.version"))
                 InfoRow(label = "User", value = System.getProperty("user.name"))
-                InfoRow(label = "Config", value = io.github.stream29.kode.config.fs.FileSystemLocations.configFile.absolutePath)
+                InfoRow(
+                    label = "Config",
+                    value = io.github.stream29.kode.config.fs.FileSystemLocations.configFile.absolutePath
+                )
                 InfoRow(label = "Preset spec", value = ui.presetSpecPath.ifBlank { "Not found" })
-                InfoRow(label = "Skills", value = if (ui.skillsPreview.isEmpty()) "None" else ui.skillsPreview.size.toString())
+                InfoRow(
+                    label = "Skills",
+                    value = if (ui.skillsPreview.isEmpty()) "None" else ui.skillsPreview.size.toString()
+                )
                 InfoRow(label = "Models", value = ui.modelsCount.toString())
                 InfoRow(label = "Auth Providers", value = ui.authCount.toString())
                 InfoRow(label = "MCP Servers", value = ui.mcpServerCount.toString())
-                InfoRow(label = "Disabled Tools", value = if (ui.disabledTools.isEmpty()) "None" else ui.disabledTools.joinToString(", "))
+                InfoRow(
+                    label = "Disabled Tools",
+                    value = if (ui.disabledTools.isEmpty()) "None" else ui.disabledTools.joinToString(", ")
+                )
                 InfoRow(label = "ACP Running", value = ui.acpRunning.toString())
             }
         }

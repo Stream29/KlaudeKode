@@ -229,15 +229,15 @@ private fun SessionCard(
 ) {
     val statusColor = session.status.statusColor(colorScheme = MaterialTheme.colorScheme)
     val statusIcon = session.status.statusIcon()
-    
+
     val dateStr = formatSessionTime(session)
-    
+
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.elevatedCardColors(
-            containerColor = if (isCurrent) 
-                MaterialTheme.colorScheme.primaryContainer 
-            else 
+            containerColor = if (isCurrent)
+                MaterialTheme.colorScheme.primaryContainer
+            else
                 MaterialTheme.colorScheme.surface
         )
     ) {
@@ -261,17 +261,17 @@ private fun SessionCard(
                         tint = statusColor,
                         modifier = Modifier.size(12.dp)
                     )
-                    
+
                     Text(
                         text = session.title,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                        color = if (isCurrent) 
-                            MaterialTheme.colorScheme.onPrimaryContainer 
-                        else 
+                        color = if (isCurrent)
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        else
                             MaterialTheme.colorScheme.onSurface
                     )
-                    
+
                     if (isCurrent) {
                         AssistChip(
                             onClick = { },
@@ -283,7 +283,7 @@ private fun SessionCard(
                         )
                     }
                 }
-                
+
                 if (session.hasForks) {
                     Badge(
                         containerColor = MaterialTheme.colorScheme.tertiaryContainer,
@@ -293,9 +293,9 @@ private fun SessionCard(
                     }
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(4.dp))
-            
+
             Text(
                 text = "ID: ${session.id.take(8)}... • ${session.messageCount} messages • $dateStr",
                 style = MaterialTheme.typography.bodySmall,
@@ -303,7 +303,7 @@ private fun SessionCard(
             )
 
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -320,7 +320,7 @@ private fun SessionCard(
                         modifier = Modifier.size(20.dp)
                     )
                 }
-                
+
                 FilledTonalIconButton(
                     onClick = onFork,
                     modifier = Modifier.size(40.dp)
@@ -366,7 +366,7 @@ private fun SessionCard(
                         )
                     }
                 }
-                
+
                 FilledTonalIconButton(
                     onClick = onDelete,
                     colors = IconButtonDefaults.filledTonalIconButtonColors(
@@ -388,7 +388,9 @@ private fun SessionCard(
 
 private fun formatSessionTime(session: SessionSummary): String {
     val dateFormat = session.updatedAt.toLocalDateTime(TimeZone.currentSystemDefault())
-    return "${dateFormat.date} ${dateFormat.hour.toString().padStart(2, '0')}:${dateFormat.minute.toString().padStart(2, '0')}"
+    return "${dateFormat.date} ${dateFormat.hour.toString().padStart(2, '0')}:${
+        dateFormat.minute.toString().padStart(2, '0')
+    }"
 }
 
 private fun SessionStatus.statusColor(colorScheme: ColorScheme): Color {

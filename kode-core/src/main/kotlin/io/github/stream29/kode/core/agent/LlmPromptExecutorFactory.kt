@@ -18,7 +18,7 @@ import io.github.stream29.kode.providers.builtin.BuiltinLlmProviderRegistry
 import kotlinx.coroutines.runBlocking
 import java.io.File
 
-internal object MultiLLMExecutorFactory {
+internal object LlmPromptExecutorFactory {
     fun create(auths: List<LlmAuthConfig>): MultiLLMPromptExecutor {
         val clients = mutableMapOf<LLMProvider, LLMClient>()
         val ownerByProvider = mutableMapOf<LLMProvider, LlmAuthConfig>()

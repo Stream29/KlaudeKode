@@ -8,23 +8,23 @@ import io.github.stream29.kode.session.core.model.AgentScript
 import io.github.stream29.kode.session.core.model.AgentScriptStatus
 import io.github.stream29.kode.session.core.model.AgentState
 import io.github.stream29.kode.session.core.model.Agent
-import io.github.stream29.kode.session.core.model.ConversationSession
+import io.github.stream29.kode.session.core.model.SessionSnapshot
 import io.github.stream29.kode.session.core.model.SCRIPT_RESULT_MODE_CALL_RESULT
 import io.github.stream29.kode.session.core.model.SCRIPT_RESULT_MODE_METADATA_KEY
 import io.github.stream29.kode.session.core.model.SCRIPT_TOOL_ARGS_METADATA_KEY
 import io.github.stream29.kode.session.core.model.SCRIPT_TOOL_NAME_METADATA_KEY
-import io.github.stream29.kode.session.core.model.Session
+import io.github.stream29.kode.session.core.model.SessionState
 import io.github.stream29.kode.session.core.model.SessionCheckpoint
 import io.github.stream29.kode.session.core.model.SessionConfiguration
 import io.github.stream29.kode.session.core.model.SessionMessage
-import io.github.stream29.kode.session.core.model.SessionState
+import io.github.stream29.kode.session.core.model.SessionRunState
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.model.SubAgent
 import io.github.stream29.kode.session.core.model.UserMessage
 import io.github.stream29.kode.session.core.tool.ToolNames
-import io.github.stream29.kode.session.core.model.toConversationSession
-import io.github.stream29.kode.session.core.model.toSessionRuntime
+import io.github.stream29.kode.session.core.model.toSessionSnapshot
+import io.github.stream29.kode.session.core.model.toSessionState
 import io.github.stream29.kode.session.core.storage.SessionFilter
 import io.github.stream29.kode.session.core.storage.querySessionSummaries
 import kotlinx.collections.immutable.persistentListOf
@@ -79,10 +79,10 @@ public class SessionManager(
         systemPrompt: String?,
         tags: List<String>,
         configuration: SessionConfiguration,
-    ): ConversationSession {
+    ): SessionSnapshot {
         val sessionId = generateId()
         val now = clock.now()
-        val base = ConversationSession(
+        val base = SessionSnapshot(
             id = sessionId,
             title = title,
             createdAt = now,
@@ -95,9 +95,9 @@ public class SessionManager(
             configuration = configuration.copy(systemPrompt = systemPrompt ?: configuration.systemPrompt),
             tags = tags,
             childSessionIds = emptyList(),
-            runtimeState = SessionState.Suspended,
+            runtimeState = SessionRunState.Suspended,
         )
-        val runtime = base.toSessionRuntime()
+        val runtime = base.toSessionState()
         runtime.agent.value.config.value = AgentConfig(
             systemPrompt = runtime.config.value.systemPrompt,
             taskDescription = null,
@@ -106,15 +106,38 @@ public class SessionManager(
         )
         persist(runtime)
         sessionFactory.put(runtime)
-        return runtime.toConversationSession()
+        return runtime.toSessionSnapshot()
     }
 
-    public suspend fun getSession(sessionId: String): ConversationSession? {
+    public suspend fun createConversationSession(
+        title: String,
+        systemPrompt: String,
+        preferredModel: String?,
+        preferredModelId: String,
+        workDir: String?,
+    ): SessionSnapshot {
+        val configuration = SessionConfiguration(
+            preferredModel = preferredModel,
+            systemPrompt = systemPrompt,
+            workDir = workDir,
+            maxIterations = null,
+            temperature = null,
+            customValues = mapOf(SESSION_CONFIG_MODEL_ID_KEY to preferredModelId),
+        )
+        return createSession(
+            title = title,
+            systemPrompt = systemPrompt,
+            tags = emptyList(),
+            configuration = configuration,
+        )
+    }
+
+    public suspend fun getSession(sessionId: String): SessionSnapshot? {
         val runtime = loadRuntime(sessionId) ?: return null
-        return runtime.toConversationSession()
+        return runtime.toSessionSnapshot()
     }
 
-    public suspend fun getRuntimeSession(sessionId: String): Session? {
+    public suspend fun getSessionState(sessionId: String): SessionState? {
         return loadRuntime(sessionId)
     }
 
@@ -124,7 +147,7 @@ public class SessionManager(
         try {
             runtime.runJob.value = ownerJob
             runtime.metadata.value = runtime.metadata.value.copy(
-                state = SessionState.Running,
+                state = SessionRunState.Running,
                 updatedAt = clock.now(),
             )
             runtime.agent.value.state.value = AgentState.Running
@@ -179,7 +202,7 @@ public class SessionManager(
             runtime.runJob.value = null
             runtime.agent.value.state.value = AgentState.Suspended
             runtime.metadata.value = runtime.metadata.value.copy(
-                state = SessionState.Suspended,
+                state = SessionRunState.Suspended,
                 updatedAt = clock.now(),
             )
             persist(runtime)
@@ -192,7 +215,7 @@ public class SessionManager(
         sessionId: String,
         agentId: String?,
         message: SessionMessage,
-    ): ConversationSession {
+    ): SessionSnapshot {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
@@ -204,7 +227,7 @@ public class SessionManager(
                 messageCount = runtime.agent.value.messages.value.size,
             )
             persist(runtime)
-            return runtime.toConversationSession()
+            return runtime.toSessionSnapshot()
         } finally {
             runtime.mutex.unlock()
         }
@@ -214,7 +237,7 @@ public class SessionManager(
         sessionId: String,
         content: String,
         agentId: String?,
-    ): ConversationSession {
+    ): SessionSnapshot {
         val now = clock.now()
         return addMessage(
             sessionId = sessionId,
@@ -234,6 +257,23 @@ public class SessionManager(
         )
     }
 
+    public suspend fun prepareConversationContinuation(
+        sessionId: String,
+        input: String,
+        agentId: String?,
+    ) {
+        val pendingScript = getTrailingPendingScript(sessionId = sessionId, agentId = agentId)
+        if (pendingScript != null) {
+            throw IllegalStateException(
+                "Script-only violation: pending script '${pendingScript.scriptId}' requires waitForUserInput flow"
+            )
+        }
+        if (input.isBlank()) {
+            return
+        }
+        addUserMessage(sessionId = sessionId, content = input, agentId = agentId)
+    }
+
     public suspend fun addAgentScriptMessage(
         sessionId: String,
         scriptId: String,
@@ -245,7 +285,7 @@ public class SessionManager(
         koogMessages: List<Message>,
         metadata: Map<String, String>?,
         agentId: String?,
-    ): ConversationSession {
+    ): SessionSnapshot {
         assertScriptOnlyKoogMessages(koogMessages = koogMessages)
         return addMessage(
             sessionId = sessionId,
@@ -288,7 +328,7 @@ public class SessionManager(
         }
     }
 
-    public suspend fun revertToCheckpoint(sessionId: String, checkpointId: String): ConversationSession {
+    public suspend fun revertToCheckpoint(sessionId: String, checkpointId: String): SessionSnapshot {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
@@ -299,19 +339,19 @@ public class SessionManager(
             runtime.metadata.value = runtime.metadata.value.copy(
                 updatedAt = clock.now(),
                 version = checkpoint.version + 1,
-                state = SessionState.Suspended,
+                state = SessionRunState.Suspended,
                 messageCount = runtime.agent.value.messages.value.size,
             )
             runtime.agent.value.state.value = AgentState.Suspended
             runtime.runJob.value = null
             persist(runtime)
-            return runtime.toConversationSession()
+            return runtime.toSessionSnapshot()
         } finally {
             runtime.mutex.unlock()
         }
     }
 
-    public suspend fun revertToLatestCheckpoint(sessionId: String): ConversationSession? {
+    public suspend fun revertToLatestCheckpoint(sessionId: String): SessionSnapshot? {
         val checkpoint = getLatestCheckpoint(sessionId) ?: return null
         return revertToCheckpoint(sessionId, checkpoint.checkpointId)
     }
@@ -320,7 +360,7 @@ public class SessionManager(
         parentSessionId: String,
         atMessageId: String?,
         newTitle: String?,
-    ): ConversationSession {
+    ): SessionSnapshot {
         val parent = requireRuntime(parentSessionId)
         parent.mutex.lock()
         try {
@@ -337,7 +377,7 @@ public class SessionManager(
 
             val now = clock.now()
             val childId = generateId()
-            val child = ConversationSession(
+            val child = SessionSnapshot(
                 id = childId,
                 title = newTitle ?: "${parent.metadata.value.title} (Fork)",
                 createdAt = now,
@@ -350,8 +390,8 @@ public class SessionManager(
                 configuration = parent.config.value,
                 tags = parent.metadata.value.tags,
                 childSessionIds = emptyList(),
-                runtimeState = SessionState.Suspended,
-            ).toSessionRuntime()
+                runtimeState = SessionRunState.Suspended,
+            ).toSessionState()
 
             parent.metadata.value = parent.metadata.value.copy(
                 childSessionIds = parent.metadata.value.childSessionIds + childId,
@@ -361,22 +401,22 @@ public class SessionManager(
             persist(parent)
             persist(child)
             sessionFactory.put(child)
-            return child.toConversationSession()
+            return child.toSessionSnapshot()
         } finally {
             parent.mutex.unlock()
         }
     }
 
-    public suspend fun duplicateSession(sessionId: String, newTitle: String?): ConversationSession {
+    public suspend fun duplicateSession(sessionId: String, newTitle: String?): SessionSnapshot {
         val original = requireRuntime(sessionId)
         original.mutex.lock()
         try {
-            if (original.metadata.value.state != SessionState.Suspended) {
+            if (original.metadata.value.state != SessionRunState.Suspended) {
                 throw IllegalStateException("Only suspended sessions can be duplicated")
             }
             val now = clock.now()
             val duplicatedId = generateId()
-            val duplicated = ConversationSession(
+            val duplicated = SessionSnapshot(
                 id = duplicatedId,
                 title = newTitle ?: "${original.metadata.value.title} (Copy)",
                 createdAt = now,
@@ -389,35 +429,35 @@ public class SessionManager(
                 configuration = original.config.value,
                 tags = original.metadata.value.tags,
                 childSessionIds = emptyList(),
-                runtimeState = SessionState.Suspended,
-            ).toSessionRuntime()
+                runtimeState = SessionRunState.Suspended,
+            ).toSessionState()
             persist(duplicated)
             sessionFactory.put(duplicated)
-            return duplicated.toConversationSession()
+            return duplicated.toSessionSnapshot()
         } finally {
             original.mutex.unlock()
         }
     }
 
-    public suspend fun archiveSession(sessionId: String): ConversationSession {
+    public suspend fun archiveSession(sessionId: String): SessionSnapshot {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
             runtime.metadata.value = runtime.metadata.value.copy(
                 status = SessionStatus.ARCHIVED,
-                state = SessionState.Suspended,
+                state = SessionRunState.Suspended,
                 updatedAt = clock.now(),
             )
             runtime.runJob.value = null
             runtime.agent.value.state.value = AgentState.Suspended
             persist(runtime)
-            return runtime.toConversationSession()
+            return runtime.toSessionSnapshot()
         } finally {
             runtime.mutex.unlock()
         }
     }
 
-    public suspend fun restoreSession(sessionId: String): ConversationSession {
+    public suspend fun restoreSession(sessionId: String): SessionSnapshot {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
@@ -426,7 +466,7 @@ public class SessionManager(
                 updatedAt = clock.now(),
             )
             persist(runtime)
-            return runtime.toConversationSession()
+            return runtime.toSessionSnapshot()
         } finally {
             runtime.mutex.unlock()
         }
@@ -447,7 +487,7 @@ public class SessionManager(
         try {
             runtime.metadata.value = runtime.metadata.value.copy(
                 status = SessionStatus.DELETED,
-                state = SessionState.Suspended,
+                state = SessionRunState.Suspended,
                 updatedAt = clock.now(),
             )
             runtime.agent.value.state.value = AgentState.Suspended
@@ -474,14 +514,14 @@ public class SessionManager(
         targetFile.writeText(json.encodeToString(session))
     }
 
-    public suspend fun importSession(sourceFile: File, newTitle: String?): ConversationSession {
+    public suspend fun importSession(sourceFile: File, newTitle: String?): SessionSnapshot {
         if (!sourceFile.exists()) {
             throw IllegalArgumentException("Import file not found: ${sourceFile.absolutePath}")
         }
         val json = Json {
             ignoreUnknownKeys = true
         }
-        val imported = json.decodeFromString<ConversationSession>(sourceFile.readText())
+        val imported = json.decodeFromString<SessionSnapshot>(sourceFile.readText())
         val now = clock.now()
         val normalized = imported.copy(
             id = generateId(),
@@ -493,15 +533,15 @@ public class SessionManager(
             forkedFromMessageId = null,
             version = 1L,
             childSessionIds = emptyList(),
-            runtimeState = SessionState.Suspended,
+            runtimeState = SessionRunState.Suspended,
         )
-        val runtime = normalized.toSessionRuntime()
+        val runtime = normalized.toSessionState()
         persist(runtime)
         sessionFactory.put(runtime)
-        return runtime.toConversationSession()
+        return runtime.toSessionSnapshot()
     }
 
-    public suspend fun updateTitle(sessionId: String, newTitle: String): ConversationSession {
+    public suspend fun updateTitle(sessionId: String, newTitle: String): SessionSnapshot {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
@@ -510,7 +550,7 @@ public class SessionManager(
                 updatedAt = clock.now(),
             )
             persist(runtime)
-            return runtime.toConversationSession()
+            return runtime.toSessionSnapshot()
         } finally {
             runtime.mutex.unlock()
         }
@@ -519,7 +559,7 @@ public class SessionManager(
     public suspend fun updateConfiguration(
         sessionId: String,
         configuration: SessionConfiguration,
-    ): ConversationSession {
+    ): SessionSnapshot {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
@@ -532,13 +572,37 @@ public class SessionManager(
                 version = runtime.metadata.value.version + 1,
             )
             persist(runtime)
-            return runtime.toConversationSession()
+            return runtime.toSessionSnapshot()
         } finally {
             runtime.mutex.unlock()
         }
     }
 
-    public suspend fun addTags(sessionId: String, tags: List<String>): ConversationSession {
+    public suspend fun updateSessionWorkDir(sessionId: String, workDir: String?): SessionSnapshot {
+        val runtime = requireRuntime(sessionId)
+        runtime.mutex.lock()
+        try {
+            if (runtime.metadata.value.state != SessionRunState.Suspended) {
+                throw IllegalStateException("Session work directory can only be changed while suspended")
+            }
+
+            if (runtime.config.value.workDir == workDir) {
+                return runtime.toSessionSnapshot()
+            }
+
+            runtime.config.value = runtime.config.value.copy(workDir = workDir)
+            runtime.metadata.value = runtime.metadata.value.copy(
+                updatedAt = clock.now(),
+                version = runtime.metadata.value.version + 1,
+            )
+            persist(runtime)
+            return runtime.toSessionSnapshot()
+        } finally {
+            runtime.mutex.unlock()
+        }
+    }
+
+    public suspend fun addTags(sessionId: String, tags: List<String>): SessionSnapshot {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
@@ -547,13 +611,13 @@ public class SessionManager(
                 updatedAt = clock.now(),
             )
             persist(runtime)
-            return runtime.toConversationSession()
+            return runtime.toSessionSnapshot()
         } finally {
             runtime.mutex.unlock()
         }
     }
 
-    public suspend fun removeTags(sessionId: String, tags: List<String>): ConversationSession {
+    public suspend fun removeTags(sessionId: String, tags: List<String>): SessionSnapshot {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
@@ -562,7 +626,7 @@ public class SessionManager(
                 updatedAt = clock.now(),
             )
             persist(runtime)
-            return runtime.toConversationSession()
+            return runtime.toSessionSnapshot()
         } finally {
             runtime.mutex.unlock()
         }
@@ -590,7 +654,7 @@ public class SessionManager(
         }
     }
 
-    public suspend fun clearMessages(sessionId: String): ConversationSession {
+    public suspend fun clearMessages(sessionId: String): SessionSnapshot {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
@@ -601,7 +665,7 @@ public class SessionManager(
                 messageCount = 0,
             )
             persist(runtime)
-            return runtime.toConversationSession()
+            return runtime.toSessionSnapshot()
         } finally {
             runtime.mutex.unlock()
         }
@@ -725,7 +789,7 @@ public class SessionManager(
 
             runtime.subagents.value = runtime.subagents.value.put(agentId, subAgent)
             runtime.metadata.value = runtime.metadata.value.copy(
-                state = SessionState.Running,
+                state = SessionRunState.Running,
                 updatedAt = clock.now(),
                 version = runtime.metadata.value.version + 1,
                 messageCount = runtime.agent.value.messages.value.size,
@@ -959,7 +1023,7 @@ public class SessionManager(
         subAgentJobs[sessionId]?.remove(agentId)
     }
 
-    private fun resolveAgent(runtime: Session, sessionId: String, agentId: String?): Agent {
+    private fun resolveAgent(runtime: SessionState, sessionId: String, agentId: String?): Agent {
         if (isMainAgent(sessionId, agentId)) {
             return runtime.agent.value
         }
@@ -979,16 +1043,16 @@ public class SessionManager(
         return "main-$sessionId"
     }
 
-    private fun computeSessionState(runtime: Session): SessionState {
+    private fun computeSessionState(runtime: SessionState): SessionRunState {
         val mainRunning =
             runtime.agent.value.state.value == AgentState.Running && (runtime.runJob.value?.isActive == true)
         val subRunning = runtime.subagents.value.any { (_, subAgent) ->
             subAgent.delegate.state.value == AgentState.Running && !subAgent.result.isCompleted
         }
         return if (mainRunning || subRunning) {
-            SessionState.Running
+            SessionRunState.Running
         } else {
-            SessionState.Suspended
+            SessionRunState.Suspended
         }
     }
 
@@ -1002,7 +1066,7 @@ public class SessionManager(
         }
     }
 
-    private fun updateMetadataAfterPendingScriptRollback(runtime: Session) {
+    private fun updateMetadataAfterPendingScriptRollback(runtime: SessionState) {
         runtime.metadata.value = runtime.metadata.value.copy(
             state = computeSessionState(runtime),
             updatedAt = clock.now(),
@@ -1193,17 +1257,17 @@ public class SessionManager(
         )
     }
 
-    private suspend fun persist(runtime: Session) {
+    private suspend fun persist(runtime: SessionState) {
         repository.persistSession(runtime.metadata.value.id, runtime)
     }
 
-    private suspend fun loadRuntime(sessionId: String): Session? {
+    private suspend fun loadRuntime(sessionId: String): SessionState? {
         return runCatching {
             sessionFactory.loadSession(sessionId)
         }.getOrNull()
     }
 
-    private suspend fun requireRuntime(sessionId: String): Session {
+    private suspend fun requireRuntime(sessionId: String): SessionState {
         return sessionFactory.loadSession(sessionId)
     }
 
@@ -1216,6 +1280,7 @@ public class SessionManager(
     private companion object {
         private const val INJECTED_METADATA_KEY: String = "injected"
         private const val INJECTED_METADATA_VALUE: String = "true"
+        private const val SESSION_CONFIG_MODEL_ID_KEY: String = "preferred_model_id"
         private const val SUBAGENT_NOT_FOUND_ERROR: String = "Subagent not found"
         private const val SUBAGENT_TIMEOUT_ERROR: String = "timeout"
     }

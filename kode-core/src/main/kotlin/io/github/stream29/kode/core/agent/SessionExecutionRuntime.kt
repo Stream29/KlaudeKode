@@ -7,13 +7,11 @@ import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.session.core.model.ConversationSession
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
 import io.github.stream29.kode.core.hooks.HookManager
-import java.io.File
 
-public class SessionAwareAgentFactory(
+public class SessionExecutionRuntime(
     private val auths: List<LlmAuthConfig>,
     private val models: List<LlmModelConfig>,
     private val messageHandler: MessageHandler,
@@ -33,38 +31,13 @@ public class SessionAwareAgentFactory(
             sessionManager = sessionManager,
         )
     }
-    
+
     public val promptExecutor: MultiLLMPromptExecutor by lazy {
-        MultiLLMExecutorFactory.create(auths)
+        LlmPromptExecutorFactory.create(auths)
     }
-    
+
     public val availableModels: List<LlmModelConfig>
         get() = models
-
-    public suspend fun createSession(
-        title: String,
-        systemPrompt: String?,
-        modelId: String,
-        workDir: String?
-    ): String {
-        val modelConfig = models.find { it.id == modelId }
-        val normalizedWorkDir = normalizeWorkingDir(workDir)
-        val resolvedSystemPrompt = systemPrompt ?: SYSTEM_PROMPT
-        val session = sessionManager.createSession(
-            title = title,
-            systemPrompt = resolvedSystemPrompt,
-            tags = emptyList(),
-            configuration = io.github.stream29.kode.session.core.model.SessionConfiguration(
-                preferredModel = modelConfig?.model,
-                systemPrompt = resolvedSystemPrompt,
-                workDir = normalizedWorkDir,
-                maxIterations = null,
-                temperature = null,
-                customValues = mapOf(SESSION_CONFIG_MODEL_ID_KEY to modelId)
-            )
-        )
-        return session.id
-    }
 
     public suspend fun runWithSession(sessionId: String, userInput: String, modelId: String): String {
         val context = prepareExecutionContext(sessionId = sessionId, modelId = modelId)
@@ -88,7 +61,7 @@ public class SessionAwareAgentFactory(
     public suspend fun generateSessionTitleFromConversation(sessionId: String, modelId: String): String? {
         return null
     }
-    
+
     public fun getModelById(modelId: String): LlmModelConfig? {
         return models.find { it.id == modelId }
     }
@@ -112,9 +85,9 @@ public class SessionAwareAgentFactory(
             runtimeContext = runtimeContext,
         )
     }
-    
+
     private suspend fun prepareExecutionContext(sessionId: String, modelId: String): SessionExecutionContext {
-        requireSession(sessionId)
+        requireSessionState(sessionId)
         val modelRuntime = ModelFactory.resolveModelRuntime(modelId, models, auths)
         val enforcedParams = ModelParamsFactory.enforceRequiredToolChoice(modelRuntime.params)
         return SessionExecutionContext(
@@ -132,9 +105,11 @@ public class SessionAwareAgentFactory(
         )
     }
 
-    private suspend fun requireSession(sessionId: String): ConversationSession {
-        return sessionManager.getSession(sessionId)
-            ?: throw IllegalArgumentException("Session not found: $sessionId")
+    private suspend fun requireSessionState(sessionId: String) {
+        val session = sessionManager.getSessionState(sessionId)
+        if (session == null) {
+            throw IllegalArgumentException("Session not found: $sessionId")
+        }
     }
 
     private fun scopedMessageHandler(sessionId: String): MessageHandler {
@@ -142,20 +117,6 @@ public class SessionAwareAgentFactory(
             sessionId = sessionId,
             delegate = messageHandler,
         )
-    }
-
-    private fun normalizeWorkingDir(path: String?): String? {
-        val trimmed = path?.trim().orEmpty()
-        if (trimmed.isBlank()) {
-            return null
-        }
-        val expanded = if (trimmed.startsWith("~")) {
-            val home = System.getProperty("user.home")
-            home + trimmed.removePrefix("~")
-        } else {
-            trimmed
-        }
-        return File(expanded).absolutePath
     }
 
     private class SessionScopedMessageHandler(
@@ -185,6 +146,5 @@ public class SessionAwareAgentFactory(
 
     public companion object {
         public val SYSTEM_PROMPT: String = MainAgent.DEFAULT_SYSTEM_PROMPT
-        private const val SESSION_CONFIG_MODEL_ID_KEY: String = "preferred_model_id"
     }
 }

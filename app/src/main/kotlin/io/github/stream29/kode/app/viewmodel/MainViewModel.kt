@@ -37,7 +37,7 @@ import io.github.stream29.kode.ui.core.message.isSystemRoleUi
 import io.github.stream29.kode.ui.core.message.projectedTextForSessionSummary
 import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemLocations
-import io.github.stream29.kode.core.agent.SessionAwareAgentFactory
+import io.github.stream29.kode.core.agent.SessionExecutionRuntime
 import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.providers.api.ProviderAuthMode
 import io.github.stream29.kode.providers.api.ProviderOAuthAuthCodePkcePreset
@@ -48,7 +48,7 @@ import io.github.stream29.kode.providers.builtin.BuiltinProviderPresetRegistry
 import io.github.stream29.kode.oauth.core.OAuthCredentialStatus
 import io.github.stream29.kode.oauth.core.OAuthCredentialManager
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.session.core.model.ConversationSession
+import io.github.stream29.kode.session.core.model.SessionSnapshot
 import io.github.stream29.kode.session.core.model.SessionMessage
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.storage.SessionFilter
@@ -113,6 +113,7 @@ import java.awt.Desktop
 import java.io.File
 import java.nio.channels.Pipe
 import java.util.UUID
+import kotlin.coroutines.coroutineContext
 
 public class MainViewModel(
     private val configManager: ConfigManager,
@@ -334,7 +335,7 @@ public class MainViewModel(
                 current.copy(messages = value)
             }
         }
-    
+
     // Navigation
     public var currentPage: io.github.stream29.kode.app.view.AppPage
         get() = _appUiState.value.currentPage
@@ -603,7 +604,7 @@ public class MainViewModel(
                 current.copy(showSettings = value)
             }
         }
-    
+
     // Session management
     public var currentSessionId: String?
         get() = _sessionUiState.value.currentSessionId
@@ -697,7 +698,7 @@ public class MainViewModel(
                 current.copy(sessionDirDraft = value)
             }
         }
-    
+
     // Config state for editor
     public var configText: String
         get() = _appUiState.value.configText
@@ -714,7 +715,7 @@ public class MainViewModel(
                 current.copy(configError = value)
             }
         }
-    
+
     // Auth and model configurations
     public var auths: List<LlmAuthConfig>
         get() = _appUiState.value.auths
@@ -949,7 +950,7 @@ public class MainViewModel(
         get() = _appUiState.value.temperature
         set(value) = updateAppUiState { it.copy(temperature = value) }
 
-    private var sessionRunStates: Map<String, SessionRunState> = emptyMap()
+    private var sessionRunStates: Map<String, SessionUiRunState> = emptyMap()
     private var safeStopCompletedSessions: Set<String> = emptySet()
     private var sessionTitleGeneratingIds: Set<String> = emptySet()
     private val inputDeferreds: MutableMap<String, CompletableDeferred<String>> = mutableMapOf()
@@ -971,7 +972,7 @@ public class MainViewModel(
         get() = _sessionUiState.value.currentTask
 
     private var eventListener: AgentEventListener? = null
-    private var agentFactory: SessionAwareAgentFactory? = null
+    private var sessionExecutionRuntime: SessionExecutionRuntime? = null
     private var pendingTaskAfterSessionCreate: String? = null
     private var acpProtocol: Protocol? = null
     private var acpTransport: StdioTransport? = null
@@ -1012,7 +1013,7 @@ public class MainViewModel(
             current.copy(toasts = current.toasts.filterNot { it.id == toastId })
         }
     }
-    
+
     init {
         eventListener = this
         registerPresetHooks()
@@ -1021,29 +1022,29 @@ public class MainViewModel(
             startAutoSaveObservers()
         }
     }
-    
+
     private suspend fun initializeAgentFactory() {
         val config = configManager.load()
         loadConfigToState(config)
-        refreshAgentFactoryForConversation()
+        refreshSessionExecutionRuntimeForConversation()
         refreshOAuthStatusSnapshot()
         restoreLastSessionIfNeeded()
     }
 
-    private suspend fun refreshAgentFactoryForConversation(): Boolean {
+    private suspend fun refreshSessionExecutionRuntimeForConversation(): Boolean {
         if (models.isEmpty()) {
-            agentFactory = null
+            sessionExecutionRuntime = null
             return false
         }
 
         ensureOAuthCredentialsUpToDate()
 
-        buildAgentFactory()
+        buildSessionExecutionRuntime()
         return true
     }
 
-    private fun buildAgentFactory() {
-        agentFactory = SessionAwareAgentFactory(
+    private fun buildSessionExecutionRuntime() {
+        sessionExecutionRuntime = SessionExecutionRuntime(
             auths = auths,
             models = models,
             messageHandler = this@MainViewModel,
@@ -1053,7 +1054,65 @@ public class MainViewModel(
             sessionManager = sessionManager,
         )
     }
-    
+
+    private suspend fun requireConversationRuntimeOrNotify(): SessionExecutionRuntime? {
+        if (!refreshSessionExecutionRuntimeForConversation()) {
+            addSystemMessage("Agent not initialized. Please check your configuration.")
+            return null
+        }
+        val runtime = sessionExecutionRuntime
+        if (runtime == null) {
+            addSystemMessage("Agent not initialized. Please check your configuration.")
+            return null
+        }
+        return runtime
+    }
+
+    private suspend fun runSessionLifecycle(
+        sessionId: String,
+        taskLabel: String,
+        cancellationMessage: String,
+        onError: (Exception) -> Unit,
+        onSuccess: suspend (safeStopCompleted: Boolean) -> Unit = {},
+        execution: suspend () -> Unit,
+    ) {
+        sessionJobs[sessionId] = requireNotNull(coroutineContext[Job])
+        bindSessionFlows(sessionId)
+        ensureSessionWorkDir(sessionId)
+        updateSessionRunState(sessionId) {
+            it.copy(
+                isRunning = true,
+                currentTask = taskLabel,
+                isWaitingForInput = false,
+                stopMode = StopMode.None,
+            )
+        }
+
+        try {
+            execution()
+            val safeStopCompleted = consumeSafeStopCompleted(sessionId)
+            if (safeStopCompleted) {
+                addSystemMessage("Safe stop completed", sessionId)
+            }
+            onSuccess(safeStopCompleted)
+        } catch (_: CancellationException) {
+            addSystemMessage(cancellationMessage, sessionId)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            onError(e)
+        } finally {
+            updateSessionRunState(sessionId) { state ->
+                state.copy(
+                    isRunning = false,
+                    currentTask = "",
+                    isWaitingForInput = false,
+                    stopMode = StopMode.None,
+                )
+            }
+            sessionJobs.remove(sessionId)
+        }
+    }
+
     private fun loadConfigToState(config: AppConfig) {
         auths = config.auths
         models = config.models
@@ -1111,7 +1170,7 @@ public class MainViewModel(
 
         refreshPresetAndSkillsPreview()
     }
-    
+
     @OptIn(kotlinx.coroutines.FlowPreview::class)
     private fun startAutoSaveObservers() {
         autoSaveEnabled = true
@@ -1150,93 +1209,55 @@ public class MainViewModel(
             addSystemMessage("No model selected. Please configure at least one model.")
             return
         }
-        
+
         viewModelScope.launch(Dispatchers.IO) {
-            var runningSessionId: String? = null
-            try {
-                if (!refreshAgentFactoryForConversation()) {
-                    addSystemMessage("Agent not initialized. Please check your configuration.")
-                    return@launch
-                }
+            val runtime = requireConversationRuntimeOrNotify() ?: return@launch
 
-                val factory = agentFactory ?: run {
-                    addSystemMessage("Agent not initialized. Please check your configuration.")
-                    return@launch
+            if (currentSessionId == null) {
+                pendingTaskAfterSessionCreate = task
+                addSystemMessage("No active session. Please create a session first.")
+                withContext(Dispatchers.Main) {
+                    newSessionDirInput = buildDefaultSessionDirInput()
+                    showNewSessionDialog = true
                 }
+                return@launch
+            }
 
-                if (currentSessionId == null) {
-                    pendingTaskAfterSessionCreate = task
-                    addSystemMessage("No active session. Please create a session first.")
-                    withContext(Dispatchers.Main) {
-                        newSessionDirInput = buildDefaultSessionDirInput()
-                        showNewSessionDialog = true
-                    }
-                    return@launch
-                }
+            val sessionId = currentSessionId ?: run {
+                addSystemMessage("No active session. Please create a session first.")
+                return@launch
+            }
+            if (sessionRunStates[sessionId]?.isRunning == true) {
+                addSystemMessage("Session is already running", sessionId)
+                return@launch
+            }
 
-                val sessionId = currentSessionId ?: run {
-                    addSystemMessage("No active session. Please create a session first.")
-                    return@launch
-                }
-                if (sessionRunStates[sessionId]?.isRunning == true) {
-                    addSystemMessage("Session is already running", sessionId)
-                    return@launch
-                }
-                runningSessionId = sessionId
-                sessionJobs[sessionId] = requireNotNull(coroutineContext[Job])
-                bindSessionFlows(sessionId)
-                ensureSessionWorkDir(sessionId)
-                updateSessionRunState(sessionId) {
-                    it.copy(
-                        isRunning = true,
-                        currentTask = task,
-                        isWaitingForInput = false,
-                        stopMode = StopMode.None,
-                    )
-                }
-
-                factory.runWithSession(sessionId, task, modelId)
-                if (consumeSafeStopCompleted(sessionId)) {
-                    addSystemMessage("Safe stop completed", sessionId)
-                    return@launch
-                }
-                ensureSessionAutoTitle(
-                    sessionId = sessionId,
-                    modelId = modelId,
-                    factory = factory,
-                    force = false,
-                )
-            } catch (_: CancellationException) {
-                runningSessionId?.let { sessionId ->
-                    addSystemMessage("Run cancelled", sessionId)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                val message = e.message ?: "Unknown error"
-                val targetSessionId = runningSessionId ?: currentSessionId
-                if (targetSessionId != null) {
-                    onEvent(AgentEvent.Error(message, e), targetSessionId)
-                    log("runTask failed: ${e.stackTraceToString()}", targetSessionId)
-                } else {
-                    addSystemMessage("Error: $message")
-                    log("runTask failed: ${e.stackTraceToString()}")
-                }
-            } finally {
-                runningSessionId?.let { sessionId ->
-                    updateSessionRunState(sessionId) { state ->
-                        state.copy(
-                            isRunning = false,
-                            currentTask = "",
-                            isWaitingForInput = false,
-                            stopMode = StopMode.None,
+            runSessionLifecycle(
+                sessionId = sessionId,
+                taskLabel = task,
+                cancellationMessage = "Run cancelled",
+                onError = { error ->
+                    val message = error.message ?: "Unknown error"
+                    onEvent(AgentEvent.Error(message, error), sessionId)
+                    log("runTask failed: ${error.stackTraceToString()}", sessionId)
+                },
+                onSuccess = { safeStopCompleted ->
+                    if (!safeStopCompleted) {
+                        ensureSessionAutoTitle(
+                            sessionId = sessionId,
+                            modelId = modelId,
+                            factory = runtime,
+                            force = false,
                         )
                     }
-                    sessionJobs.remove(sessionId)
-                }
-            }
+                },
+                execution = {
+                    runtime.runWithSession(sessionId, task, modelId)
+                },
+            )
         }
     }
-    
+
     public fun createNewSession() {
         unbindSessionFlows(currentSessionId)
         currentSessionId = null
@@ -1245,7 +1266,7 @@ public class MainViewModel(
         newSessionDirInput = buildDefaultSessionDirInput()
         showNewSessionDialog = true
     }
-    
+
     public fun continueCurrentSession() {
         continueCurrentSessionInternal()
     }
@@ -1256,7 +1277,7 @@ public class MainViewModel(
             addSystemMessage("No active session")
             return
         }
-        
+
         val modelId = activeModelId
         if (modelId == null) {
             addSystemMessage("No model selected")
@@ -1264,59 +1285,25 @@ public class MainViewModel(
         }
 
         viewModelScope.launch(Dispatchers.IO) {
-            var runStarted = false
-            try {
-                if (sessionRunStates[sessionId]?.isRunning == true) {
-                    addSystemMessage("Session is already running", sessionId)
-                    return@launch
-                }
-
-                if (!refreshAgentFactoryForConversation()) {
-                    addSystemMessage("Agent not initialized. Please check your configuration.")
-                    return@launch
-                }
-
-                val factory = agentFactory ?: run {
-                    addSystemMessage("Agent not initialized. Please check your configuration.")
-                    return@launch
-                }
-
-                runStarted = true
-                sessionJobs[sessionId] = requireNotNull(coroutineContext[Job])
-                bindSessionFlows(sessionId)
-                ensureSessionWorkDir(sessionId)
-                updateSessionRunState(sessionId) {
-                    it.copy(
-                        isRunning = true,
-                        currentTask = "Continue",
-                        isWaitingForInput = false,
-                        stopMode = StopMode.None,
-                    )
-                }
-
-                factory.continueSession(sessionId, modelId)
-                if (consumeSafeStopCompleted(sessionId)) {
-                    addSystemMessage("Safe stop completed", sessionId)
-                }
-            } catch (_: CancellationException) {
-                addSystemMessage("Continue cancelled", sessionId)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                addSystemMessage("Error: ${e.message}", sessionId)
-                log("continueCurrentSession failed: ${e.stackTraceToString()}", sessionId)
-            } finally {
-                if (runStarted) {
-                    updateSessionRunState(sessionId) { state ->
-                        state.copy(
-                            isRunning = false,
-                            currentTask = "",
-                            isWaitingForInput = false,
-                            stopMode = StopMode.None,
-                        )
-                    }
-                    sessionJobs.remove(sessionId)
-                }
+            if (sessionRunStates[sessionId]?.isRunning == true) {
+                addSystemMessage("Session is already running", sessionId)
+                return@launch
             }
+
+            val runtime = requireConversationRuntimeOrNotify() ?: return@launch
+
+            runSessionLifecycle(
+                sessionId = sessionId,
+                taskLabel = "Continue",
+                cancellationMessage = "Continue cancelled",
+                onError = { error ->
+                    addSystemMessage("Error: ${error.message}", sessionId)
+                    log("continueCurrentSession failed: ${error.stackTraceToString()}", sessionId)
+                },
+                execution = {
+                    runtime.continueSession(sessionId, modelId)
+                },
+            )
         }
     }
 
@@ -1388,19 +1375,12 @@ public class MainViewModel(
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (!refreshAgentFactoryForConversation()) {
-                    addSystemMessage("Agent not initialized. Please check your configuration.")
-                    return@launch
-                }
-                val factory = agentFactory ?: run {
-                    addSystemMessage("Agent not initialized. Please check your configuration.")
-                    return@launch
-                }
+                val runtime = requireConversationRuntimeOrNotify() ?: return@launch
 
                 ensureSessionAutoTitle(
                     sessionId = sessionId,
                     modelId = modelId,
-                    factory = factory,
+                    factory = runtime,
                     force = true,
                 )
             } catch (e: Exception) {
@@ -1447,18 +1427,11 @@ public class MainViewModel(
     }
 
     private suspend fun prepareConversationHistoryForContinue(sessionId: String, input: String) {
-        val pendingScript = sessionManager.getTrailingPendingScript(sessionId = sessionId, agentId = null)
-        if (pendingScript != null) {
-            throw IllegalStateException(
-                "Script-only violation: pending script '${pendingScript.scriptId}' requires waitForUserInput flow"
-            )
-        }
-
-        if (input.isBlank()) {
-            return
-        }
-
-        sessionManager.addUserMessage(sessionId = sessionId, content = input, agentId = null)
+        sessionManager.prepareConversationContinuation(
+            sessionId = sessionId,
+            input = input,
+            agentId = null,
+        )
     }
 
     private fun consumeSafeStopCompleted(sessionId: String): Boolean {
@@ -1472,7 +1445,7 @@ public class MainViewModel(
     private suspend fun ensureSessionAutoTitle(
         sessionId: String,
         modelId: String,
-        factory: SessionAwareAgentFactory,
+        factory: SessionExecutionRuntime,
         force: Boolean,
     ) {
         val session = sessionManager.getSession(sessionId) ?: return
@@ -1536,7 +1509,7 @@ public class MainViewModel(
         return currentTitle.startsWith(legacySessionTitlePrefix)
     }
 
-    private fun buildFallbackSessionTitleFromSession(session: ConversationSession): String {
+    private fun buildFallbackSessionTitleFromSession(session: SessionSnapshot): String {
         val projected = session.messages.firstNotNullOfOrNull { message -> message.projectedTextForSessionSummary() }
         val normalized = projected.orEmpty().replace(Regex("\\s+"), " ").trim()
         if (normalized.isBlank()) {
@@ -1566,7 +1539,7 @@ public class MainViewModel(
             addSystemMessage("Cannot fork from system message")
             return
         }
-        
+
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val session = sessionManager.getSession(sessionId)
@@ -1597,7 +1570,7 @@ public class MainViewModel(
             }
         }
     }
-    
+
     // ==================== Session Management ====================
 
     private fun buildSessionFilter(): SessionFilter {
@@ -1741,7 +1714,7 @@ public class MainViewModel(
             }
         }
     }
-    
+
     public fun deleteSession(sessionId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1766,7 +1739,7 @@ public class MainViewModel(
             }
         }
     }
-    
+
     public fun forkSession(sessionId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1786,7 +1759,7 @@ public class MainViewModel(
             }
         }
     }
-    
+
     public fun archiveSession(sessionId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1836,10 +1809,7 @@ public class MainViewModel(
         val sessionId = currentSessionId ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val session = sessionManager.getSession(sessionId)
-                    ?: return@launch
-                val updatedConfig = session.configuration.copy(workDir = normalized)
-                sessionManager.updateConfiguration(sessionId, updatedConfig)
+                sessionManager.updateSessionWorkDir(sessionId, normalized)
             } catch (e: Exception) {
                 addSystemMessage("Failed to update session dir: ${e.message}")
             }
@@ -1852,8 +1822,7 @@ public class MainViewModel(
             ?: normalizeSessionDir(defaultSessionDir)
             ?: "."
         if (session.configuration.workDir != normalized) {
-            val updated = session.configuration.copy(workDir = normalized)
-            sessionManager.updateConfiguration(sessionId, updated)
+            sessionManager.updateSessionWorkDir(sessionId, normalized)
         }
         withContext(Dispatchers.Main) {
             currentSessionWorkDir = normalized
@@ -1870,32 +1839,29 @@ public class MainViewModel(
         }
 
         viewModelScope.launch(Dispatchers.IO) {
-            var createdSessionId: String? = null
             try {
-                if (!refreshAgentFactoryForConversation()) {
-                    addSystemMessage("Agent not initialized. Please check your configuration.")
-                    return@launch
-                }
-
-                val factory = agentFactory ?: run {
-                    addSystemMessage("Agent not initialized. Please check your configuration.")
-                    return@launch
+                val task = pendingTaskAfterSessionCreate
+                val selectedModel = models.find { model -> model.id == modelId }
+                    ?: throw IllegalArgumentException("Model not found: $modelId")
+                val runtime = if (task.isNullOrBlank()) {
+                    null
+                } else {
+                    requireConversationRuntimeOrNotify() ?: return@launch
                 }
 
                 val normalizedWorkDir = normalizeSessionDir(newSessionDirInput)
                 currentSessionWorkDir = normalizedWorkDir.orEmpty()
-                val sessionId = factory.createSession(
+                val sessionId = sessionManager.createConversationSession(
                     title = autoSessionTitlePlaceholder,
                     systemPrompt = buildSystemPrompt(),
-                    modelId = modelId,
-                    workDir = normalizedWorkDir
-                )
-                createdSessionId = sessionId
+                    preferredModel = selectedModel.model,
+                    preferredModelId = modelId,
+                    workDir = normalizedWorkDir,
+                ).id
                 currentSessionId = sessionId
                 bindSessionFlows(sessionId)
                 loadSessionList()
 
-                val task = pendingTaskAfterSessionCreate
                 pendingTaskAfterSessionCreate = null
 
                 withContext(Dispatchers.Main) {
@@ -1904,33 +1870,36 @@ public class MainViewModel(
                 }
 
                 if (!task.isNullOrBlank()) {
-                    updateSessionRunState(sessionId) {
-                        it.copy(
-                            isRunning = true,
-                            currentTask = task,
-                            isWaitingForInput = false
-                        )
-                    }
-                    sessionJobs[sessionId] = requireNotNull(coroutineContext[Job])
-                    factory.runWithSession(sessionId, task, modelId)
-                    ensureSessionAutoTitle(
+                    val executionRuntime = runtime
+                        ?: throw IllegalStateException("Execution runtime not initialized for pending task")
+                    runSessionLifecycle(
                         sessionId = sessionId,
-                        modelId = modelId,
-                        factory = factory,
-                        force = false,
+                        taskLabel = task,
+                        cancellationMessage = "Run cancelled",
+                        onError = { error ->
+                            val message = error.message ?: "Unknown error"
+                            onEvent(AgentEvent.Error(message, error), sessionId)
+                            log("confirmNewSessionDir run failed: ${error.stackTraceToString()}", sessionId)
+                        },
+                        onSuccess = { safeStopCompleted ->
+                            if (!safeStopCompleted) {
+                                ensureSessionAutoTitle(
+                                    sessionId = sessionId,
+                                    modelId = modelId,
+                                    factory = executionRuntime,
+                                    force = false,
+                                )
+                            }
+                        },
+                        execution = {
+                            executionRuntime.runWithSession(sessionId, task, modelId)
+                        },
                     )
                 } else {
                     addSystemMessage("New session created")
                 }
             } catch (e: Exception) {
                 addSystemMessage("Failed to create session: ${e.message}")
-            } finally {
-                createdSessionId?.let { sessionId ->
-                    updateSessionRunState(sessionId) { state ->
-                        state.copy(isRunning = false, currentTask = "", isWaitingForInput = false)
-                    }
-                    sessionJobs.remove(sessionId)
-                }
             }
         }
     }
@@ -2034,9 +2003,9 @@ public class MainViewModel(
 
     private fun updateSessionRunState(
         sessionId: String,
-        transform: (SessionRunState) -> SessionRunState
+        transform: (SessionUiRunState) -> SessionUiRunState
     ) {
-        val current = sessionRunStates[sessionId] ?: SessionRunState()
+        val current = sessionRunStates[sessionId] ?: SessionUiRunState()
         sessionRunStates = sessionRunStates + (sessionId to transform(current))
         updateSessionUiState { currentUi ->
             applySessionRunState(
@@ -2077,7 +2046,7 @@ public class MainViewModel(
         boundSessionId = sessionId
 
         sessionBindingJob = viewModelScope.launch(Dispatchers.IO) {
-            val runtime = sessionManager.getRuntimeSession(sessionId) ?: return@launch
+            val runtime = sessionManager.getSessionState(sessionId) ?: return@launch
             val mainMessagesFlow = runtime.agent.value.messages
 
             combine(
@@ -2096,11 +2065,12 @@ public class MainViewModel(
                     currentSessionWorkDir = config.workDir.orEmpty()
                     updateSessionRunState(sessionId) { state ->
                         state.copy(
-                            isRunning = metadata.state == io.github.stream29.kode.session.core.model.SessionState.Running,
+                            isRunning = metadata.state == io.github.stream29.kode.session.core.model.SessionRunState.Running,
                             currentTask = when {
-                                metadata.state == io.github.stream29.kode.session.core.model.SessionState.Running -> {
+                                metadata.state == io.github.stream29.kode.session.core.model.SessionRunState.Running -> {
                                     state.currentTask.ifBlank { "Running" }
                                 }
+
                                 state.isWaitingForInput -> state.currentTask.ifBlank { "Waiting for input" }
                                 else -> ""
                             }
@@ -2137,9 +2107,9 @@ public class MainViewModel(
             }
         }
     }
-    
+
     // ==================== Config Management ====================
-    
+
     public fun loadConfigForEditing() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -2240,7 +2210,7 @@ logging:
             }
         }
     }
-    
+
     public fun saveConfig() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -2252,7 +2222,7 @@ logging:
                 configFile.writeText(configText)
 
                 loadConfigToState(parsedConfig)
-                refreshAgentFactoryForConversation()
+                refreshSessionExecutionRuntimeForConversation()
                 refreshOAuthStatusSnapshot()
 
                 if (parsedConfig.models.isEmpty()) {
@@ -2267,9 +2237,9 @@ logging:
             }
         }
     }
-    
+
     // ==================== Settings ====================
-    
+
     public fun saveConfig(config: AppConfig) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -2285,7 +2255,7 @@ logging:
             }
         }
     }
-    
+
     public fun testApiKey() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -2293,8 +2263,8 @@ logging:
                     addSystemMessage("No models configured")
                     return@launch
                 }
-                
-                val testFactory = SessionAwareAgentFactory(
+
+                val testFactory = SessionExecutionRuntime(
                     auths = auths,
                     models = models,
                     messageHandler = object : MessageHandler {
@@ -2316,7 +2286,7 @@ logging:
             }
         }
     }
-    
+
     public fun openDataDirectory() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -2330,7 +2300,7 @@ logging:
             }
         }
     }
-    
+
     public fun confirmClearAllSessions() {
         // This would show a confirmation dialog in a real implementation
         viewModelScope.launch(Dispatchers.IO) {
@@ -2420,7 +2390,7 @@ logging:
             }
         }
     }
-    
+
     private fun addSystemMessage(content: String, sessionId: String? = currentSessionId) {
         if (sessionId != null && currentSessionId != sessionId) {
             return
@@ -2750,8 +2720,8 @@ logging:
                 mcpTestsInFlight = mcpTestsInFlight + name
                 mcpTestResults = mcpTestResults - name
                 mcpHealthResults = mcpHealthResults + (
-                    name to McpHealthResult(McpHealthStatus.Checking, "Checking...")
-                )
+                        name to McpHealthResult(McpHealthStatus.Checking, "Checking...")
+                        )
             }
             val result = try {
                 runMcpTest(name = name, server = server)
@@ -2815,7 +2785,7 @@ logging:
 
             McpTransportType.Http,
             McpTransportType.Sse,
-            -> {
+                -> {
                 val url = server.url
                 if (url.isNullOrBlank()) {
                     buildMcpTestError("MCP test (${name}): missing url")
@@ -2940,6 +2910,7 @@ logging:
                 }
                 "anyOf($entries)"
             }
+
             is ToolParameterType.Object -> {
                 val props = type.properties.joinToString(", ") { entry -> entry.name }
                 val required = if (type.requiredProperties.isNotEmpty()) {
@@ -3106,7 +3077,7 @@ logging:
 
                     McpTransportType.Http,
                     McpTransportType.Sse,
-                    -> {
+                        -> {
                         val url = server.url
                         if (url.isNullOrBlank()) {
                             addSystemMessage("MCP server $name missing url")
@@ -3258,7 +3229,7 @@ logging:
     private fun buildSystemPrompt(): String {
         val presetSpec = readPresetSpec()
         val basePrompt = presetSpec?.trim().takeUnless { it.isNullOrBlank() }
-            ?: SessionAwareAgentFactory.SYSTEM_PROMPT
+            ?: SessionExecutionRuntime.SYSTEM_PROMPT
         val skillsSummary = buildSkillsSummary()
         return if (skillsSummary.isBlank()) {
             basePrompt
@@ -3666,6 +3637,7 @@ logging:
                     disabledTools + toolKey
                 }
             }
+
             "file" -> {
                 if (enabled) {
                     disabledTools - toolKey
@@ -3673,6 +3645,7 @@ logging:
                     disabledTools + toolKey
                 }
             }
+
             else -> {
                 if (enabled) {
                     disabledTools - toolKey
@@ -3688,7 +3661,6 @@ logging:
         toolLogs = emptyList()
     }
 
-    
 
     private fun resolveSessionWorkingDir(input: String): File {
         val normalized = normalizeSessionDir(input)
@@ -4164,13 +4136,13 @@ logging:
             summary = normalized,
             inProgress = true,
         ) ?: OAuthStatusUi(
-                connected = false,
-                expired = false,
-                hasRefreshToken = false,
-                expiresAtEpochSecond = null,
-                summary = normalized,
-                inProgress = true,
-            )
+            connected = false,
+            expired = false,
+            hasRefreshToken = false,
+            expiresAtEpochSecond = null,
+            summary = normalized,
+            inProgress = true,
+        )
         oauthStatusByAuthId = oauthStatusByAuthId + (authId to next)
     }
 
@@ -4181,13 +4153,13 @@ logging:
             summary = normalized,
             inProgress = false,
         ) ?: OAuthStatusUi(
-                connected = false,
-                expired = false,
-                hasRefreshToken = false,
-                expiresAtEpochSecond = null,
-                summary = normalized,
-                inProgress = false,
-            )
+            connected = false,
+            expired = false,
+            hasRefreshToken = false,
+            expiresAtEpochSecond = null,
+            summary = normalized,
+            inProgress = false,
+        )
         oauthStatusByAuthId = oauthStatusByAuthId + (authId to next)
     }
 
@@ -4205,7 +4177,7 @@ logging:
             markOAuthProgress(authId = authId, summary = "connecting")
             try {
                 val auth = authOverride ?: auths.firstOrNull { config -> config.id == authId }
-                    ?: throw IllegalArgumentException("Auth not found: $authId")
+                ?: throw IllegalArgumentException("Auth not found: $authId")
                 connectOAuthInternal(auth = auth)
                 initializeAgentFactory()
             } catch (_: CancellationException) {
@@ -4297,7 +4269,8 @@ logging:
         }
 
         val callbackUri = normalizeOpenAiSubscriptionCallbackUri(oauth.callbackUri)
-        val authorizationAdditionalParams = oauth.authorizationAdditionalParams + OPENAI_SUBSCRIPTION_AUTHORIZATION_ADDITIONAL_PARAMS
+        val authorizationAdditionalParams =
+            oauth.authorizationAdditionalParams + OPENAI_SUBSCRIPTION_AUTHORIZATION_ADDITIONAL_PARAMS
         return oauth.copy(
             authorizationEndpoint = OPENAI_SUBSCRIPTION_AUTHORIZATION_ENDPOINT,
             tokenEndpoint = OPENAI_SUBSCRIPTION_TOKEN_ENDPOINT,
@@ -4753,7 +4726,7 @@ private enum class StopMode {
     SafeRequested,
 }
 
-private data class SessionRunState(
+private data class SessionUiRunState(
     val isRunning: Boolean = false,
     val isWaitingForInput: Boolean = false,
     val currentTask: String = "",

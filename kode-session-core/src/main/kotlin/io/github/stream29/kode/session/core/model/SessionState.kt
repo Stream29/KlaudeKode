@@ -5,7 +5,6 @@ import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -17,62 +16,62 @@ import kotlin.time.Instant
  * This is the core data model for session management, independent from Koog.
  */
 @Serializable
-public data class ConversationSession(
+public data class SessionSnapshot(
     /**
      * Unique identifier for the session.
      */
     val id: String,
-    
+
     /**
      * Human-readable title for the session.
      */
     val title: String,
-    
+
     /**
      * When the session was created.
      */
     val createdAt: Instant,
-    
+
     /**
      * When the session was last modified.
      */
     val updatedAt: Instant,
-    
+
     /**
      * The conversation history.
      */
     val messages: List<SessionMessage>,
-    
+
     /**
      * Current status of the session.
      */
     val status: SessionStatus,
-    
+
     /**
      * ID of the parent session (for forked sessions).
      */
     val parentSessionId: String?,
-    
+
     /**
      * ID of the specific message where this session was forked from parent.
      */
     val forkedFromMessageId: String?,
-    
+
     /**
      * Version number for checkpoint tracking.
      */
     val version: Long,
-    
+
     /**
      * Session-specific configuration (e.g., model preferences).
      */
     val configuration: SessionConfiguration,
-    
+
     /**
      * User-defined tags for organization.
      */
     val tags: List<String>,
-    
+
     /**
      * Child session IDs (forks of this session).
      */
@@ -81,14 +80,14 @@ public data class ConversationSession(
     /**
      * Runtime state that tracks run/suspend ownership.
      */
-    val runtimeState: SessionState = SessionState.Suspended
+    val runtimeState: SessionRunState = SessionRunState.Suspended
 )
 
 /**
  * Runtime-level session state.
  */
 @Serializable
-public enum class SessionState {
+public enum class SessionRunState {
     Running,
     Suspended,
 }
@@ -102,12 +101,12 @@ public enum class SessionStatus {
      * Session is active and can be continued.
      */
     ACTIVE,
-    
+
     /**
      * Session is archived (read-only).
      */
     ARCHIVED,
-    
+
     /**
      * Session was deleted (soft delete).
      */
@@ -145,7 +144,7 @@ public data class SubAgent(
 /**
  * Runtime session object. One instance per SessionId in one process lifecycle.
  */
-public data class Session(
+public data class SessionState(
     val metadata: MutableStateFlow<SessionMetadata>,
     val config: MutableStateFlow<SessionConfig>,
     val agent: MutableStateFlow<Agent>,
@@ -162,7 +161,7 @@ public data class SessionMetadata(
     val createdAt: Instant,
     val updatedAt: Instant,
     val messageCount: Int,
-    val state: SessionState,
+    val state: SessionRunState,
     val status: SessionStatus,
     val parentSessionId: String?,
     val forkedFromMessageId: String?,
@@ -178,36 +177,13 @@ public data class SessionMetadataCsvRow(
     val createdAtIso: String,
     val updatedAtIso: String,
     val messageCount: Int,
-    val state: SessionState,
+    val state: SessionRunState,
     val status: SessionStatus,
     val parentSessionId: String,
     val forkedFromMessageId: String,
     val version: Long,
     val tags: String,
     val childSessionIds: String,
-)
-
-@Serializable
-public data class AgentSnapshot(
-    val state: AgentState,
-    val config: AgentConfig,
-    val messages: List<SessionMessage>,
-)
-
-@Serializable
-public data class SubAgentSnapshot(
-    val id: String,
-    val delegate: AgentSnapshot,
-    val result: String?,
-    val completed: Boolean,
-)
-
-@Serializable
-public data class SessionDataSnapshot(
-    val config: SessionConfig,
-    val agent: AgentSnapshot,
-    val subagents: List<SubAgentSnapshot> = emptyList(),
-    val checkpoints: List<SessionCheckpoint> = emptyList(),
 )
 
 /**
@@ -219,7 +195,7 @@ public data class SessionConfig(
      * Preferred LLM model for this session.
      */
     val preferredModel: String?,
-    
+
     /**
      * System prompt for this session.
      */
@@ -229,17 +205,17 @@ public data class SessionConfig(
      * Working directory for this session.
      */
     val workDir: String? = null,
-    
+
     /**
      * Maximum number of iterations allowed.
      */
     val maxIterations: Int?,
-    
+
     /**
      * Temperature setting.
      */
     val temperature: Double?,
-    
+
     /**
      * Custom configuration values.
      */
@@ -259,7 +235,7 @@ public data class SessionSummary(
     val updatedAt: Instant,
     val messageCount: Int,
     val status: SessionStatus,
-    val state: SessionState = SessionState.Suspended,
+    val state: SessionRunState = SessionRunState.Suspended,
     val hasForks: Boolean,
     val tags: List<String>
 )
@@ -273,37 +249,37 @@ public data class SessionCheckpoint(
      * Unique identifier for the checkpoint.
      */
     val checkpointId: String,
-    
+
     /**
      * Session ID this checkpoint belongs to.
      */
     val sessionId: String,
-    
+
     /**
      * When the checkpoint was created.
      */
     val createdAt: Instant,
-    
+
     /**
      * Number of messages at the time of checkpoint.
      */
     val messageCount: Int,
-    
+
     /**
      * Messages up to this checkpoint.
      */
     val messages: List<SessionMessage>,
-    
+
     /**
      * Version number.
      */
     val version: Long,
-    
+
     /**
      * Optional description/label for the checkpoint.
      */
     val label: String?,
-    
+
     /**
      * Whether this is a tombstone (session end marker).
      */
@@ -344,11 +320,11 @@ public fun SessionMetadataCsvRow.toMetadata(): SessionMetadata {
     )
 }
 
-public fun Session.toConversationSession(): ConversationSession {
+public fun SessionState.toSessionSnapshot(): SessionSnapshot {
     val metadataValue = metadata.value
     val agentValue = agent.value
     val configValue = config.value
-    return ConversationSession(
+    return SessionSnapshot(
         id = metadataValue.id,
         title = metadataValue.title,
         createdAt = metadataValue.createdAt,
@@ -365,7 +341,7 @@ public fun Session.toConversationSession(): ConversationSession {
     )
 }
 
-public fun ConversationSession.toSessionRuntime(): Session {
+public fun SessionSnapshot.toSessionState(): SessionState {
     val metadataFlow = MutableStateFlow(
         SessionMetadata(
             id = id,
@@ -385,7 +361,7 @@ public fun ConversationSession.toSessionRuntime(): Session {
     val configFlow = MutableStateFlow(configuration)
     val agentFlow = MutableStateFlow(
         Agent(
-            state = MutableStateFlow(if (runtimeState == SessionState.Running) AgentState.Running else AgentState.Suspended),
+            state = MutableStateFlow(if (runtimeState == SessionRunState.Running) AgentState.Running else AgentState.Suspended),
             config = MutableStateFlow(
                 AgentConfig(
                     systemPrompt = configuration.systemPrompt,
@@ -397,7 +373,7 @@ public fun ConversationSession.toSessionRuntime(): Session {
             messages = MutableStateFlow(messages.toPersistentList()),
         )
     )
-    return Session(
+    return SessionState(
         metadata = metadataFlow,
         config = configFlow,
         agent = agentFlow,
@@ -408,81 +384,6 @@ public fun ConversationSession.toSessionRuntime(): Session {
     )
 }
 
-public fun SessionDataSnapshot.toRuntime(metadata: SessionMetadata): Session {
-    val subagentMap = subagents
-        .associate { subagentSnapshot ->
-            subagentSnapshot.id to SubAgent(
-                delegate = Agent(
-                    state = MutableStateFlow(subagentSnapshot.delegate.state),
-                    config = MutableStateFlow(subagentSnapshot.delegate.config),
-                    messages = MutableStateFlow(subagentSnapshot.delegate.messages.toPersistentList()),
-                ),
-                result = CompletableDeferred<String>().also { deferred ->
-                    if (subagentSnapshot.completed) {
-                        deferred.complete(subagentSnapshot.result.orEmpty())
-                    }
-                },
-            )
-        }
-        .toPersistentMap()
-
-    val normalizedState = if (metadata.state == SessionState.Running) SessionState.Suspended else metadata.state
-    val normalizedAgentState = if (agent.state == AgentState.Running) AgentState.Suspended else agent.state
-
-    return Session(
-        metadata = MutableStateFlow(metadata.copy(state = normalizedState)),
-        config = MutableStateFlow(config),
-        agent = MutableStateFlow(
-            Agent(
-                state = MutableStateFlow(normalizedAgentState),
-                config = MutableStateFlow(agent.config),
-                messages = MutableStateFlow(agent.messages.toPersistentList()),
-            )
-        ),
-        subagents = MutableStateFlow(subagentMap),
-        checkpoints = MutableStateFlow(checkpoints.toPersistentList()),
-        runJob = MutableStateFlow(null),
-        mutex = Mutex(),
-    )
-}
-
-@OptIn(ExperimentalCoroutinesApi::class)
-public fun Session.toSnapshot(): SessionDataSnapshot {
-    val agentValue = agent.value
-    val subagentSnapshots = subagents.value.entries.map { entry ->
-        val subagent = entry.value
-        val delegate = subagent.delegate
-        SubAgentSnapshot(
-            id = entry.key,
-            delegate = AgentSnapshot(
-                state = delegate.state.value,
-                config = delegate.config.value,
-                messages = delegate.messages.value,
-            ),
-            result = if (subagent.result.isCompleted) {
-                runCatching { subagent.result.getCompleted() }.getOrNull()
-            } else {
-                null
-            },
-            completed = subagent.result.isCompleted,
-        )
-    }
-    return SessionDataSnapshot(
-        config = config.value,
-        agent = AgentSnapshot(
-            state = agentValue.state.value,
-            config = agentValue.config.value,
-            messages = agentValue.messages.value,
-        ),
-        subagents = subagentSnapshots,
-        checkpoints = checkpoints.value,
-    )
-}
-
 private fun <E> List<E>.toPersistentList(): PersistentList<E> {
     return kotlinx.collections.immutable.persistentListOf<E>().addAll(this)
-}
-
-private fun <K, V> Map<K, V>.toPersistentMap(): PersistentMap<K, V> {
-    return kotlinx.collections.immutable.persistentHashMapOf<K, V>().putAll(this)
 }

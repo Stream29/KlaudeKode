@@ -5,7 +5,6 @@ plugins {
 
 dependencies {
     implementation(projects.tools.communicationTool)
-    implementation(projects.tools.fileSearchTool)
     implementation(projects.tools.kotlinScriptTool)
     implementation(projects.tools.shellTool)
     implementation(projects.tools.taskTool)

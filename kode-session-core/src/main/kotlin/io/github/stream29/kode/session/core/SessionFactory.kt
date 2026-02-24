@@ -1,6 +1,6 @@
 package io.github.stream29.kode.session.core
 
-import io.github.stream29.kode.session.core.model.Session
+import io.github.stream29.kode.session.core.model.SessionState
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
@@ -8,10 +8,10 @@ import java.util.concurrent.ConcurrentHashMap
 public class SessionFactory(
     private val repository: SessionRepository,
 ) {
-    private val cache: ConcurrentHashMap<String, Session> = ConcurrentHashMap()
+    private val cache: ConcurrentHashMap<String, SessionState> = ConcurrentHashMap()
     private val loadMutex: Mutex = Mutex()
 
-    public suspend fun loadSession(id: String): Session {
+    public suspend fun loadSession(id: String): SessionState {
         val existing = cache[id]
         if (existing != null) {
             return existing
@@ -27,7 +27,7 @@ public class SessionFactory(
         }
     }
 
-    public fun put(session: Session) {
+    public fun put(session: SessionState) {
         cache[session.metadata.value.id] = session
     }
 

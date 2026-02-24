@@ -119,7 +119,7 @@ public fun SettingsContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-            .padding(top = 16.dp)
+                .padding(top = 16.dp)
         ) {
             when (selectedTab) {
                 0 -> ModelsTab(viewModel = viewModel, ui = ui)
@@ -129,7 +129,6 @@ public fun SettingsContent(
         }
     }
 }
-
 
 
 @Composable
@@ -144,7 +143,7 @@ public fun ModelsTab(
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
-        
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1474,7 +1473,8 @@ private fun AnthropicModelDialogEditorSection(
         onExpandedChange = { anthropicServiceTierExpanded = !anthropicServiceTierExpanded },
     ) {
         OutlinedTextField(
-            value = anthropicServiceTierOptions.firstOrNull { it.second == anthropicState.serviceTier }?.first ?: "Default",
+            value = anthropicServiceTierOptions.firstOrNull { it.second == anthropicState.serviceTier }?.first
+                ?: "Default",
             onValueChange = {},
             readOnly = true,
             label = { Text("Service Tier") },
@@ -2237,7 +2237,8 @@ private fun ModelDialog(
                     }
                     val resolvedParams = builtParams.params
                     if (resolvedParams != null && !resolvedParams.supportsProvider(selectedProviderId)) {
-                        paramsError = "Params '${resolvedParams.summaryText()}' do not match provider '$selectedProviderId'"
+                        paramsError =
+                            "Params '${resolvedParams.summaryText()}' do not match provider '$selectedProviderId'"
                         paramsError?.length
                         return@TextButton
                     }
@@ -2680,7 +2681,8 @@ private enum class ParamsUiFamily {
 
     Anthropic {
         override fun buildParams(input: ParamsBuildInput): ParamsBuildResult {
-            val existingAnthropic = (input.existing as? LlmModelParamsConfig.Anthropic) ?: LlmModelParamsConfig.Anthropic()
+            val existingAnthropic =
+                (input.existing as? LlmModelParamsConfig.Anthropic) ?: LlmModelParamsConfig.Anthropic()
             val topPResult = parseOptionalDoubleField(
                 input = input.anthropicTopPInput,
                 fieldName = "Anthropic topP",
@@ -2809,7 +2811,8 @@ private enum class ParamsUiFamily {
 
     OpenRouter {
         override fun buildParams(input: ParamsBuildInput): ParamsBuildResult {
-            val existingOpenRouter = (input.existing as? LlmModelParamsConfig.OpenRouter) ?: LlmModelParamsConfig.OpenRouter()
+            val existingOpenRouter =
+                (input.existing as? LlmModelParamsConfig.OpenRouter) ?: LlmModelParamsConfig.OpenRouter()
             val frequencyPenaltyResult = parseOptionalDoubleField(
                 input = input.openRouterFrequencyPenaltyInput,
                 fieldName = "OpenRouter frequency penalty",
@@ -2923,7 +2926,8 @@ private fun buildOpenAiFamilyParams(
 ): ParamsBuildResult {
     val existingOpenAiFamily = input.existing as? LlmModelParamsConfig.OpenAiFamily
     val currentChat = existingOpenAiFamily?.chat ?: io.github.stream29.kode.config.api.OpenAiChatParamsConfig()
-    val currentResponses = existingOpenAiFamily?.responses ?: io.github.stream29.kode.config.api.OpenAiResponsesParamsConfig()
+    val currentResponses =
+        existingOpenAiFamily?.responses ?: io.github.stream29.kode.config.api.OpenAiResponsesParamsConfig()
 
     val chatBaseResult = buildOpenAiBaseParams(
         existing = currentChat.base,
@@ -3962,7 +3966,6 @@ private val SETTINGS_JSON: Json = Json {
 }
 
 
-
 @Composable
 public fun AuthTab(viewModel: MainViewModel, ui: AppUiState) {
     val auths = ui.auths
@@ -4108,7 +4111,7 @@ private fun UiProviderAuthMode.toDialogAuthModeOrNull(): AuthMode? {
         UiProviderAuthMode.OAuthDevice -> AuthMode.OAuthDevice
         UiProviderAuthMode.CloudCredentialChain,
         UiProviderAuthMode.WellKnown,
-        -> null
+            -> null
     }
 }
 
@@ -4279,7 +4282,7 @@ private fun AuthCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -4401,7 +4404,7 @@ private fun AuthCard(
                 }
             }
 
-            
+
             if (dependentModels.isNotEmpty()) {
                 Text(
                     text = "Used by ${dependentModels.size} model(s)",
@@ -4460,8 +4463,9 @@ private fun AuthDialog(
         } ?: providerEntries.firstOrNull()
     }
     var selectedProviderEntryKey by remember { mutableStateOf(initialProviderEntry?.entryKey.orEmpty()) }
-    val selectedProviderEntry: AuthProviderEntry? = providerEntries.firstOrNull { entry -> entry.entryKey == selectedProviderEntryKey }
-        ?: providerEntries.firstOrNull()
+    val selectedProviderEntry: AuthProviderEntry? =
+        providerEntries.firstOrNull { entry -> entry.entryKey == selectedProviderEntryKey }
+            ?: providerEntries.firstOrNull()
     val selectedProviderId = selectedProviderEntry?.providerId.orEmpty()
     val selectedProviderLabel = selectedProviderEntry?.label ?: "No providers available"
     var customName by remember {
@@ -4546,7 +4550,7 @@ private fun AuthDialog(
                     .verticalScroll(authDialogScrollState),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                
+
                 var providerExpanded by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(
                     expanded = providerExpanded,
@@ -4582,7 +4586,7 @@ private fun AuthDialog(
                     }
                 }
 
-                
+
                 if (needsBaseUrl) {
                     OutlinedTextField(
                         value = customName,
@@ -5006,7 +5010,8 @@ private fun AuthDialog(
                         }
                     }
 
-                    val preset = viewModel.getProviderPresets().firstOrNull { preset -> preset.id == selectedProviderId }
+                    val preset =
+                        viewModel.getProviderPresets().firstOrNull { preset -> preset.id == selectedProviderId }
                     val envKeys = preset?.envKeys.orEmpty()
                     val resolvedBaseUrl = baseUrl.trim().takeIf { it.isNotBlank() }
                     val resolvedName = customName.trim().takeIf { it.isNotBlank() }
@@ -5049,7 +5054,6 @@ private fun AuthDialog(
 }
 
 
-
 @Composable
 public fun PreferencesTab(viewModel: MainViewModel, ui: AppUiState) {
     LazyColumn(
@@ -5057,7 +5061,7 @@ public fun PreferencesTab(viewModel: MainViewModel, ui: AppUiState) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            
+
             Text(
                 "Active Model",
                 style = MaterialTheme.typography.titleMedium,
@@ -5147,7 +5151,7 @@ public fun PreferencesTab(viewModel: MainViewModel, ui: AppUiState) {
             }
         }
 
-        
+
     }
 }
 
@@ -5567,7 +5571,7 @@ public fun AppSettingsContent(viewModel: MainViewModel, ui: AppUiState) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            
+
         }
     }
 
