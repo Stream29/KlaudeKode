@@ -1,6 +1,5 @@
 plugins {
     id("kotlin-jvm")
-    alias(libs.plugins.kotlinPluginSerialization)
 }
 
 dependencies {

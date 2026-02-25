@@ -15,13 +15,12 @@ dependencyResolutionManagement {
 }
 
 plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version "0.8.0"
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 include(":app")
-include(":agent-api-test")
 
 // New modules for kimi-cli inspired architecture
 include(":kode-core")
@@ -38,11 +37,6 @@ project(":ui:bridge").projectDir = file("kode-ui-bridge")
 
 // Tool modules (one module per tool)
 include(":tools:kotlin-script-tool")
-include(":tools:communication-tool")
-include(":tools:shell-tool")
-include(":tools:task-tool")
-include(":tools:think-tool")
-include(":tools:todo-tool")
 include(":tools:web-tool")
 
 // Config modules (separated into API, core logic, and filesystem implementation)
@@ -52,9 +46,6 @@ include(":config:core")
 project(":config:core").projectDir = file("kode-config-core")
 include(":config:fs")
 project(":config:fs").projectDir = file("kode-config-fs")
-// Legacy config module (deprecated, kept for compatibility)
-include(":config:legacy")
-project(":config:legacy").projectDir = file("kode-config")
 
 // Provider preset modules
 include(":providers:provider-api")

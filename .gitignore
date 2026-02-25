@@ -48,3 +48,5 @@ bin/
 ### Local Config ###
 config.yml
 config.yaml
+
+.sisyphus

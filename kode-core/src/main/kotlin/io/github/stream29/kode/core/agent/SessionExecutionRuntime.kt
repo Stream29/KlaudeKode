@@ -5,6 +5,9 @@ import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
+import io.github.stream29.kode.core.port.RuntimeSideEffectPort
+import io.github.stream29.kode.core.port.SessionSideEffectPort
+import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.ui.core.AgentEventListener
@@ -19,7 +22,23 @@ public class SessionExecutionRuntime(
     private val hookManager: HookManager,
     private val logger: (String) -> Unit,
     public val sessionManager: SessionManager,
+    private val runtimeSideEffectPortFactory:
+        ((MessageHandler, AgentEventListener?, (String) -> Unit) -> RuntimeSideEffectPort)? = null,
+    private val toolSideEffectPortFactory: ((HookManager) -> ToolSideEffectPort)? = null,
+    private val sessionSideEffectPortFactory:
+        ((SessionManager, KoogSessionBridge) -> SessionSideEffectPort)? = null,
 ) {
+    init {
+        val hasRuntimeFactory = runtimeSideEffectPortFactory != null
+        val hasToolFactory = toolSideEffectPortFactory != null
+        val hasSessionFactory = sessionSideEffectPortFactory != null
+        if (hasRuntimeFactory || hasToolFactory || hasSessionFactory) {
+            check(hasRuntimeFactory && hasToolFactory && hasSessionFactory) {
+                "Custom side-effect wiring requires runtime/tool/session factories to be provided together"
+            }
+        }
+    }
+
     private data class SessionExecutionContext(
         val agent: MainAgent,
         val model: LLModel,
@@ -74,15 +93,23 @@ public class SessionExecutionRuntime(
         sessionId: String,
         runtimeContext: AgentRuntimeContext,
     ): MainAgent {
+        val scopedHandler = scopedMessageHandler(sessionId)
         return MainAgent(
             promptExecutor = promptExecutor,
             sessionManager = sessionManager,
             sessionBridge = sessionBridge,
-            messageHandler = scopedMessageHandler(sessionId),
+            messageHandler = scopedHandler,
             hookManager = hookManager,
             eventListener = eventListener,
             logger = logger,
             runtimeContext = runtimeContext,
+            runtimeSideEffectPort = runtimeSideEffectPortFactory?.invoke(
+                scopedHandler,
+                eventListener,
+                logger,
+            ),
+            toolSideEffectPort = toolSideEffectPortFactory?.invoke(hookManager),
+            sessionSideEffectPort = sessionSideEffectPortFactory?.invoke(sessionManager, sessionBridge),
         )
     }
 

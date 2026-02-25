@@ -7,6 +7,10 @@ import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.core.hooks.HookManager
+import io.github.stream29.kode.core.port.RuntimeSideEffectPort
+import io.github.stream29.kode.core.port.SessionSideEffectPort
+import io.github.stream29.kode.core.port.ToolCallPreHookResult
+import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.tool.ToolNames
@@ -33,6 +37,18 @@ internal class ScriptOnlyAgentEngine(
     private val eventListener: AgentEventListener?,
     private val logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
+    private val runtimeSideEffectPort: RuntimeSideEffectPort = RuntimeSideEffectAdapter(
+        messageHandler = messageHandler,
+        eventListener = eventListener,
+        logger = logger,
+    ),
+    private val toolSideEffectPort: ToolSideEffectPort = ToolSideEffectAdapter(
+        hookManager = hookManager,
+    ),
+    private val sessionSideEffectPort: SessionSideEffectPort = SessionSideEffectAdapter(
+        sessionManager = sessionManager,
+        sessionBridge = sessionBridge,
+    ),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val scriptToolDescriptor = KotlinScriptTool(scriptContext = ScriptContext()).descriptor
@@ -75,8 +91,12 @@ internal class ScriptOnlyAgentEngine(
     }
 
     private suspend fun resolvePromptContext(sessionId: String, agentId: String?): Pair<String, List<Message>> {
-        val messages = sessionBridge.prepareMessagesForAgent(sessionId, agentId)
-        val systemPrompt = sessionManager.getAgentConfig(sessionId, agentId).systemPrompt ?: DEFAULT_SYSTEM_PROMPT
+        val messages = sessionSideEffectPort.prepareMessagesForAgent(sessionId = sessionId, agentId = agentId)
+        val systemPrompt = sessionSideEffectPort.resolveSystemPrompt(
+            sessionId = sessionId,
+            agentId = agentId,
+            fallback = DEFAULT_SYSTEM_PROMPT,
+        )
         return systemPrompt to messages
     }
 
@@ -128,14 +148,14 @@ internal class ScriptOnlyAgentEngine(
         var iteration = 0
 
         while (true) {
-            if (messageHandler.isSafeStopRequested(sessionId)) {
-                messageHandler.onSafeStopReached(sessionId)
+            if (runtimeSideEffectPort.isSafeStopRequested(sessionId)) {
+                runtimeSideEffectPort.onSafeStopReached(sessionId)
                 throw SafeStopSignal()
             }
 
             iteration++
 
-            val refreshedMessages = sessionBridge.prepareMessagesForAgent(sessionId, runtimeContext.agentId)
+            val refreshedMessages = sessionSideEffectPort.prepareMessagesForAgent(sessionId, runtimeContext.agentId)
             if (refreshedMessages.size >= allMessages.size) {
                 allMessages = refreshedMessages.toMutableList()
             }
@@ -160,15 +180,15 @@ internal class ScriptOnlyAgentEngine(
                     is Message.Assistant -> Unit
 
                     is Message.Tool.Call -> {
-                        if (messageHandler.isSafeStopRequested(sessionId)) {
-                            messageHandler.onSafeStopReached(sessionId)
+                        if (runtimeSideEffectPort.isSafeStopRequested(sessionId)) {
+                            runtimeSideEffectPort.onSafeStopReached(sessionId)
                             throw SafeStopSignal()
                         }
                         allMessages.add(response)
                         val toolResult = executeToolCall(sessionId, response)
                         allMessages.add(toolResult)
-                        if (messageHandler.isSafeStopRequested(sessionId)) {
-                            messageHandler.onSafeStopReached(sessionId)
+                        if (runtimeSideEffectPort.isSafeStopRequested(sessionId)) {
+                            runtimeSideEffectPort.onSafeStopReached(sessionId)
                             throw SafeStopSignal()
                         }
                     }
@@ -231,7 +251,7 @@ internal class ScriptOnlyAgentEngine(
             )
         }
 
-        val preHook = hookManager.applyToolCallBeforeHooks(sessionId, resolvedCall.toolName, resolvedCall.toolArgs)
+        val preHook = toolSideEffectPort.applyToolCallBeforeHooks(sessionId, resolvedCall.toolName, resolvedCall.toolArgs)
         if (!preHook.allowed) {
             val reason = preHook.reason ?: "Tool call blocked by hook"
             return rejectToolCall(
@@ -245,20 +265,17 @@ internal class ScriptOnlyAgentEngine(
 
         val finalArgs = preHook.toolArgs
 
-        logger("🔧 Calling tool: ${resolvedCall.toolName}")
-        logger("   Args: ${finalArgs.take(100)}")
-
-        eventListener?.onEvent(
-            AgentEvent.ToolCallStarting(
-                toolName = resolvedCall.toolName,
-                arguments = finalArgs
-            ),
-            sessionId
+        runtimeSideEffectPort.log("🔧 Calling tool: ${resolvedCall.toolName}")
+        runtimeSideEffectPort.log("   Args: ${finalArgs.take(100)}")
+        runtimeSideEffectPort.onToolCallStarting(
+            sessionId = sessionId,
+            toolName = resolvedCall.toolName,
+            arguments = finalArgs,
         )
 
         val execution = executeScriptTool(toolArgs = finalArgs)
 
-        val processedResult = hookManager.applyToolCallAfterHooks(
+        val processedResult = toolSideEffectPort.applyToolCallAfterHooks(
             sessionId = sessionId,
             toolName = resolvedCall.toolName,
             toolArgs = finalArgs,
@@ -284,20 +301,15 @@ internal class ScriptOnlyAgentEngine(
         )
 
         if (!isError) {
-            eventListener?.onEvent(
-                AgentEvent.ToolCallCompleted(
-                    toolName = resolvedCall.toolName,
-                    result = processedResult
-                ),
-                sessionId
+            runtimeSideEffectPort.onToolCallCompleted(
+                sessionId = sessionId,
+                toolName = resolvedCall.toolName,
+                result = processedResult,
             )
         } else {
-            eventListener?.onEvent(
-                AgentEvent.Error(
-                    message = errorMessage ?: processedResult,
-                    exception = null,
-                ),
-                sessionId,
+            runtimeSideEffectPort.onToolCallFailed(
+                sessionId = sessionId,
+                message = errorMessage ?: processedResult,
             )
         }
 
@@ -313,16 +325,47 @@ internal class ScriptOnlyAgentEngine(
     }
 
     private suspend fun awaitForUserInput(sessionId: String) {
-        sessionManager.suspendForUserInput(sessionId)
-        val userInput = messageHandler.requestInput(sessionId)
-        sessionManager.resumeRun(sessionId, currentJob())
+        sessionSideEffectPort.suspendForUserInput(sessionId)
+        val userInput = requestUserInput(sessionId)
+        resumeSessionRun(sessionId)
         if (userInput.isNotBlank()) {
-            sessionManager.addUserMessage(
+            appendUserMessage(
                 sessionId = sessionId,
                 content = userInput,
-                agentId = runtimeContext.agentId,
             )
         }
+    }
+
+    private suspend fun requestUserInput(sessionId: String): String {
+        val runtimeInputPort = runtimeSideEffectPort as? RuntimeInputPort
+        return runtimeInputPort?.requestInput(sessionId)
+            ?: messageHandler.requestInput(sessionId)
+    }
+
+    private suspend fun resumeSessionRun(sessionId: String) {
+        val runLifecyclePort = sessionSideEffectPort as? SessionRunLifecyclePort
+        if (runLifecyclePort != null) {
+            runLifecyclePort.resumeRun(sessionId = sessionId, job = currentJob())
+            return
+        }
+        sessionManager.resumeRun(sessionId, currentJob())
+    }
+
+    private suspend fun appendUserMessage(sessionId: String, content: String) {
+        val runLifecyclePort = sessionSideEffectPort as? SessionRunLifecyclePort
+        if (runLifecyclePort != null) {
+            runLifecyclePort.addUserMessage(
+                sessionId = sessionId,
+                content = content,
+                agentId = runtimeContext.agentId,
+            )
+            return
+        }
+        sessionManager.addUserMessage(
+            sessionId = sessionId,
+            content = content,
+            agentId = runtimeContext.agentId,
+        )
     }
 
     private fun resolveToolCall(toolCall: Message.Tool.Call): ResolvedToolCall {
@@ -372,7 +415,7 @@ internal class ScriptOnlyAgentEngine(
         errorMessage: String?,
         outputList: List<String>,
     ) {
-        sessionBridge.saveToolExchange(
+        sessionSideEffectPort.saveToolExchange(
             sessionId = sessionId,
             toolName = toolName,
             toolCallId = toolCallId,
@@ -458,6 +501,147 @@ internal class ScriptOnlyAgentEngine(
     }
 
     private class SafeStopSignal : RuntimeException()
+
+    private class RuntimeSideEffectAdapter(
+        private val messageHandler: MessageHandler,
+        private val eventListener: AgentEventListener?,
+        private val logger: (String) -> Unit,
+    ) : RuntimeSideEffectPort, RuntimeInputPort {
+        override fun isSafeStopRequested(sessionId: String): Boolean {
+            return messageHandler.isSafeStopRequested(sessionId)
+        }
+
+        override fun onSafeStopReached(sessionId: String) {
+            messageHandler.onSafeStopReached(sessionId)
+        }
+
+        override fun onToolCallStarting(sessionId: String, toolName: String, arguments: String) {
+            eventListener?.onEvent(
+                AgentEvent.ToolCallStarting(
+                    toolName = toolName,
+                    arguments = arguments,
+                ),
+                sessionId,
+            )
+        }
+
+        override fun onToolCallCompleted(sessionId: String, toolName: String, result: String) {
+            eventListener?.onEvent(
+                AgentEvent.ToolCallCompleted(
+                    toolName = toolName,
+                    result = result,
+                ),
+                sessionId,
+            )
+        }
+
+        override fun onToolCallFailed(sessionId: String, message: String) {
+            eventListener?.onEvent(
+                AgentEvent.Error(
+                    message = message,
+                    exception = null,
+                ),
+                sessionId,
+            )
+        }
+
+        override fun log(message: String) {
+            logger(message)
+        }
+
+        override suspend fun requestInput(sessionId: String): String {
+            return messageHandler.requestInput(sessionId)
+        }
+    }
+
+    private class ToolSideEffectAdapter(
+        private val hookManager: HookManager,
+    ) : ToolSideEffectPort {
+        override fun applyToolCallBeforeHooks(sessionId: String, toolName: String, toolArgs: String): ToolCallPreHookResult {
+            val result = hookManager.applyToolCallBeforeHooks(
+                sessionId = sessionId,
+                toolName = toolName,
+                toolArgs = toolArgs,
+            )
+            return ToolCallPreHookResult(
+                allowed = result.allowed,
+                reason = result.reason,
+                toolArgs = result.toolArgs,
+            )
+        }
+
+        override fun applyToolCallAfterHooks(sessionId: String, toolName: String, toolArgs: String, result: String): String {
+            return hookManager.applyToolCallAfterHooks(
+                sessionId = sessionId,
+                toolName = toolName,
+                toolArgs = toolArgs,
+                result = result,
+            )
+        }
+    }
+
+    private class SessionSideEffectAdapter(
+        private val sessionManager: SessionManager,
+        private val sessionBridge: KoogSessionBridge,
+    ) : SessionSideEffectPort, SessionRunLifecyclePort {
+        override suspend fun prepareMessagesForAgent(sessionId: String, agentId: String?): List<Message> {
+            return sessionBridge.prepareMessagesForAgent(sessionId = sessionId, agentId = agentId)
+        }
+
+        override suspend fun resolveSystemPrompt(sessionId: String, agentId: String?, fallback: String): String {
+            return sessionManager.getAgentConfig(sessionId = sessionId, agentId = agentId).systemPrompt ?: fallback
+        }
+
+        override suspend fun suspendForUserInput(sessionId: String) {
+            sessionManager.suspendForUserInput(sessionId)
+        }
+
+        override suspend fun saveToolExchange(
+            sessionId: String,
+            toolName: String,
+            toolCallId: String,
+            arguments: JsonElement,
+            result: JsonElement,
+            isError: Boolean,
+            errorMessage: String?,
+            outputList: List<String>,
+            agentId: String?,
+        ) {
+            sessionBridge.saveToolExchange(
+                sessionId = sessionId,
+                toolName = toolName,
+                toolCallId = toolCallId,
+                arguments = arguments,
+                result = result,
+                isError = isError,
+                errorMessage = errorMessage,
+                outputList = outputList,
+                agentId = agentId,
+            )
+        }
+
+        override suspend fun resumeRun(sessionId: String, job: Job) {
+            sessionManager.resumeRun(sessionId = sessionId, ownerJob = job)
+        }
+
+        override suspend fun addUserMessage(sessionId: String, content: String, agentId: String?) {
+            sessionManager.addUserMessage(
+                sessionId = sessionId,
+                content = content,
+                agentId = agentId,
+            )
+        }
+    }
+
+    private interface RuntimeInputPort {
+        suspend fun requestInput(sessionId: String): String
+    }
+
+    private interface SessionRunLifecyclePort {
+        suspend fun resumeRun(sessionId: String, job: Job)
+
+        suspend fun addUserMessage(sessionId: String, content: String, agentId: String?)
+    }
 
     companion object {
         val DEFAULT_SYSTEM_PROMPT: String = """

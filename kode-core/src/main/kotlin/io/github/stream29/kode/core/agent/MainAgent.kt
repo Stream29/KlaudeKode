@@ -4,6 +4,9 @@ import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.core.hooks.HookManager
+import io.github.stream29.kode.core.port.RuntimeSideEffectPort
+import io.github.stream29.kode.core.port.SessionSideEffectPort
+import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.ui.core.AgentEventListener
@@ -20,17 +23,27 @@ public class MainAgent(
     eventListener: AgentEventListener?,
     logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
+    private val runtimeSideEffectPort: RuntimeSideEffectPort? = null,
+    private val toolSideEffectPort: ToolSideEffectPort? = null,
+    private val sessionSideEffectPort: SessionSideEffectPort? = null,
 ) : Agent {
-    private val engine = ScriptOnlyAgentEngine(
+    private val engine = buildEngine(
         promptExecutor = promptExecutor,
-        sessionManager = sessionManager,
         sessionBridge = sessionBridge,
-        messageHandler = messageHandler,
-        hookManager = hookManager,
         eventListener = eventListener,
         logger = logger,
-        runtimeContext = runtimeContext,
     )
+
+    init {
+        val hasCustomRuntimePort = runtimeSideEffectPort != null
+        val hasCustomToolPort = toolSideEffectPort != null
+        val hasCustomSessionPort = sessionSideEffectPort != null
+        if (hasCustomRuntimePort || hasCustomToolPort || hasCustomSessionPort) {
+            check(hasCustomRuntimePort && hasCustomToolPort && hasCustomSessionPort) {
+                "Custom side-effect wiring requires runtime/tool/session ports to be provided together"
+            }
+        }
+    }
 
     public suspend fun chat(
         sessionId: String,
@@ -78,6 +91,40 @@ public class MainAgent(
         } finally {
             sessionManager.completeRun(sessionId)
         }
+    }
+
+    private fun buildEngine(
+        promptExecutor: PromptExecutor,
+        sessionBridge: KoogSessionBridge,
+        eventListener: AgentEventListener?,
+        logger: (String) -> Unit,
+    ): ScriptOnlyAgentEngine {
+        if (runtimeSideEffectPort == null || toolSideEffectPort == null || sessionSideEffectPort == null) {
+            return ScriptOnlyAgentEngine(
+                promptExecutor = promptExecutor,
+                sessionManager = sessionManager,
+                sessionBridge = sessionBridge,
+                messageHandler = messageHandler,
+                hookManager = hookManager,
+                eventListener = eventListener,
+                logger = logger,
+                runtimeContext = runtimeContext,
+            )
+        }
+
+        return ScriptOnlyAgentEngine(
+            promptExecutor = promptExecutor,
+            sessionManager = sessionManager,
+            sessionBridge = sessionBridge,
+            messageHandler = messageHandler,
+            hookManager = hookManager,
+            eventListener = eventListener,
+            logger = logger,
+            runtimeContext = runtimeContext,
+            runtimeSideEffectPort = runtimeSideEffectPort,
+            toolSideEffectPort = toolSideEffectPort,
+            sessionSideEffectPort = sessionSideEffectPort,
+        )
     }
 
     private suspend fun currentJob(): Job {

@@ -708,13 +708,8 @@ private fun ToolsPage(state: MainViewModel, ui: ToolsPageUiState) {
     val toolItems = listOf(
         ToolItem(key = "file", title = "File (read/list)", description = "Read and list files"),
         ToolItem(key = "file-edit", title = "File edit", description = "Edit files"),
-        ToolItem(key = "communication", title = "Communication", description = "Ask for input / messages"),
-        ToolItem(key = "shell", title = "Shell", description = "Execute shell commands"),
         ToolItem(key = "web", title = "Web", description = "Fetch web content"),
         ToolItem(key = "search", title = "Search", description = "Glob and grep files"),
-        ToolItem(key = "todo", title = "Todo", description = "Task lists"),
-        ToolItem(key = "think", title = "Think", description = "Planning/analysis tool"),
-        ToolItem(key = "task", title = "Task", description = "Parallel sub-agents"),
     )
 
     Column(modifier = Modifier.fillMaxSize()) {

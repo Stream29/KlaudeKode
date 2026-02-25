@@ -21,13 +21,9 @@ import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSE
 import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE
 import ai.koog.agents.mcp.McpToolRegistryProvider
 import ai.koog.agents.mcp.defaultStdioTransport
-import ai.koog.agents.core.agent.AIAgent
-import ai.koog.agents.core.agent.singleRunStrategy
 import ai.koog.agents.core.tools.ToolParameterDescriptor
 import ai.koog.agents.core.tools.ToolParameterType
 import ai.koog.agents.core.tools.ToolRegistry
-import ai.koog.agents.features.acp.AcpAgent
-import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLModel
 import io.github.stream29.kode.app.util.parseKeyValueLines
@@ -72,30 +68,14 @@ import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.AgentState
 import io.github.stream29.kode.ui.core.MessageHandler
-import com.agentclientprotocol.agent.AgentInfo
-import com.agentclientprotocol.agent.AgentSession
-import com.agentclientprotocol.agent.AgentSupport
-import com.agentclientprotocol.client.ClientInfo
-import com.agentclientprotocol.common.Event
-import com.agentclientprotocol.common.SessionCreationParameters
-import com.agentclientprotocol.model.AgentCapabilities
-import com.agentclientprotocol.model.ContentBlock
-import com.agentclientprotocol.model.LATEST_PROTOCOL_VERSION
-import com.agentclientprotocol.model.PromptCapabilities
-import com.agentclientprotocol.model.SessionId
-import com.agentclientprotocol.protocol.Protocol
-import com.agentclientprotocol.transport.StdioTransport
 import io.github.stream29.kode.tools.scripting.KotlinScriptResult
 import io.github.stream29.kode.tools.scripting.ScriptContext
 import io.github.stream29.kode.tools.scripting.evalInThreadCancellable
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.combine
@@ -108,10 +88,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.sync.withLock
 import java.awt.Desktop
 import java.io.File
-import java.nio.channels.Pipe
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 
@@ -132,12 +110,12 @@ public class MainViewModel(
         AgentPreset(
             name = "plan",
             description = "Read-only planning agent",
-            disabledTools = setOf("shell", "task", "file-edit"),
+            disabledTools = setOf("file-edit"),
         ),
         AgentPreset(
             name = "explore",
             description = "Exploration agent (search-heavy)",
-            disabledTools = setOf("shell", "task", "file-edit"),
+            disabledTools = setOf("file-edit"),
         ),
     )
     private val providerPresets: List<ProviderPreset> = BuiltinProviderPresetRegistry.listPresets()
@@ -962,6 +940,13 @@ public class MainViewModel(
     private val defaultAppDataDir: String = "~/.kode/"
     private val autoSessionTitlePlaceholder: String = "New Chat"
     private val legacySessionTitlePrefix: String = "Conversation "
+    private val allowedDisabledToolKeys: Set<String> = setOf("file-edit")
+
+    private fun sanitizeDisabledToolKeys(keys: Set<String>): Set<String> {
+        return keys.filterTo(destination = mutableSetOf()) { candidate ->
+            candidate in allowedDisabledToolKeys
+        }
+    }
 
     // AgentState implementation
     override val isRunning: Boolean
@@ -974,13 +959,6 @@ public class MainViewModel(
     private var eventListener: AgentEventListener? = null
     private var sessionExecutionRuntime: SessionExecutionRuntime? = null
     private var pendingTaskAfterSessionCreate: String? = null
-    private var acpProtocol: Protocol? = null
-    private var acpTransport: StdioTransport? = null
-    private var acpClientTransport: StdioTransport? = null
-    private var acpProtocolScope: CoroutineScope? = null
-    private var acpClientToAgent: Pipe? = null
-    private var acpAgentToClient: Pipe? = null
-    private val mcpProcesses: MutableMap<String, Process> = mutableMapOf()
 
     public fun setEventListener(listener: AgentEventListener?) {
         this.eventListener = listener
@@ -1135,7 +1113,7 @@ public class MainViewModel(
         presetFile = config.preset.file ?: ""
         logLevel = config.logging.level
         logFile = config.logging.file ?: ""
-        disabledTools = config.tools.disabled.toSet()
+        disabledTools = sanitizeDisabledToolKeys(config.tools.disabled.toSet())
         mcpToolTimeoutMs = config.mcp.client.toolCallTimeoutMs
         mcpServers = config.mcp.servers
         val knownServers = mcpServers.keys
@@ -1268,10 +1246,10 @@ public class MainViewModel(
     }
 
     public fun continueCurrentSession() {
-        continueCurrentSessionInternal()
+        continueFromInput(input = "")
     }
 
-    private fun continueCurrentSessionInternal() {
+    private fun resumeCurrentSessionRuntime() {
         val sessionId = currentSessionId
         if (sessionId == null) {
             addSystemMessage("No active session")
@@ -1339,8 +1317,7 @@ public class MainViewModel(
         sessionJobs[sessionId]?.cancel("Force-stopped by user")
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                sessionManager.stopRun(sessionId)
-                val rolledBack = sessionManager.rollbackTrailingPendingScript(sessionId = sessionId, agentId = null)
+                val rolledBack = sessionManager.stopRun(sessionId)
                 if (rolledBack) {
                     addSystemMessage("Force stop rolled back unfinished trailing pending script", sessionId)
                 }
@@ -2384,7 +2361,7 @@ logging:
                     sessionId = sessionId,
                     input = input,
                 )
-                continueCurrentSession()
+                resumeCurrentSessionRuntime()
             } catch (e: Exception) {
                 addSystemMessage("Failed to continue: ${e.message}", sessionId)
             }
@@ -2581,7 +2558,7 @@ logging:
                     lastOpenedSessionId = lastOpenedSessionId,
                 ),
                 tools = current.tools.copy(
-                    disabled = disabledTools.toList()
+                    disabled = sanitizeDisabledToolKeys(disabledTools).toList()
                 ),
                 services = current.services.copy(
                     webSearch = buildServiceConfig(
@@ -2861,32 +2838,6 @@ logging:
         return result.status.toHealthResult(message = result.message)
     }
 
-    private suspend fun updateMcpHealth(name: String, result: McpHealthResult) {
-        withContext(Dispatchers.Main) {
-            mcpHealthResults = mcpHealthResults + (name to result)
-        }
-    }
-
-    private fun buildMcpHealthSuccess(registry: ToolRegistry): McpHealthResult {
-        val count = registry.tools.size
-        val message = if (count == 0) {
-            "Found 0 tools"
-        } else {
-            "Found $count tools"
-        }
-        return McpHealthResult(
-            status = McpHealthStatus.Healthy,
-            message = message,
-        )
-    }
-
-    private fun buildMcpHealthError(message: String): McpHealthResult {
-        return McpHealthResult(
-            status = McpHealthStatus.Unhealthy,
-            message = message,
-        )
-    }
-
     private fun buildToolParameterSummary(param: ToolParameterDescriptor): McpToolParameterSummary {
         return McpToolParameterSummary(
             name = param.name,
@@ -3027,128 +2978,6 @@ logging:
                 addSystemMessage("Failed to export logs: ${e.message}")
             }
         }
-    }
-
-    private suspend fun buildMcpToolRegistry(): ToolRegistry? {
-        stopMcpProcesses()
-
-        if (mcpServers.isEmpty()) {
-            withContext(Dispatchers.Main) {
-                mcpHealthResults = emptyMap()
-            }
-            return null
-        }
-
-        val knownServers = mcpServers.keys
-        withContext(Dispatchers.Main) {
-            mcpHealthResults = mcpHealthResults.filterKeys { it in knownServers }
-            mcpHealthResults = mcpHealthResults + knownServers.associateWith {
-                McpHealthResult(McpHealthStatus.Checking, "Checking...")
-            }
-        }
-
-        var combined: ToolRegistry? = null
-        mcpServers.forEach { (name, server) ->
-            try {
-                val registry = when (server.transportType()) {
-                    McpTransportType.Stdio -> {
-                        val command = server.command
-                        if (command.isNullOrBlank()) {
-                            addSystemMessage("MCP server $name missing command")
-                            updateMcpHealth(name, buildMcpHealthError("Missing command"))
-                            null
-                        } else {
-                            val process = startMcpProcess(name, server, command)
-                            if (process == null) {
-                                updateMcpHealth(name, buildMcpHealthError("Failed to start process"))
-                                null
-                            } else {
-                                val transport = McpToolRegistryProvider.defaultStdioTransport(process)
-                                val result = McpToolRegistryProvider.fromTransport(
-                                    transport = transport,
-                                    name = name,
-                                    version = "1.0.0"
-                                )
-                                updateMcpHealth(name, buildMcpHealthSuccess(result))
-                                result
-                            }
-                        }
-                    }
-
-                    McpTransportType.Http,
-                    McpTransportType.Sse,
-                        -> {
-                        val url = server.url
-                        if (url.isNullOrBlank()) {
-                            addSystemMessage("MCP server $name missing url")
-                            updateMcpHealth(name, buildMcpHealthError("Missing url"))
-                            null
-                        } else {
-                            val transport = McpToolRegistryProvider.defaultSseTransport(url)
-                            val result = McpToolRegistryProvider.fromTransport(
-                                transport = transport,
-                                name = name,
-                                version = "1.0.0"
-                            )
-                            updateMcpHealth(name, buildMcpHealthSuccess(result))
-                            result
-                        }
-                    }
-
-                    McpTransportType.Unsupported -> {
-                        addSystemMessage("MCP server $name has unsupported transport ${server.transport}")
-                        updateMcpHealth(
-                            name,
-                            buildMcpHealthError("Unsupported transport ${server.transport}")
-                        )
-                        null
-                    }
-                }
-
-                if (registry != null) {
-                    combined = if (combined == null) {
-                        registry
-                    } else {
-                        combined + registry
-                    }
-                }
-            } catch (e: Exception) {
-                addSystemMessage("Failed to load MCP server $name: ${e.message}")
-                updateMcpHealth(name, buildMcpHealthError(e.message ?: "Failed to load"))
-            }
-        }
-
-        return combined
-    }
-
-    private fun startMcpProcess(
-        name: String,
-        server: io.github.stream29.kode.config.api.McpServerConfig,
-        command: String
-    ): Process? {
-        return try {
-            val args = server.args
-            val processBuilder = ProcessBuilder(listOf(command) + args)
-                .directory(resolveSessionWorkingDir(currentSessionWorkDir))
-                .redirectErrorStream(true)
-                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-            server.env?.forEach { (key, value) ->
-                processBuilder.environment()[key] = value
-            }
-            val process = processBuilder.start()
-            mcpProcesses[name] = process
-            process
-        } catch (e: Exception) {
-            addSystemMessage("Failed to start MCP process $name: ${e.message}")
-            null
-        }
-    }
-
-    private fun stopMcpProcesses() {
-        mcpProcesses.values.forEach { process ->
-            process.destroy()
-        }
-        mcpProcesses.clear()
     }
 
     private fun buildServiceConfig(
@@ -3505,156 +3334,23 @@ logging:
     }
 
     public fun startAcpServer() {
-        appendAcpLog("ACP is disabled in script-only runtime")
+        acpLogs = (acpLogs + "ACP is disabled in script-only runtime").takeLast(200)
         addSystemMessage("ACP is disabled in script-only runtime")
     }
 
     public fun stopAcpServer() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                acpTransport?.close()
-                acpClientTransport?.close()
-                acpClientToAgent?.sink()?.close()
-                acpClientToAgent?.source()?.close()
-                acpAgentToClient?.sink()?.close()
-                acpAgentToClient?.source()?.close()
-                acpProtocolScope?.cancel()
-                acpProtocol = null
-                acpTransport = null
-                acpClientTransport = null
-                acpProtocolScope = null
-                acpClientToAgent = null
-                acpAgentToClient = null
-                acpRunning = false
-                appendAcpLog("ACP server stopped")
-            } catch (e: Exception) {
-                appendAcpLog("ACP stop failed: ${e.message}")
-            }
-        }
-    }
-
-    private fun appendAcpLog(message: String) {
-        viewModelScope.launch(Dispatchers.Main) {
-            acpLogs = (acpLogs + message).takeLast(200)
-        }
-    }
-
-    private class KodeAcpAgentSupport(
-        private val promptExecutor: PromptExecutor,
-        private val toolRegistry: ToolRegistry,
-        private val model: LLModel,
-        private val systemPrompt: String,
-        private val maxIterations: Int,
-        private val protocol: Protocol
-    ) : AgentSupport {
-        override suspend fun initialize(clientInfo: ClientInfo): AgentInfo {
-            return AgentInfo(
-                protocolVersion = LATEST_PROTOCOL_VERSION,
-                capabilities = AgentCapabilities(
-                    loadSession = false,
-                    promptCapabilities = PromptCapabilities(
-                        audio = false,
-                        image = false,
-                        embeddedContext = true
-                    )
-                ),
-                authMethods = emptyList()
-            )
-        }
-
-        override suspend fun createSession(sessionParameters: SessionCreationParameters): AgentSession {
-            return KodeAcpAgentSession(
-                sessionId = SessionId(UUID.randomUUID().toString()),
-                promptExecutor = promptExecutor,
-                toolRegistry = toolRegistry,
-                model = model,
-                systemPrompt = systemPrompt,
-                maxIterations = maxIterations,
-                protocol = protocol
-            )
-        }
-
-        override suspend fun loadSession(
-            sessionId: SessionId,
-            sessionParameters: SessionCreationParameters
-        ): AgentSession {
-            throw UnsupportedOperationException("ACP loadSession is not supported")
-        }
-    }
-
-    private class KodeAcpAgentSession(
-        override val sessionId: SessionId,
-        private val promptExecutor: PromptExecutor,
-        private val toolRegistry: ToolRegistry,
-        private val model: LLModel,
-        private val systemPrompt: String,
-        private val maxIterations: Int,
-        private val protocol: Protocol
-    ) : AgentSession {
-        private var agentJob: kotlinx.coroutines.Deferred<Any?>? = null
-        private val agentMutex = kotlinx.coroutines.sync.Mutex()
-
-        @Suppress("UNUSED_PARAMETER", "PARAMETER_NAME_CHANGED_ON_OVERRIDE")
-        override suspend fun prompt(
-            content: List<ContentBlock>,
-            meta: kotlinx.serialization.json.JsonElement?
-        ): kotlinx.coroutines.flow.Flow<Event> = kotlinx.coroutines.flow.channelFlow {
-            val inputText = content.joinToString("\n") { it.toString() }
-
-            agentMutex.withLock {
-                val agent = AIAgent(
-                    promptExecutor = promptExecutor,
-                    llmModel = model,
-                    toolRegistry = toolRegistry,
-                    systemPrompt = systemPrompt,
-                    strategy = singleRunStrategy(),
-                    maxIterations = maxIterations
-                ) {
-                    install(AcpAgent) {
-                        this.sessionId = this@KodeAcpAgentSession.sessionId.value
-                        this.protocol = this@KodeAcpAgentSession.protocol
-                        this.eventsProducer = this@channelFlow
-                        this.setDefaultNotifications = true
-                    }
-                }
-
-                agentJob = async { agent.run(inputText) }
-                agentJob?.await()
-            }
-        }
-
-        override suspend fun cancel() {
-            agentJob?.cancelAndJoin()
-        }
+        acpLogs = (acpLogs + "ACP is disabled in script-only runtime").takeLast(200)
+        addSystemMessage("ACP is disabled in script-only runtime")
     }
 
     public fun setToolEnabled(toolKey: String, enabled: Boolean) {
-        val updated = when (toolKey) {
-            "file-edit" -> {
-                if (enabled) {
-                    disabledTools - toolKey
-                } else {
-                    disabledTools + toolKey
-                }
-            }
-
-            "file" -> {
-                if (enabled) {
-                    disabledTools - toolKey
-                } else {
-                    disabledTools + toolKey
-                }
-            }
-
-            else -> {
-                if (enabled) {
-                    disabledTools - toolKey
-                } else {
-                    disabledTools + toolKey
-                }
-            }
+        val normalizedToolKey = sanitizeDisabledToolKeys(setOf(toolKey)).firstOrNull() ?: return
+        val updated = if (enabled) {
+            disabledTools - normalizedToolKey
+        } else {
+            disabledTools + normalizedToolKey
         }
-        disabledTools = updated
+        disabledTools = sanitizeDisabledToolKeys(updated)
     }
 
     public fun clearToolLogs() {

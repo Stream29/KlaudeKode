@@ -4,7 +4,7 @@ Unless specified, always respond in Chinese.
 
 Use IDEA tools as long as possible. (for grammar checking, building, running, etc.)
 
-Use IDEA's tools to build instead of `gradlew build`
+Use IDEA's run configuration to build instead of `gradlew build`
 
 Use IDEA's tools instead of LSP tools. Never use Kotlin LSP.
 
@@ -78,15 +78,14 @@ kotlin = "x.y.z"
 library-name = { module = "group:artifact", version.ref = "kotlin" }
 
 [plugins]
-plugin-name = { id = "plugin.id", version.ref = "version-ref" }
+plugin-name = { id = "plugin.id", version.ref = "kotlin" }
 ```
 
 ## Common Tasks
 
 ### Test Harness Module
-- `agent-api-test` is the dedicated module for manual API behavior verification.
-- Main entry: `io.github.stream29.kode.agentapitest.AgentApiTestMainKt`.
-- Prefer running it from IDEA run configuration for quick behavior checks.
+- `:agent-api-test` has been removed.
+- Manual/behavior verification should use existing tests in `:kode-core` and `:kode-session-core`.
 
 ### Adding a New Module
 1. Create module directory
@@ -113,9 +112,9 @@ plugin-name = { id = "plugin.id", version.ref = "version-ref" }
 - 2026-02-19：Session/Bridge 关键接口去默认参数（`agentId`、`listSessions(filter)`、`deleteSession(hardDelete)`），要求调用点显式传参，降低隐式语义分支。
 - 2026-02-19：删除纯转发层 `SessionAwareAgentFactoryProvider` 与 `WebToolsProvider`，直接在组合根和 `MainViewModel` 装配 `SessionAwareAgentFactory` 与 `WebTools`。
 - 2026-02-19：OpenAI provider/auth-mode 常量在 `kode-core`/`app` 统一引用 `kode-config-api` 常量，减少跨模块硬编码漂移。
-- 2026-02-19：`agent-api-test` 默认执行离线确定性校验；需要设置 `KODE_AGENT_API_TEST_ENABLE_LIVE=true` 才运行 Anthropic live 链路。
-- 2026-02-19：新增内置 `test-deterministic` provider（`provider-builtin`）用于测试链路；基于 Koog mock executor，`execute` 固定返回 deterministic tool-call，避免 tool-only 协议下 assistant 文本违规，供 `agent-api-test` 稳定复现 continue/no-pending 路径。
-- 2026-02-19：模块收纳调整：脚本相关模块合并到 `:tools:kotlin-script-tool`（整合原根模块 `:scripting-tool` 与工具模块脚本能力）；工具模块统一为 `:tools:{communication,kotlin-script,shell,task,think,todo,web}-tool`；配置与 UI 模块分别收纳为 `:config:{api,core,fs,legacy}` 与 `:ui:{core,components,bridge}`（通过 `projectDir` 映射保留现有目录）。
+- 2026-02-19：测试链路默认执行离线确定性校验；需要设置 `KODE_AGENT_API_TEST_ENABLE_LIVE=true` 才运行 Anthropic live 链路。
+- 2026-02-19：新增内置 `test-deterministic` provider（`provider-builtin`）用于测试链路；基于 Koog mock executor，`execute` 固定返回 deterministic tool-call，避免 tool-only 协议下 assistant 文本违规，稳定复现 continue/no-pending 路径。
+- 2026-02-19：模块收纳调整（历史）：脚本能力并入 `:tools:kotlin-script-tool`，配置与 UI 模块收纳为 `:config:{api,core,fs,legacy}` 与 `:ui:{core,components,bridge}`（通过 `projectDir` 映射保留目录）；该条现状已由 2026-02-25 硬切决策覆盖。
 - 2026-02-19：Session 存储改为 `sessions/<id>/meta.json + agents/<agentId>/{meta.json,messages/<seq>.json}`；会话加载仅按 agent `activeStartSeq..nextSeq` 读取活跃窗口，UI 继续只消费 `SessionUiState.messages`；本阶段停用自动 checkpoint 落盘。
 - 2026-02-19：会话消息模型硬切为仅两种 `AgentMessage`：`UserMessage` 与 `AgentScript`，并在两者上强制携带 `koogMessages` 原始协议消息列表；LLM 请求历史统一由 `SessionUiState.messages -> koogMessages` 还原，不再依赖 metadata 反推。
 - 2026-02-19：会话存储执行无兼容硬切：`FileSessionStorage` 引入 schema 版本门禁，版本变更时直接清空历史 `sessions` 与 `session-meta.csv`，不做旧消息格式迁移。
@@ -140,6 +139,8 @@ plugin-name = { id = "plugin.id", version.ref = "version-ref" }
 - 2026-02-19：会话命名统一：`ConversationSession -> SessionSnapshot`（序列化 DTO），`Session -> SessionState`（运行态聚合根），原 `SessionState` 枚举重命名为 `SessionRunState`。
 - 2026-02-19：移除未使用会话二级快照模型 `SessionDataSnapshot/AgentSnapshot/SubAgentSnapshot`，避免与 `SessionSnapshot` 边界重复。
 - 2026-02-20：会话编排继续下沉到 `SessionManager`：新增 `createConversationSession` / `prepareConversationContinuation` / `updateSessionWorkDir`，由 session/core 统一处理创建、continue 输入插入合法性与工作目录更新；`MainViewModel` 仅保留 UI 输入归一化与展示状态。
+- 2026-02-24：ACP 保持显式禁用语义（`startAcpServer/stopAcpServer` 均仅提示 disabled），并移除 `MainViewModel` 内不可达 ACP support/session 实现与无调用点 MCP registry helper，保留 `runMcpTest` 健康/测试链路。
+- 2026-02-25：Legacy pruning 硬切：移除已弃用工具模块，模块图以 `settings.gradle.kts` 为准；保留受保护表面 `:tools:web-tool`，并维持现行运行时兼容表面（strict script-only、`ToolNames` 单一事实源、legacy alias 仅历史语义不得回流）。
 
 ## Critical Interaction Contract
 
@@ -161,3 +162,5 @@ plugin-name = { id = "plugin.id", version.ref = "version-ref" }
 - Session persistence contract: persist `UserMessage`/`AgentScript` only, and each message must include `koogMessages` raw payload; do not persist synthetic/fallback assistant text.
 - Session aggregate contract: `SessionState` 是会话唯一写入口；状态迁移必须遵循“合法性校验 -> 状态更新 -> 持久化提交 -> 状态发布”的顺序。
 - Snapshot boundary contract: `SessionSnapshot` 只作为持久化/导入导出 DTO；运行态逻辑与 UI 订阅以 `SessionState` 为准，不允许用 snapshot 反推临时运行字段。
+- Continue gate contract: `continueCurrentSession()` 仅作为 `continueFromInput("")` 入口别名；空输入/非空输入/程序化 continue 必须统一先过 `prepareConversationContinuation` legality gate，再进入 runtime resume。
+- Legacy surface contract: `await_user_input`/`wait_for_user_input`/`spawn_subagent` 等旧别名与多工具模式叙事仅可作为历史背景，不得作为当前实现或迁移目标。

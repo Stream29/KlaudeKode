@@ -17,7 +17,6 @@ val javafxVersion: String = libs.versions.javafx.get()
 
 plugins {
     id("kotlin-jvm")
-    alias(libs.plugins.kotlinPluginSerialization)
     alias(libs.plugins.kotlinPluginCompose)
     alias(libs.plugins.composeMultiplatform)
 }
@@ -39,7 +38,7 @@ dependencies {
     implementation(libs.bundles.serialization)
     implementation("org.jetbrains.compose.desktop:$composeDesktopCurrentOs:${libs.versions.compose.get()}")
     implementation("org.jetbrains.compose.material3:material3:${libs.versions.compose.get()}")
-    implementation("org.jetbrains.compose.material:material-icons-extended:1.7.3")
+    implementation(libs.jetbrainsComposeMaterialIconsExtended)
     implementation(libs.markdownRendererM3)
     implementation("org.openjfx:javafx-base:$javafxVersion:$javafxPlatform")
     implementation("org.openjfx:javafx-graphics:$javafxVersion:$javafxPlatform")

@@ -7,7 +7,6 @@ import io.github.stream29.kode.session.core.model.SCRIPT_TOOL_ARGS_METADATA_KEY
 import io.github.stream29.kode.session.core.model.SCRIPT_TOOL_NAME_METADATA_KEY
 import io.github.stream29.kode.session.core.model.SessionMessage
 import io.github.stream29.kode.session.core.model.UserMessage
-import io.github.stream29.kode.session.core.tool.ToolNames
 import kotlin.reflect.KClass
 
 private enum class UiRole {
@@ -105,10 +104,6 @@ public fun SessionMessage.uiDisplayContent(): String {
                 AgentScriptStatus.COMPLETED -> {
                     when {
                         outputList.isNotEmpty() -> outputText
-                        isSayToUserToolCall() || isUserInterruptTool() -> {
-                            (scriptReturnValue ?: scriptStdout).orEmpty()
-                        }
-
                         else -> (scriptReturnValue ?: scriptStdout).orEmpty()
                     }
                 }
@@ -141,30 +136,6 @@ public fun SessionMessage.extractToolCallId(): String? {
         is AgentScript -> scriptId
         else -> null
     }
-}
-
-public fun SessionMessage.isSayToUserToolCall(): Boolean {
-    return extractToolName() == ToolNames.SAY_TO_USER
-}
-
-public fun SessionMessage.isSayToUserToolResult(): Boolean {
-    return this is AgentScript && extractToolName() == ToolNames.SAY_TO_USER
-}
-
-public fun SessionMessage.isAwaitUserInputToolCall(): Boolean {
-    return this is AgentScript &&
-            status == AgentScriptStatus.PENDING_INPUT &&
-            extractToolName() == ToolNames.WAIT_FOR_USER_INPUT
-}
-
-public fun SessionMessage.isAwaitUserInputToolResult(): Boolean {
-    return this is AgentScript &&
-            status != AgentScriptStatus.PENDING_INPUT &&
-            extractToolName() == ToolNames.WAIT_FOR_USER_INPUT
-}
-
-public fun SessionMessage.isUserInterruptTool(): Boolean {
-    return extractToolName() == ToolNames.USER_INTERRUPT
 }
 
 public fun SessionMessage.extractToolCallPrimaryTextArg(): String? {
@@ -264,10 +235,6 @@ private fun resolveUiRole(message: SessionMessage): UiRole {
                 UiRole.ASSISTANT
             } else if (message.outputList.isNotEmpty()) {
                 UiRole.ASSISTANT
-            } else if (message.isSayToUserToolCall()) {
-                UiRole.ASSISTANT
-            } else if (message.isUserInterruptTool()) {
-                UiRole.USER
             } else {
                 UiRole.TOOL
             }

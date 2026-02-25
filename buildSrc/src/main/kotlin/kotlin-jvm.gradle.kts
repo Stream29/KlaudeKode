@@ -5,11 +5,12 @@ import org.gradle.api.tasks.testing.logging.TestLogEvent
 plugins {
     // Apply the Kotlin JVM plugin to add support for Kotlin in JVM projects.
     kotlin("jvm")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 kotlin {
     // Use a specific Java version to make it easier to work in different environments.
-    jvmToolchain(21)
+    jvmToolchain(25)
     explicitApi()
     compilerOptions {
         allWarningsAsErrors.set(true)
