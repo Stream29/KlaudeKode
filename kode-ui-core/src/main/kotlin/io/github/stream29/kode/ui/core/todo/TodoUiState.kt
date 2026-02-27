@@ -1,9 +1,9 @@
 package io.github.stream29.kode.ui.core.todo
 
-import io.github.stream29.kode.session.core.model.TodoNode
-
 public data class TodoUiNode(
-    val node: TodoNode,
+    val name: String,
+    val isCompleted: Boolean,
+    val subtasks: List<TodoUiNode>,
     val path: String,
     val expanded: Boolean,
     val level: Int,

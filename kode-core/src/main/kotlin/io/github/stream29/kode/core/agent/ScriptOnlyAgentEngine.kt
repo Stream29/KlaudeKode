@@ -16,6 +16,9 @@ import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.tool.ToolNames
 import io.github.stream29.kode.tools.scripting.DefaultScriptContext
 import io.github.stream29.kode.tools.scripting.KotlinScriptTool
+import io.github.stream29.kode.session.core.model.TodoNode
+import io.github.stream29.kode.session.core.todo.generateTodoGuidelineInjection
+
 import io.github.stream29.kode.tools.scripting.ScriptContext
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
@@ -27,6 +30,12 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlin.reflect.KProperty1
+import kotlin.reflect.full.memberProperties
+import kotlin.reflect.full.functions
+import kotlin.reflect.full.callSuspend
+import kotlin.reflect.jvm.isAccessible
+
 import kotlin.time.Clock
 
 internal class ScriptOnlyAgentEngine(
@@ -71,6 +80,8 @@ internal class ScriptOnlyAgentEngine(
         val isError: Boolean,
         val errorMessage: String?,
         val awaitForUserInput: Boolean,
+        val todoChanged: Boolean,
+        val latestTodos: List<TodoNode>,
         val outputList: List<String>,
     )
 
@@ -141,6 +152,28 @@ internal class ScriptOnlyAgentEngine(
         return params.copy(additionalProperties = mergedAdditionalProperties)
     }
 
+    private suspend fun resolveCurrentTodos(sessionId: String): List<TodoNode> {
+        val agentId = runtimeContext.agentId ?: return emptyList()
+        return sessionManager.getAgentTodo(sessionId, agentId)
+    }
+
+    private suspend fun buildSystemPromptWithTodoInjection(
+        sessionId: String,
+    ): String {
+        val baseSystemPrompt = sessionSideEffectPort.resolveSystemPrompt(
+            sessionId = sessionId,
+            agentId = runtimeContext.agentId,
+            fallback = defaultSystemPrompt,
+        )
+        val todoGuideline = generateTodoGuidelineInjection()
+        return """
+            $baseSystemPrompt
+            
+            $todoGuideline
+        """.trimIndent()
+    }
+
+
     private suspend fun executeWithTools(
         sessionId: String,
         systemPrompt: String,
@@ -164,10 +197,15 @@ internal class ScriptOnlyAgentEngine(
                 allMessages = refreshedMessages.toMutableList()
             }
 
+            val currentTodos = resolveCurrentTodos(sessionId = sessionId)
+            val currentSystemPrompt = buildSystemPromptWithTodoInjection(
+                sessionId = sessionId,
+            )
+
             val currentPrompt = buildPrompt(
                 sessionId = sessionId,
                 iteration = iteration,
-                systemPrompt = systemPrompt,
+                systemPrompt = currentSystemPrompt,
                 messages = allMessages,
                 modelParams = modelParams,
             )
@@ -189,7 +227,11 @@ internal class ScriptOnlyAgentEngine(
                             throw SafeStopSignal()
                         }
                         allMessages.add(response)
-                        val toolResult = executeToolCall(sessionId, response)
+                        val toolResult = executeToolCall(
+                            sessionId = sessionId,
+                            toolCall = response,
+                            initialTodos = resolveCurrentTodos(sessionId = sessionId),
+                        )
                         allMessages.add(toolResult)
                         if (runtimeSideEffectPort.isSafeStopRequested(sessionId)) {
                             runtimeSideEffectPort.onSafeStopReached(sessionId)
@@ -244,7 +286,8 @@ internal class ScriptOnlyAgentEngine(
 
     private suspend fun executeToolCall(
         sessionId: String,
-        toolCall: Message.Tool.Call
+        toolCall: Message.Tool.Call,
+        initialTodos: List<TodoNode>,
     ): Message.Tool.Result {
         val resolvedCall = resolveToolCall(toolCall)
 
@@ -277,7 +320,7 @@ internal class ScriptOnlyAgentEngine(
             arguments = finalArgs,
         )
 
-        val execution = executeScriptTool(toolArgs = finalArgs)
+        val execution = executeScriptTool(toolArgs = finalArgs, initialTodos = initialTodos)
 
         val processedResult = toolSideEffectPort.applyToolCallAfterHooks(
             sessionId = sessionId,
@@ -315,6 +358,16 @@ internal class ScriptOnlyAgentEngine(
                 sessionId = sessionId,
                 message = errorMessage ?: processedResult,
             )
+        }
+        if (execution.todoChanged) {
+            val agentId = runtimeContext.agentId
+            if (agentId != null) {
+                sessionManager.updateAgentTodo(
+                    sessionId = sessionId,
+                    agentId = agentId,
+                    todos = execution.latestTodos
+                )
+            }
         }
 
         if (execution.awaitForUserInput) {
@@ -445,9 +498,19 @@ internal class ScriptOnlyAgentEngine(
         )
     }
 
-    private suspend fun executeScriptTool(toolArgs: String): ToolExecutionOutcome {
-        val scriptContext = scriptContextFactory()
+    private suspend fun executeScriptTool(
+        toolArgs: String,
+        initialTodos: List<TodoNode>,
+    ): ToolExecutionOutcome {
+        val scriptContext = if (initialTodos.isEmpty()) {
+            scriptContextFactory()
+        } else {
+            DefaultScriptContext(initialTodos = initialTodos)
+        }
         val tool = KotlinScriptTool(scriptContext = scriptContext)
+        val todoStateFlow = (scriptContext as? DefaultScriptContext)?.getTodoStateFlow()
+        val todoSnapshot = todoStateFlow?.value?.toList()
+        
         return try {
             val argsJson = runCatching { json.parseToJsonElement(toolArgs).jsonObject }
                 .getOrElse { parseError ->
@@ -457,6 +520,8 @@ internal class ScriptOnlyAgentEngine(
                         isError = true,
                         errorMessage = message,
                         awaitForUserInput = false,
+                        todoChanged = false,
+                        latestTodos = initialTodos,
                         outputList = scriptContext.consumeOutputList(),
                     )
                 }
@@ -468,24 +533,40 @@ internal class ScriptOnlyAgentEngine(
                         isError = true,
                         errorMessage = message,
                         awaitForUserInput = false,
+                        todoChanged = false,
+                        latestTodos = initialTodos,
                         outputList = scriptContext.consumeOutputList(),
                     )
                 }
             val result = tool.execute(args)
+            val currentTodos = todoStateFlow?.value ?: initialTodos
+            val todoChanged = todoStateFlow != null && todoSnapshot != todoStateFlow.value
+            
+            println("[DEBUG_LOG] todoSnapshot: $todoSnapshot")
+            println("[DEBUG_LOG] currentTodos: $currentTodos")
+            println("[DEBUG_LOG] todoChanged: $todoChanged")
+            
             ToolExecutionOutcome(
                 content = tool.encodeResultToString(result),
                 isError = false,
                 errorMessage = null,
                 awaitForUserInput = scriptContext.consumeAwaitForUserInputSignal(),
+                todoChanged = todoChanged,
+                latestTodos = currentTodos,
                 outputList = scriptContext.consumeOutputList(),
             )
         } catch (error: Exception) {
             val message = "Error executing tool ${ToolNames.EXECUTE_KOTLIN_SCRIPT}: ${error.message}"
+            val currentTodos = todoStateFlow?.value ?: initialTodos
+            val todoChanged = todoStateFlow != null && todoSnapshot != todoStateFlow.value
+            
             ToolExecutionOutcome(
                 content = message,
                 isError = true,
                 errorMessage = message,
                 awaitForUserInput = false,
+                todoChanged = todoChanged,
+                latestTodos = currentTodos,
                 outputList = scriptContext.consumeOutputList(),
             )
         }

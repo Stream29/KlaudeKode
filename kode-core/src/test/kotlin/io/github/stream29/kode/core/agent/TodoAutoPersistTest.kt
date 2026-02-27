@@ -28,6 +28,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+import io.github.stream29.kode.session.core.model.SessionMessage
+
 class TodoAutoPersistTest {
     @Test
     fun todoAddScriptAutoPersistsTodoJson() {
@@ -48,10 +50,19 @@ class TodoAutoPersistTest {
                     sessionManager = sessionManager,
                     sessionId = session.id,
                     script = """
-                        todoAdd(parentId = null, text = "todo from add script")
+                        updateTodoList(listOf(
+                            io.github.stream29.kode.session.core.model.TodoNode(
+                                name = "todo from add script",
+                                isCompleted = false,
+                                subtasks = emptyList()
+                            )
+                        ))
                         suspendForUserInput()
                     """.trimIndent(),
                 )
+                
+                val msgs = sessionManager.getAgentMessages(session.id, "main-${session.id}")
+                println("[DEBUG_LOG] messages: ${msgs.joinToString("\n")}")
 
                 val persistedTodos = readPersistedTodos(
                     dataDir = tempDir,
@@ -60,9 +71,9 @@ class TodoAutoPersistTest {
 
                 assertEquals(1, persistedTodos.size)
                 val todo = persistedTodos.single()
-                assertEquals("todo from add script", todo.text)
-                assertNull(todo.parentId)
-                assertFalse(todo.completed)
+                assertEquals("todo from add script", todo.name)
+                assertEquals(0, todo.subtasks.size)
+                assertFalse(todo.isCompleted)
             } finally {
                 tempDir.toFile().deleteRecursively()
             }
@@ -88,7 +99,13 @@ class TodoAutoPersistTest {
                     sessionManager = sessionManager,
                     sessionId = session.id,
                     script = """
-                        todoAdd(parentId = null, text = "todo before update")
+                        updateTodoList(listOf(
+                            io.github.stream29.kode.session.core.model.TodoNode(
+                                name = "todo before update",
+                                isCompleted = false,
+                                subtasks = emptyList()
+                            )
+                        ))
                         suspendForUserInput()
                     """.trimIndent(),
                 )
@@ -97,13 +114,19 @@ class TodoAutoPersistTest {
                     dataDir = tempDir,
                     sessionId = session.id,
                 )
-                val todoId = initialTodos.single().id
+                assertEquals(1, initialTodos.size)
 
                 runSingleScript(
                     sessionManager = sessionManager,
                     sessionId = session.id,
                     script = """
-                        todoUpdate(id = "$todoId", text = "todo after update", newChildren = null)
+                        updateTodoList(listOf(
+                            io.github.stream29.kode.session.core.model.TodoNode(
+                                name = "todo after update",
+                                isCompleted = true,
+                                subtasks = emptyList()
+                            )
+                        ))
                         suspendForUserInput()
                     """.trimIndent(),
                 )
@@ -112,10 +135,11 @@ class TodoAutoPersistTest {
                     dataDir = tempDir,
                     sessionId = session.id,
                 )
-                val updatedTodo = persistedTodos.single { node -> node.id == todoId }
+                val updatedTodo = persistedTodos.single { node -> node.name == "todo after update" }
 
                 assertEquals(1, persistedTodos.size)
-                assertEquals("todo after update", updatedTodo.text)
+                assertEquals("todo after update", updatedTodo.name)
+                assertTrue(updatedTodo.isCompleted)
             } finally {
                 tempDir.toFile().deleteRecursively()
             }
@@ -142,7 +166,7 @@ class TodoAutoPersistTest {
             hookManager = HookManager.empty(),
             eventListener = null,
             logger = {},
-            runtimeContext = AgentRuntimeContext(),
+            runtimeContext = AgentRuntimeContext(agentId = "main-$sessionId"),
         )
 
         val result = withTimeout(timeMillis = 2_000L) {

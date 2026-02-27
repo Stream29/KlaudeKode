@@ -1052,6 +1052,27 @@ public class SessionManager(
 
     private fun <E> List<E>.toPersistentList() = persistentListOf<E>().addAll(this)
 
+    public suspend fun getAgentTodo(sessionId: String, agentId: String): List<io.github.stream29.kode.session.core.model.TodoNode> {
+        val state = getSessionState(sessionId)
+        if (state != null) {
+            val agent = resolveAgent(state, sessionId, agentId)
+            return agent.todoState.value
+        }
+        return repository.readAgentTodo(sessionId, agentId) ?: emptyList()
+    }
+
+    public suspend fun updateAgentTodo(sessionId: String, agentId: String, todos: List<io.github.stream29.kode.session.core.model.TodoNode>) {
+        val state = getSessionState(sessionId)
+        if (state != null) {
+            val agent = resolveAgent(state, sessionId, agentId)
+            agent.todoState.value = todos
+        }
+        repository.writeAgentTodo(sessionId, agentId, todos)
+        if (state != null) {
+            persist(state)
+        }
+    }
+
     private companion object {
         private const val SESSION_CONFIG_MODEL_ID_KEY: String = "preferred_model_id"
         private const val SUBAGENT_NOT_FOUND_ERROR: String = "Subagent not found"

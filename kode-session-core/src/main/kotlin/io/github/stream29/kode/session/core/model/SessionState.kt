@@ -134,6 +134,7 @@ public data class Agent(
     val state: MutableStateFlow<AgentState>,
     val config: MutableStateFlow<AgentConfig>,
     val messages: MutableStateFlow<PersistentList<SessionMessage>>,
+    val todoState: MutableStateFlow<List<TodoNode>> = MutableStateFlow(emptyList()),
 )
 
 public data class SubAgent(

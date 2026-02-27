@@ -12,14 +12,14 @@ class TodoSidebarTest {
     fun openSidebarShowsRootTodoNode() {
         val state = TodoUiState(
             rootNodes = listOf(
-                createUiNode(
-                    id = "root",
-                    text = "Root task",
-                    completed = false,
-                    parentId = null,
+                TodoUiNode(
+                    name = "root",
+                    isCompleted = false,
+                    subtasks = emptyList(),
+                    path = "root",
                     expanded = false,
                     level = 0,
-                ),
+                )
             ),
             allExpanded = false,
         )
@@ -27,8 +27,8 @@ class TodoSidebarTest {
         val visibleNodes = buildVisibleNodes(todoState = state)
 
         assertEquals(1, visibleNodes.size)
-        assertEquals("root", visibleNodes.single().id)
-        assertEquals("Root task", visibleNodes.single().path)
+        assertEquals("root", visibleNodes.single().path)
+        assertEquals("root", visibleNodes.single().name)
     }
 
     @Test
@@ -39,9 +39,9 @@ class TodoSidebarTest {
         val collapsedVisibleNodes = buildVisibleNodes(todoState = collapsedState)
         val expandedVisibleNodes = buildVisibleNodes(todoState = expandedState)
 
-        assertEquals(listOf("root"), collapsedVisibleNodes.map { node -> node.id })
-        assertEquals(listOf("root", "child"), expandedVisibleNodes.map { node -> node.id })
-        assertTrue(expandedVisibleNodes.first().hasChildren)
+        assertEquals(listOf("root"), collapsedVisibleNodes.map { node -> node.path })
+        assertEquals(listOf("root", "root:child"), expandedVisibleNodes.map { node -> node.path })
+        assertTrue(expandedVisibleNodes.first().subtasks.isNotEmpty())
     }
 
     @Test
@@ -49,11 +49,11 @@ class TodoSidebarTest {
         val incompleteState = buildParentChildState(rootExpanded = true, childCompleted = false)
         val completedState = buildParentChildState(rootExpanded = true, childCompleted = true)
 
-        val incompleteChild = buildVisibleNodes(todoState = incompleteState).single { node -> node.id == "child" }
-        val completedChild = buildVisibleNodes(todoState = completedState).single { node -> node.id == "child" }
+        val incompleteChild = buildVisibleNodes(todoState = incompleteState).single { node -> node.path == "root:child" }
+        val completedChild = buildVisibleNodes(todoState = completedState).single { node -> node.path == "root:child" }
 
-        assertFalse(incompleteChild.completed)
-        assertTrue(completedChild.completed)
+        assertFalse(incompleteChild.isCompleted)
+        assertTrue(completedChild.isCompleted)
     }
 
     @Test
@@ -76,84 +76,32 @@ class TodoSidebarTest {
     private fun buildParentChildState(rootExpanded: Boolean, childCompleted: Boolean): TodoUiState {
         return TodoUiState(
             rootNodes = listOf(
-                createUiNode(
-                    id = "root",
-                    text = "Root task",
-                    completed = false,
-                    parentId = null,
+                TodoUiNode(
+                    name = "root",
+                    isCompleted = false,
+                    subtasks = listOf(
+                        TodoUiNode(
+                            name = "child",
+                            isCompleted = childCompleted,
+                            subtasks = emptyList(),
+                            path = "root:child",
+                            expanded = false,
+                            level = 1,
+                        )
+                    ),
+                    path = "root",
                     expanded = rootExpanded,
                     level = 0,
-                ),
-                createUiNode(
-                    id = "child",
-                    text = "Root task:Child task",
-                    completed = childCompleted,
-                    parentId = "root",
-                    expanded = false,
-                    level = 1,
-                ),
+                )
             ),
             allExpanded = false,
         )
     }
 
-    private fun createUiNode(
-        id: String,
-        text: String,
-        completed: Boolean,
-        parentId: String?,
-        expanded: Boolean,
-        level: Int,
-    ): TodoUiNode {
-        return TodoUiNode(
-            node = FakeTodoNode(
-                id = id,
-                text = text,
-                completed = completed,
-                parentId = parentId,
-            ),
-            path = text,
-            expanded = expanded,
-            level = level,
-        )
-    }
-
     @Suppress("UNCHECKED_CAST")
-    private fun buildVisibleNodes(todoState: TodoUiState): List<RenderedNodeSnapshot> {
-        val rawVisibleNodes = BUILD_VISIBLE_NODES_METHOD.invoke(null, todoState.rootNodes) as List<Any>
-        return rawVisibleNodes.map { node ->
-            RenderedNodeSnapshot(
-                id = node.invokeGetter(methodName = "getId") as String,
-                path = node.invokeGetter(methodName = "getPath") as String,
-                completed = node.invokeGetter(methodName = "getCompleted") as Boolean,
-                expanded = node.invokeGetter(methodName = "getExpanded") as Boolean,
-                level = node.invokeGetter(methodName = "getLevel") as Int,
-                hasChildren = node.invokeGetter(methodName = "getHasChildren") as Boolean,
-            )
-        }
+    private fun buildVisibleNodes(todoState: TodoUiState): List<TodoUiNode> {
+        return BUILD_VISIBLE_NODES_METHOD.invoke(null, todoState.rootNodes) as List<TodoUiNode>
     }
-
-    private fun Any.invokeGetter(methodName: String): Any? {
-        val method = this.javaClass.getDeclaredMethod(methodName)
-        method.isAccessible = true
-        return method.invoke(this)
-    }
-
-    internal data class FakeTodoNode(
-        val id: String,
-        val text: String,
-        val completed: Boolean,
-        val parentId: String?,
-    )
-
-    private data class RenderedNodeSnapshot(
-        val id: String,
-        val path: String,
-        val completed: Boolean,
-        val expanded: Boolean,
-        val level: Int,
-        val hasChildren: Boolean,
-    )
 
     private companion object {
         private val BUILD_VISIBLE_NODES_METHOD = Class

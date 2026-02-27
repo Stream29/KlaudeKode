@@ -34,6 +34,7 @@ import androidx.navigation3.scene.DialogSceneStrategy
 import androidx.navigation3.ui.NavDisplay
 import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
 import io.github.stream29.kode.ui.components.todo.TodoSidebar
+import io.github.stream29.kode.ui.core.todo.TodoUiNode as CoreTodoUiNode
 import io.github.stream29.kode.ui.components.todo.TodoUiNode as SidebarTodoUiNode
 import io.github.stream29.kode.ui.components.todo.TodoUiState as SidebarTodoUiState
 import io.github.stream29.kode.ui.core.todo.TodoUiState as CoreTodoUiState
@@ -1309,15 +1310,19 @@ private data class ToolItem(
 )
 
 private fun CoreTodoUiState.toSidebarTodoUiState(): SidebarTodoUiState {
+    fun mapNode(coreNode: CoreTodoUiNode): SidebarTodoUiNode {
+        return SidebarTodoUiNode(
+            name = coreNode.name,
+            isCompleted = coreNode.isCompleted,
+            subtasks = coreNode.subtasks.map { mapNode(it) },
+            path = coreNode.path,
+            expanded = coreNode.expanded,
+            level = coreNode.level,
+        )
+    }
+
     return SidebarTodoUiState(
-        rootNodes = rootNodes.map { node ->
-            SidebarTodoUiNode(
-                node = node.node,
-                path = node.path,
-                expanded = node.expanded,
-                level = node.level,
-            )
-        },
+        rootNodes = rootNodes.map { node -> mapNode(node) },
         allExpanded = allExpanded,
     )
 }

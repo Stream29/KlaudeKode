@@ -28,10 +28,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 
-public typealias TodoNode = Any
-
 public data class TodoUiNode(
-    val node: TodoNode,
+    val name: String,
+    val isCompleted: Boolean,
+    val subtasks: List<TodoUiNode>,
     val path: String,
     val expanded: Boolean,
     val level: Int,
@@ -70,7 +70,7 @@ public fun TodoSidebar(
         } else {
             items(
                 items = visibleNodes,
-                key = { node -> node.id },
+                key = { node -> node.path },
             ) { node ->
                 TodoSidebarNodeRow(
                     node = node,
@@ -84,7 +84,7 @@ public fun TodoSidebar(
 
 @Composable
 private fun TodoSidebarNodeRow(
-    node: RenderTodoNode,
+    node: TodoUiNode,
     onToggleExpand: (String) -> Unit,
     onToggleComplete: (String) -> Unit,
 ) {
@@ -97,9 +97,9 @@ private fun TodoSidebarNodeRow(
     ) {
         Spacer(modifier = Modifier.width((node.level * 16).dp))
 
-        if (node.hasChildren) {
+        if (node.subtasks.isNotEmpty()) {
             IconButton(
-                onClick = { onToggleExpand(node.id) },
+                onClick = { onToggleExpand(node.path) },
             ) {
                 Icon(
                     imageVector = if (node.expanded) {
@@ -116,19 +116,19 @@ private fun TodoSidebarNodeRow(
         }
 
         Checkbox(
-            checked = node.completed,
-            onCheckedChange = { onToggleComplete(node.id) },
+            checked = node.isCompleted,
+            onCheckedChange = { onToggleComplete(node.path) },
         )
 
         Text(
-            text = node.path,
+            text = node.name.ifBlank { node.path.ifBlank { "Todo" } },
             style = MaterialTheme.typography.bodyMedium,
-            color = if (node.completed) {
+            color = if (node.isCompleted) {
                 MaterialTheme.colorScheme.onSurfaceVariant
             } else {
                 MaterialTheme.colorScheme.onSurface
             },
-            textDecoration = if (node.completed) TextDecoration.LineThrough else null,
+            textDecoration = if (node.isCompleted) TextDecoration.LineThrough else null,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(start = 4.dp, end = 8.dp),
@@ -137,154 +137,21 @@ private fun TodoSidebarNodeRow(
     }
 }
 
-private data class SidebarTodoNode(
-    val id: String,
-    val path: String,
-    val completed: Boolean,
-    val parentId: String?,
-    val expanded: Boolean,
-    val level: Int,
-    val originalIndex: Int,
-)
+private fun buildVisibleNodes(rootNodes: List<TodoUiNode>): List<TodoUiNode> {
+    val visibleNodes = mutableListOf<TodoUiNode>()
 
-private data class RenderTodoNode(
-    val id: String,
-    val path: String,
-    val completed: Boolean,
-    val expanded: Boolean,
-    val level: Int,
-    val hasChildren: Boolean,
-)
-
-private fun buildVisibleNodes(rootNodes: List<TodoUiNode>): List<RenderTodoNode> {
-    if (rootNodes.isEmpty()) {
-        return emptyList()
-    }
-
-    val usedIds = mutableSetOf<String>()
-    val sidebarNodes = rootNodes.mapIndexed { index, uiNode ->
-        toSidebarNode(uiNode = uiNode, index = index, usedIds = usedIds)
-    }
-    val nodeById = sidebarNodes.associateBy { node -> node.id }
-    val childrenByParent = sidebarNodes
-        .groupBy { node ->
-            val parentId = node.parentId
-            if (parentId != null && nodeById[parentId] == null) {
-                null
-            } else {
-                parentId
+    fun appendNode(node: TodoUiNode) {
+        visibleNodes += node
+        if (node.expanded) {
+            node.subtasks.forEach { child ->
+                appendNode(child)
             }
         }
-        .mapValues { entry ->
-            entry.value.sortedBy { node -> node.originalIndex }
-        }
-
-    val roots = childrenByParent[null].orEmpty().ifEmpty {
-        sidebarNodes.sortedBy { node -> node.originalIndex }
-    }
-    val visibleNodes = mutableListOf<RenderTodoNode>()
-    val visited = mutableSetOf<String>()
-
-    fun appendNode(node: SidebarTodoNode, inheritedLevel: Int) {
-        if (!visited.add(node.id)) {
-            return
-        }
-
-        val children = childrenByParent[node.id].orEmpty()
-        val currentLevel = max(node.level, inheritedLevel)
-        visibleNodes += RenderTodoNode(
-            id = node.id,
-            path = node.path,
-            completed = node.completed,
-            expanded = node.expanded,
-            level = currentLevel,
-            hasChildren = children.isNotEmpty(),
-        )
-
-        if (!node.expanded) {
-            return
-        }
-
-        children.forEach { child ->
-            appendNode(node = child, inheritedLevel = currentLevel + 1)
-        }
     }
 
-    roots.forEach { root ->
-        appendNode(node = root, inheritedLevel = root.level)
+    rootNodes.forEach { rootNode ->
+        appendNode(rootNode)
     }
-
 
     return visibleNodes
-}
-
-private fun toSidebarNode(
-    uiNode: TodoUiNode,
-    index: Int,
-    usedIds: MutableSet<String>,
-): SidebarTodoNode {
-    val node = uiNode.node
-    val rawId = resolveStringMethod(node = node, methodName = "getId").ifBlank { "todo-$index" }
-    val uniqueId = ensureUniqueId(rawId = rawId, index = index, usedIds = usedIds)
-    val fallbackPath = resolveStringMethod(node = node, methodName = "getText").ifBlank { uniqueId }
-
-    return SidebarTodoNode(
-        id = uniqueId,
-        path = normalizePath(path = uiNode.path, fallback = fallbackPath),
-        completed = resolveCompleted(node = node),
-        parentId = resolveParentId(node = node),
-        expanded = uiNode.expanded,
-        level = uiNode.level,
-        originalIndex = index,
-    )
-}
-
-private fun normalizePath(path: String, fallback: String): String {
-    val normalized = path.split(':')
-        .map { segment -> segment.trim() }
-        .filter { segment -> segment.isNotEmpty() }
-        .joinToString(separator = ":")
-
-    return if (normalized.isNotEmpty()) {
-        normalized
-    } else {
-        fallback
-    }
-}
-
-private fun ensureUniqueId(
-    rawId: String,
-    index: Int,
-    usedIds: MutableSet<String>,
-): String {
-    if (usedIds.add(rawId)) {
-        return rawId
-    }
-
-    var suffix = 1
-    while (true) {
-        val candidateId = "$rawId-$index-$suffix"
-        if (usedIds.add(candidateId)) {
-            return candidateId
-        }
-        suffix += 1
-    }
-}
-
-private fun resolveStringMethod(node: Any, methodName: String): String {
-    return runCatching {
-        node.javaClass.getMethod(methodName).invoke(node) as? String
-    }.getOrNull().orEmpty().trim()
-}
-
-private fun resolveParentId(node: Any): String? {
-    return runCatching {
-        node.javaClass.getMethod("getParentId").invoke(node) as? String
-    }.getOrNull()?.trim()?.takeIf { value -> value.isNotEmpty() }
-}
-
-private fun resolveCompleted(node: Any): Boolean {
-    return runCatching {
-        node.javaClass.getMethod("getCompleted").invoke(node) as? Boolean
-    }.getOrNull() == true
 }

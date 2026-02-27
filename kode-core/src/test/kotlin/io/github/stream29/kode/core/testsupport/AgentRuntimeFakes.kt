@@ -5,6 +5,7 @@ import io.github.stream29.kode.session.core.model.SessionMetadata
 import io.github.stream29.kode.session.core.model.SessionState
 import io.github.stream29.kode.session.core.model.toSessionSnapshot
 import io.github.stream29.kode.session.core.model.toSessionState
+import io.github.stream29.kode.session.core.model.TodoNode
 import io.github.stream29.kode.ui.core.MessageHandler
 
 internal open class FakeMessageHandler : MessageHandler {
@@ -29,6 +30,7 @@ internal open class FakeMessageHandler : MessageHandler {
 
 internal class FakeSessionRepository : SessionRepository {
     private val sessions: LinkedHashMap<String, SessionState> = linkedMapOf()
+    private val agentTodos: LinkedHashMap<String, List<TodoNode>> = linkedMapOf()
 
     override suspend fun listSessions(): List<SessionMetadata> {
         return sessions.values.map { session ->
@@ -49,5 +51,13 @@ internal class FakeSessionRepository : SessionRepository {
 
     override suspend fun removeSession(id: String) {
         sessions.remove(id)
+    }
+
+    override suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoNode>? {
+        return agentTodos["$sessionId:$agentId"]
+    }
+
+    override suspend fun writeAgentTodo(sessionId: String, agentId: String, todos: List<TodoNode>) {
+        agentTodos["$sessionId:$agentId"] = todos
     }
 }

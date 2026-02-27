@@ -68,6 +68,8 @@ import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.AgentState
 import io.github.stream29.kode.ui.core.MessageHandler
+import io.github.stream29.kode.ui.core.todo.TodoUiNode
+import io.github.stream29.kode.ui.core.todo.TodoUiState
 import io.github.stream29.kode.tools.scripting.KotlinScriptResult
 import io.github.stream29.kode.tools.scripting.DefaultScriptContext
 import io.github.stream29.kode.tools.scripting.evalInThreadCancellable
@@ -1265,6 +1267,12 @@ public class MainViewModel(
         continueFromInput(input = "")
     }
 
+    public fun toggleTodoExpand(id: String) {
+        if (id.isBlank()) {
+            return
+        }
+    }
+
     private fun resumeCurrentSessionRuntime() {
         val sessionId = currentSessionId
         if (sessionId == null) {
@@ -2047,6 +2055,20 @@ public class MainViewModel(
         sessionBindingJob = viewModelScope.launch(Dispatchers.IO) {
             val runtime = sessionManager.getSessionState(sessionId) ?: return@launch
             val mainMessagesFlow = runtime.agent.value.messages
+            val mainTodoStateFlow = runtime.agent.value.todoState
+
+            launch {
+                mainTodoStateFlow.collect { todoNodes ->
+                    withContext(Dispatchers.Main) {
+                        if (currentSessionId != sessionId) {
+                            return@withContext
+                        }
+                        updateSessionUiState { current ->
+                            current.copy(todoState = toTodoUiState(todoNodes, current.todoState))
+                        }
+                    }
+                }
+            }
 
             combine(
                 runtime.metadata,
@@ -2078,6 +2100,54 @@ public class MainViewModel(
                 }
             }
         }
+    }
+
+    private fun toTodoUiState(
+        todoNodes: List<io.github.stream29.kode.session.core.model.TodoNode>,
+        oldUiState: TodoUiState? = null,
+    ): TodoUiState {
+        if (todoNodes.isEmpty()) {
+            return emptyTodoUiState()
+        }
+
+        val expandedPaths = mutableSetOf<String>()
+        if (oldUiState != null) {
+            fun collectExpanded(nodes: List<TodoUiNode>) {
+                for (node in nodes) {
+                    if (node.expanded) {
+                        expandedPaths.add(node.path)
+                    }
+                    collectExpanded(node.subtasks)
+                }
+            }
+            collectExpanded(oldUiState.rootNodes)
+        }
+
+        fun mapNode(node: io.github.stream29.kode.session.core.model.TodoNode, pathPrefix: String, level: Int): TodoUiNode {
+            val currentPath = if (pathPrefix.isEmpty()) node.name else "$pathPrefix:${node.name}"
+            return TodoUiNode(
+                name = node.name,
+                isCompleted = node.isCompleted,
+                subtasks = node.subtasks.map { mapNode(it, currentPath, level + 1) },
+                path = currentPath,
+                expanded = if (oldUiState != null) expandedPaths.contains(currentPath) else false,
+                level = level,
+            )
+        }
+
+        return TodoUiState(
+            rootNodes = todoNodes.map { node ->
+                mapNode(node, "", 0)
+            },
+            allExpanded = oldUiState?.allExpanded ?: false,
+        )
+    }
+
+    private fun emptyTodoUiState(): TodoUiState {
+        return TodoUiState(
+            rootNodes = emptyList(),
+            allExpanded = false,
+        )
     }
 
     private fun unbindSessionFlows(sessionId: String? = null) {
@@ -4226,6 +4296,7 @@ public data class SessionUiState(
     val isRunning: Boolean = false,
     val isWaitingForInput: Boolean = false,
     val currentTask: String = "",
+    val todoState: TodoUiState = TodoUiState(rootNodes = emptyList(), allExpanded = false),
     val isGeneratingSessionTitle: Boolean = false,
 )
 

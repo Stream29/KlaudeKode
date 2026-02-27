@@ -12,6 +12,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
+import io.github.stream29.kode.session.core.model.TodoNode
+
 class KotlinScriptToolTest {
     @Test
     fun consumeOutputList_returnsItemsInAppendOrderAndClearsBuffer() {
@@ -336,6 +338,9 @@ class KotlinScriptToolTest {
         override fun consumeAwaitForUserInputSignal(): Boolean {
             return delegate.consumeAwaitForUserInputSignal()
         }
+
+        override fun getTodoList() = delegate.getTodoList()
+        override fun updateTodoList(todos: List<TodoNode>) = delegate.updateTodoList(todos)
 
         @Suppress("unused")
         fun greet(name: String): String {

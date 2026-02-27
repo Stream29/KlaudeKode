@@ -18,6 +18,7 @@ import io.github.stream29.kode.session.core.model.SessionRunState
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.model.SubAgent
+import io.github.stream29.kode.session.core.model.TodoNode
 import io.github.stream29.kode.session.core.model.toSessionSnapshot
 import io.github.stream29.kode.session.core.model.toCsvRow
 import io.github.stream29.kode.session.core.model.toMetadata
@@ -92,6 +93,7 @@ public class FileSessionStorage(
                 val mainAgentMeta = storedAgentMetas
                     .firstOrNull { item -> item.kind == AgentKind.MAIN && item.agentId == mainAgentId }
                     ?: throw IllegalStateException("Main agent meta missing for session: $id")
+                val mainAgentTodo = readAgentTodo(sessionId = id, agentId = mainAgentMeta.agentId).orEmpty()
 
                 val mainAgentMessages = loadWindowMessages(
                     sessionId = id,
@@ -113,11 +115,13 @@ public class FileSessionStorage(
                     if (subMeta.completed) {
                         deferred.complete(subMeta.result.orEmpty())
                     }
+                    val subAgentTodo = readAgentTodo(sessionId = id, agentId = subMeta.agentId).orEmpty()
                     val subAgent = SubAgent(
                         delegate = Agent(
                             state = MutableStateFlow(normalizeAgentState(subMeta.state)),
                             config = MutableStateFlow(subMeta.config),
                             messages = MutableStateFlow(subMessages),
+                            todoState = MutableStateFlow(subAgentTodo),
                         ),
                         result = deferred,
                     )
@@ -144,6 +148,7 @@ public class FileSessionStorage(
                             state = MutableStateFlow(normalizeAgentState(mainAgentMeta.state)),
                             config = MutableStateFlow(mainAgentMeta.config),
                             messages = MutableStateFlow(mainAgentMessages),
+                            todoState = MutableStateFlow(mainAgentTodo),
                         )
                     ),
                     subagents = MutableStateFlow(subagentMap),
@@ -170,6 +175,7 @@ public class FileSessionStorage(
                     state = mainAgentValue.state.value,
                     config = mainAgentValue.config.value,
                     messages = mainAgentValue.messages.value,
+                    todos = mainAgentValue.todoState.value,
                     result = null,
                     completed = false,
                 )
@@ -189,6 +195,7 @@ public class FileSessionStorage(
                         state = subAgent.delegate.state.value,
                         config = subAgent.delegate.config.value,
                         messages = subAgent.delegate.messages.value,
+                        todos = subAgent.delegate.todoState.value,
                         result = resultText,
                         completed = completed,
                     )
@@ -294,6 +301,7 @@ public class FileSessionStorage(
         state: AgentState,
         config: AgentConfig,
         messages: List<SessionMessage>,
+        todos: List<TodoNode>,
         result: String?,
         completed: Boolean,
     ): AgentFileMeta {
@@ -327,6 +335,7 @@ public class FileSessionStorage(
         )
 
         writeAgentMeta(sessionId = sessionId, meta = reconciledMeta)
+        writeAgentTodoSync(sessionId = sessionId, agentId = agentId, todos = todos)
         return reconciledMeta
     }
 
@@ -565,11 +574,45 @@ public class FileSessionStorage(
         }
     }
 
+    override suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoNode>? = withContext(Dispatchers.IO) {
+        val file = getAgentTodoFile(sessionId = sessionId, agentId = agentId)
+        if (!file.isFile) {
+            return@withContext null
+        }
+        return@withContext try {
+            json.decodeFromString(
+                deserializer = ListSerializer(TodoNode.serializer()),
+                string = file.readText(),
+            )
+        } catch (error: Exception) {
+            throw IllegalStateException(
+                "Failed to decode agent todo: sessionId=$sessionId, agentId=$agentId",
+                error,
+            )
+        }
+    }
+
     private fun writeAgentMeta(sessionId: String, meta: AgentFileMeta) {
         val file = getAgentMetaFile(sessionId = sessionId, agentId = meta.agentId)
         file.parentFile?.mkdirs()
         file.writeText(
             text = json.encodeToString(AgentFileMeta.serializer(), meta),
+        )
+    }
+
+    override suspend fun writeAgentTodo(sessionId: String, agentId: String, todos: List<TodoNode>): Unit = withContext(Dispatchers.IO) {
+        writeAgentTodoSync(sessionId, agentId, todos)
+    }
+
+    private fun writeAgentTodoSync(sessionId: String, agentId: String, todos: List<TodoNode>) {
+        println("[DEBUG_LOG] writeAgentTodoSync for agentId=$agentId, todos size=${todos.size}")
+        val file = getAgentTodoFile(sessionId = sessionId, agentId = agentId)
+        file.parentFile?.mkdirs()
+        file.writeText(
+            text = json.encodeToString(
+                serializer = ListSerializer(TodoNode.serializer()),
+                value = todos,
+            ),
         )
     }
 
@@ -699,6 +742,10 @@ public class FileSessionStorage(
         return File(getAgentDirectory(sessionId, agentId), AGENT_META_FILE_NAME)
     }
 
+    private fun getAgentTodoFile(sessionId: String, agentId: String): File {
+        return File(getAgentDirectory(sessionId, agentId), AGENT_TODO_FILE_NAME)
+    }
+
     private fun getAgentMessagesDirectory(sessionId: String, agentId: String): File {
         return File(getAgentDirectory(sessionId, agentId), MESSAGES_DIR_NAME)
     }
@@ -744,10 +791,11 @@ public class FileSessionStorage(
 
     private companion object {
         private const val SESSION_SCHEMA_VERSION_FILE_NAME: String = "session-schema.version"
-        private const val SESSION_SCHEMA_VERSION: String = "5"
+        private const val SESSION_SCHEMA_VERSION: String = "6"
         private const val SESSION_META_FILE_NAME: String = "meta.json"
         private const val AGENTS_DIR_NAME: String = "agents"
         private const val AGENT_META_FILE_NAME: String = "meta.json"
+        private const val AGENT_TODO_FILE_NAME: String = "todo.json"
         private const val MESSAGES_DIR_NAME: String = "messages"
     }
 }

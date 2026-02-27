@@ -38,13 +38,13 @@ class FileSessionStorageFailFastTest {
                 assertTrue(sessionsDir.toFile().listFiles().orEmpty().isNotEmpty())
 
                 val schemaFile = tempDir.resolve("session-schema.version").toFile()
-                schemaFile.writeText("4")
+                schemaFile.writeText("5")
 
                 val reloaded = FileSessionStorage(dataDir = tempDir.toFile())
                 assertTrue(reloaded.listSessions().isEmpty())
                 assertTrue(sessionsDir.toFile().isDirectory)
                 assertTrue(sessionsDir.toFile().listFiles().orEmpty().isEmpty())
-                assertEquals("5", schemaFile.readText().trim())
+                assertEquals("6", schemaFile.readText().trim())
             } finally {
                 tempDir.toFile().deleteRecursively()
             }

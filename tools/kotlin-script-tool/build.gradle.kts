@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
     implementation(projects.ui.core)
+    implementation(projects.kodeSessionCore)
 
     implementation(libs.bundles.koog)
     implementation(libs.kotlinxCoroutinesCore)

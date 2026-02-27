@@ -28,6 +28,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+import io.github.stream29.kode.session.core.model.TodoNode
+
 class ScriptOnlyAgentEngineProtocolFailFastTest {
     @Test
     fun runFailsFastWhenAssistantTextAppearsInToolOnlyMode() {
@@ -263,6 +265,9 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
         override fun consumeAwaitForUserInputSignal(): Boolean {
             return delegate.consumeAwaitForUserInputSignal()
         }
+
+        override fun getTodoList(): List<TodoNode> = delegate.getTodoList()
+        override fun updateTodoList(todos: List<TodoNode>) = delegate.updateTodoList(todos)
 
         companion object {
             const val SYSTEM_PROMPT_INJECTION: String = "Prompt injection from PromptInjectionScriptContext"

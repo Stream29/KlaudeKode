@@ -14,12 +14,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+// import io.github.stream29.kode.ui.core.todo.TodoUiNode
 
 @Composable
 public fun TodoNodeItem(
@@ -27,15 +27,9 @@ public fun TodoNodeItem(
     onToggleExpand: () -> Unit,
     onToggleComplete: () -> Unit,
 ) {
-    val hasChildren = remember(node.node) {
-        resolveHasChildren(node = node.node)
-    }
-    val completed = remember(node.node) {
-        resolveCompleted(node = node.node)
-    }
-    val displayText = node.path.ifBlank {
-        resolveStringMethod(node = node.node, methodName = "getText").ifBlank { "Todo" }
-    }
+    val hasChildren = node.subtasks.isNotEmpty()
+    val completed = node.isCompleted
+    val displayText = node.name.ifBlank { "Todo" }
 
     Row(
         modifier = Modifier
@@ -84,45 +78,4 @@ public fun TodoNodeItem(
                 .padding(start = 4.dp, end = 8.dp),
         )
     }
-}
-
-private fun resolveHasChildren(node: Any): Boolean {
-    resolveBooleanMethod(node = node, methodName = "getHasChildren")?.let { hasChildren ->
-        return hasChildren
-    }
-    resolveBooleanMethod(node = node, methodName = "hasChildren")?.let { hasChildren ->
-        return hasChildren
-    }
-
-    val childrenValue = runCatching {
-        node.javaClass.getMethod("getChildren").invoke(node)
-    }.getOrNull()
-
-    return when (childrenValue) {
-        is Collection<*> -> childrenValue.isNotEmpty()
-        is Array<*> -> childrenValue.isNotEmpty()
-        else -> false
-    }
-}
-
-private fun resolveCompleted(node: Any): Boolean {
-    resolveBooleanMethod(node = node, methodName = "getCompleted")?.let { completed ->
-        return completed
-    }
-    resolveBooleanMethod(node = node, methodName = "isCompleted")?.let { completed ->
-        return completed
-    }
-    return false
-}
-
-private fun resolveBooleanMethod(node: Any, methodName: String): Boolean? {
-    return runCatching {
-        node.javaClass.getMethod(methodName).invoke(node) as? Boolean
-    }.getOrNull()
-}
-
-private fun resolveStringMethod(node: Any, methodName: String): String {
-    return runCatching {
-        node.javaClass.getMethod(methodName).invoke(node) as? String
-    }.getOrNull().orEmpty().trim()
 }
