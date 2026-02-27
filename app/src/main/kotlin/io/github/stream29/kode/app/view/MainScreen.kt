@@ -651,7 +651,10 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
                         .align(Alignment.Start)
                         .animateContentSize(),
                     shape = MaterialTheme.shapes.large,
-                    elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp)
+                    elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                    )
                 ) {
                     Column {
                         Row(
