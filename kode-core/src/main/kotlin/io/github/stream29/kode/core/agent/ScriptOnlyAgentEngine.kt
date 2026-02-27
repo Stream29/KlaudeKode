@@ -14,6 +14,7 @@ import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.tool.ToolNames
+import io.github.stream29.kode.tools.scripting.DefaultScriptContext
 import io.github.stream29.kode.tools.scripting.KotlinScriptTool
 import io.github.stream29.kode.tools.scripting.ScriptContext
 import io.github.stream29.kode.ui.core.AgentEvent
@@ -37,6 +38,7 @@ internal class ScriptOnlyAgentEngine(
     private val eventListener: AgentEventListener?,
     private val logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
+    private val scriptContextFactory: () -> ScriptContext = { DefaultScriptContext() },
     private val runtimeSideEffectPort: RuntimeSideEffectPort = RuntimeSideEffectAdapter(
         messageHandler = messageHandler,
         eventListener = eventListener,
@@ -51,7 +53,9 @@ internal class ScriptOnlyAgentEngine(
     ),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val scriptToolDescriptor = KotlinScriptTool(scriptContext = ScriptContext()).descriptor
+    private val defaultScriptContext: ScriptContext = scriptContextFactory()
+    private val scriptToolDescriptor = KotlinScriptTool(scriptContext = defaultScriptContext).descriptor
+    private val defaultSystemPrompt: String = buildDefaultSystemPrompt(defaultScriptContext.systemPromptInjection)
 
     private data class ResolvedToolCall(
         val call: Message.Tool.Call,
@@ -95,7 +99,7 @@ internal class ScriptOnlyAgentEngine(
         val systemPrompt = sessionSideEffectPort.resolveSystemPrompt(
             sessionId = sessionId,
             agentId = agentId,
-            fallback = DEFAULT_SYSTEM_PROMPT,
+            fallback = defaultSystemPrompt,
         )
         return systemPrompt to messages
     }
@@ -442,7 +446,7 @@ internal class ScriptOnlyAgentEngine(
     }
 
     private suspend fun executeScriptTool(toolArgs: String): ToolExecutionOutcome {
-        val scriptContext = ScriptContext()
+        val scriptContext = scriptContextFactory()
         val tool = KotlinScriptTool(scriptContext = scriptContext)
         return try {
             val argsJson = runCatching { json.parseToJsonElement(toolArgs).jsonObject }
@@ -644,7 +648,7 @@ internal class ScriptOnlyAgentEngine(
     }
 
     companion object {
-        val DEFAULT_SYSTEM_PROMPT: String = """
+        private val BASE_SYSTEM_PROMPT: String = """
             You are a coding agent named `Kode`.
 
             Tool usage rules:
@@ -652,21 +656,20 @@ internal class ScriptOnlyAgentEngine(
             - Handle errors explicitly in script output.
             - println(...) is not visible to the user. It's output is visible for yourself.
 
-            ## Script receiver API (implicit receiver = ScriptContext):
-
-            You can call methods on `ScriptContext` in your script without `this` reference.
-            Getting the `ScriptContext` instance by referencing `this` is also acceptable.
-
-            ### `sayToUser(text: String)`
-            - Append one user-visible output entry.
-            - Each call corresponds to one UI message entry.
-            - May written in markdown with mermaid.
-
-            ### `suspendForUserInput()`
-            - You must call `suspendForUserInput()` to finish your output. Otherwise, you will be forced to continue.
-            - Runtime behavior: the run enters pending-input and resumes after the user provides input.
-            - Do not call consumeAwaitForUserInputSignal(); it is runtime-internal.
-            - You can do other works in script and call this method in the and of the script.
         """.trimIndent()
+
+        fun buildDefaultSystemPrompt(systemPromptInjection: String): String {
+            val normalizedInjection = systemPromptInjection.trim()
+            if (normalizedInjection.isBlank()) {
+                return BASE_SYSTEM_PROMPT
+            }
+            return """
+                $BASE_SYSTEM_PROMPT
+
+                $normalizedInjection
+            """.trimIndent()
+        }
+
+        val DEFAULT_SYSTEM_PROMPT: String = buildDefaultSystemPrompt(DefaultScriptContext.DEFAULT_SYSTEM_PROMPT_INJECTION)
     }
 }

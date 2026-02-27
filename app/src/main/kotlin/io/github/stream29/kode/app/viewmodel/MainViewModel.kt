@@ -69,7 +69,7 @@ import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.AgentState
 import io.github.stream29.kode.ui.core.MessageHandler
 import io.github.stream29.kode.tools.scripting.KotlinScriptResult
-import io.github.stream29.kode.tools.scripting.ScriptContext
+import io.github.stream29.kode.tools.scripting.DefaultScriptContext
 import io.github.stream29.kode.tools.scripting.evalInThreadCancellable
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
@@ -90,6 +90,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import java.awt.Desktop
 import java.io.File
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 
@@ -982,7 +984,21 @@ public class MainViewModel(
             message = normalized,
         )
         updateAppUiState { current ->
-            current.copy(toasts = (current.toasts + toast).takeLast(5))
+            current.copy(toasts = listOf(toast))
+        }
+        persistToastLog(message = normalized)
+    }
+
+    private fun persistToastLog(message: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val toastLogFile = File(resolveAppDataDir(), "toast log.txt")
+                toastLogFile.parentFile?.mkdirs()
+                val timestamp = LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                toastLogFile.appendText("[$timestamp] $message\n")
+            } catch (e: Exception) {
+                log("Failed to persist toast: ${e.message}")
+            }
         }
     }
 
@@ -1275,7 +1291,13 @@ public class MainViewModel(
                 taskLabel = "Continue",
                 cancellationMessage = "Continue cancelled",
                 onError = { error ->
-                    addSystemMessage("Error: ${error.message}", sessionId)
+                    onEvent(
+                        AgentEvent.Error(
+                            message = error.message ?: "Unknown error",
+                            exception = error,
+                        ),
+                        sessionId,
+                    )
                     log("continueCurrentSession failed: ${error.stackTraceToString()}", sessionId)
                 },
                 execution = {
@@ -2369,10 +2391,13 @@ logging:
     }
 
     private fun addSystemMessage(content: String, sessionId: String? = currentSessionId) {
-        if (sessionId != null && currentSessionId != sessionId) {
+        if (sessionId == null || currentSessionId == sessionId) {
+            enqueueToast(content)
             return
         }
-        enqueueToast(content)
+
+        val suffix = sessionId.take(8)
+        enqueueToast("[$suffix] $content")
     }
 
     // MessageHandler implementation
@@ -2910,7 +2935,7 @@ logging:
         scriptRunning = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val result = ScriptContext().evalInThreadCancellable(script = script)
+                val result = DefaultScriptContext().evalInThreadCancellable(script = script)
                 scriptOutput = result.toUiScriptOutput()
             } catch (e: Exception) {
                 scriptOutput = "Script failed: ${e.message}"
@@ -2965,12 +2990,17 @@ logging:
                 dialog.isVisible = true
                 val file = dialog.file ?: return@launch
                 val dir = dialog.directory ?: return@launch
+                val toastLogFile = File(resolveAppDataDir(), "toast log.txt")
+                val toastLogLines = if (toastLogFile.exists()) toastLogFile.readLines() else emptyList()
                 val output = buildString {
                     appendLine("== Tool Logs ==")
                     toolLogs.forEach { appendLine(it) }
                     appendLine()
                     appendLine("== ACP Logs ==")
                     acpLogs.forEach { appendLine(it) }
+                    appendLine()
+                    appendLine("== Toast Logs ==")
+                    toastLogLines.forEach { appendLine(it) }
                 }
                 File(dir, file).writeText(output)
                 addSystemMessage("Logs exported")

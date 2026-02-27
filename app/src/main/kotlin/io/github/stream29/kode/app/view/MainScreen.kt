@@ -54,6 +54,7 @@ public fun MainScreen(state: MainViewModel) {
     val nextToast = chromeUi.toasts.firstOrNull()
     LaunchedEffect(nextToast?.id) {
         val toast = nextToast ?: return@LaunchedEffect
+        snackbarHostState.currentSnackbarData?.dismiss()
         snackbarHostState.showSnackbar(
             message = toast.message,
             withDismissAction = true,

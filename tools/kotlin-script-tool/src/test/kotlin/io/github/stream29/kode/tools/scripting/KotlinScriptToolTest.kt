@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
 class KotlinScriptToolTest {
     @Test
     fun consumeOutputList_returnsItemsInAppendOrderAndClearsBuffer() {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         scriptContext.sayToUser("first")
         scriptContext.sayToUser("second")
@@ -26,7 +26,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun consumeSignal_defaultsToFalseAndResetsAfterConsume() {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         assertFalse(scriptContext.consumeAwaitForUserInputSignal())
 
@@ -37,7 +37,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun suspendSignal_isIdempotentAcrossMultipleSetCalls() {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         scriptContext.suspendForUserInput()
         scriptContext.suspendForUserInput()
@@ -48,7 +48,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_returnsSuccessAndCapturesStdout() {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -65,7 +65,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_canRaiseAwaitInputSignalThroughReceiver() {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -82,7 +82,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_canAppendUserVisibleOutputsThroughReceiver() {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -101,8 +101,23 @@ class KotlinScriptToolTest {
     }
 
     @Test
+    fun eval_canCallMethodsDefinedOnConcreteScriptContextImplementation() {
+        val scriptContext = ExtendedScriptContext()
+
+        val result = scriptContext.eval(
+            script =
+                """
+                greet(name = "kode")
+                """.trimIndent()
+        )
+
+        val success = assertIs<KotlinScriptResult.Success>(result)
+        assertEquals(expected = "hello, kode", actual = success.returnValue)
+    }
+
+    @Test
     fun eval_returnsFailureForScriptError() {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         val result = scriptContext.eval("error(\"boom\")")
 
@@ -112,7 +127,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_returnsFailureForCompilationError() {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         val result = scriptContext.eval("val broken =")
 
@@ -121,7 +136,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_returnsUnitForUnitExpression() {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -137,7 +152,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_capturesStdoutOnFailure() {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -154,7 +169,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun evalInThreadCancellable_returnsSuccess() = runTest {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         val result = scriptContext.evalInThreadCancellable(
             script =
@@ -171,7 +186,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun evalInThreadCancellable_returnsFailureForScriptError() = runTest {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
 
         val result = scriptContext.evalInThreadCancellable("error(\"thread-boom\")")
 
@@ -182,7 +197,7 @@ class KotlinScriptToolTest {
     @Test
     fun execute_returnsSuccessForValidScript() = runTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            val scriptContext = ScriptContext()
+            val scriptContext = DefaultScriptContext()
             val tool = KotlinScriptTool(scriptContext = scriptContext)
 
             val result = tool.execute(
@@ -200,7 +215,7 @@ class KotlinScriptToolTest {
     @Test
     fun execute_timesOutForLongRunningScript() = runTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            val scriptContext = ScriptContext()
+            val scriptContext = DefaultScriptContext()
             val tool = KotlinScriptTool(scriptContext = scriptContext)
 
             assertFailsWith<TimeoutCancellationException> {
@@ -223,7 +238,7 @@ class KotlinScriptToolTest {
     @Test
     fun execute_returnsFailureForScriptError() = runTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            val scriptContext = ScriptContext()
+            val scriptContext = DefaultScriptContext()
             val tool = KotlinScriptTool(scriptContext = scriptContext)
 
             val result = tool.execute(
@@ -241,7 +256,7 @@ class KotlinScriptToolTest {
     @Test
     fun execute_propagatesAwaitSignalToProvidedContext() = runTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            val scriptContext = ScriptContext()
+            val scriptContext = DefaultScriptContext()
             val tool = KotlinScriptTool(scriptContext = scriptContext)
 
             val result = tool.execute(
@@ -264,7 +279,7 @@ class KotlinScriptToolTest {
     @Test
     fun execute_propagatesUserVisibleOutputsToProvidedContext() = runTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            val scriptContext = ScriptContext()
+            val scriptContext = DefaultScriptContext()
             val tool = KotlinScriptTool(scriptContext = scriptContext)
 
             val result = tool.execute(
@@ -288,7 +303,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun execute_zeroTimeoutSeconds_timesOutImmediately() = runTest {
-        val scriptContext = ScriptContext()
+        val scriptContext = DefaultScriptContext()
         val tool = KotlinScriptTool(scriptContext = scriptContext)
 
         assertFailsWith<TimeoutCancellationException> {
@@ -298,6 +313,33 @@ class KotlinScriptToolTest {
                     timeoutSeconds = 0,
                 )
             )
+        }
+    }
+
+    class ExtendedScriptContext : ScriptContext {
+        private val delegate = DefaultScriptContext()
+
+        override val systemPromptInjection: String = "Extended script context prompt injection"
+
+        override fun sayToUser(message: String) {
+            delegate.sayToUser(message)
+        }
+
+        override fun consumeOutputList(): List<String> {
+            return delegate.consumeOutputList()
+        }
+
+        override fun suspendForUserInput() {
+            delegate.suspendForUserInput()
+        }
+
+        override fun consumeAwaitForUserInputSignal(): Boolean {
+            return delegate.consumeAwaitForUserInputSignal()
+        }
+
+        @Suppress("unused")
+        fun greet(name: String): String {
+            return "hello, $name"
         }
     }
 }

@@ -4,7 +4,7 @@ Unless specified, always respond in Chinese.
 
 Use IDEA tools as long as possible. (for grammar checking, building, running, etc.)
 
-Use IDEA's run configuration to build instead of `gradlew build`
+Use IDEA's run configuration to build instead of `gradlew build`. Never use `gradlew` without `--no-daemon`.
 
 Use IDEA's tools instead of LSP tools. Never use Kotlin LSP.
 
@@ -141,6 +141,7 @@ plugin-name = { id = "plugin.id", version.ref = "kotlin" }
 - 2026-02-20：会话编排继续下沉到 `SessionManager`：新增 `createConversationSession` / `prepareConversationContinuation` / `updateSessionWorkDir`，由 session/core 统一处理创建、continue 输入插入合法性与工作目录更新；`MainViewModel` 仅保留 UI 输入归一化与展示状态。
 - 2026-02-24：ACP 保持显式禁用语义（`startAcpServer/stopAcpServer` 均仅提示 disabled），并移除 `MainViewModel` 内不可达 ACP support/session 实现与无调用点 MCP registry helper，保留 `runMcpTest` 健康/测试链路。
 - 2026-02-25：Legacy pruning 硬切：移除已弃用工具模块，模块图以 `settings.gradle.kts` 为准；保留受保护表面 `:tools:web-tool`，并维持现行运行时兼容表面（strict script-only、`ToolNames` 单一事实源、legacy alias 仅历史语义不得回流）。
+- 2026-02-27：`ScriptContext` 升级为接口并新增 `systemPromptInjection` 抽象属性；默认实现为 `DefaultScriptContext`。脚本编译期 receiver 类型改为运行时具体实现（`this::class.starProjectedType`），`ScriptOnlyAgentEngine` 通过 `scriptContextFactory` 注入具体上下文并将其 `systemPromptInjection` 拼接进 fallback system prompt。
 
 ## Critical Interaction Contract
 
@@ -156,6 +157,8 @@ plugin-name = { id = "plugin.id", version.ref = "kotlin" }
 - Script-only tool contract: only `Message.Tool.Call.tool == executeKotlinScript` is legal; any other tool name must fail fast.
 - Script receiver contract: each agent run owns an isolated `ScriptContext`; script-side `suspendForUserInput()` only flips await signal, and engine must consume this signal after tool execution to enter pending-input state.
 - System prompt contract: `ScriptOnlyAgentEngine.DEFAULT_SYSTEM_PROMPT` must explicitly document currently supported `ScriptContext` receiver methods and usage constraints; adding a new receiver method requires updating this prompt in the same change.
+- Script context extensibility contract: `ScriptContext` must stay as interface; concrete implementations can expose extra receiver APIs for scripts, and `systemPromptInjection` must document those extra APIs in the same change.
+- Script receiver typing contract: Kotlin script compilation must bind implicit receiver to runtime concrete `ScriptContext` implementation type (not the interface type), otherwise concrete-only APIs are unavailable in script.
 - User output contract: script-side user-visible text must use `ScriptContext.sayToUser(text)`; `println` output is debug-only and must not be treated as user message.
 - Output projection contract: engine must persist per-turn `ScriptContext.outputList` into `AgentScript.outputList`; chat UI must render each list element as one assistant message.
 - Chat rendering contract: `Chat` 页面只渲染 `SessionUiState.messages` 原始 `AgentMessage` 序列；`UserMessage` 直接渲染，`AgentScript` 先渲染折叠脚本预览再渲染 `outputList`。不再维护 RawMessage 模式。
@@ -164,3 +167,4 @@ plugin-name = { id = "plugin.id", version.ref = "kotlin" }
 - Snapshot boundary contract: `SessionSnapshot` 只作为持久化/导入导出 DTO；运行态逻辑与 UI 订阅以 `SessionState` 为准，不允许用 snapshot 反推临时运行字段。
 - Continue gate contract: `continueCurrentSession()` 仅作为 `continueFromInput("")` 入口别名；空输入/非空输入/程序化 continue 必须统一先过 `prepareConversationContinuation` legality gate，再进入 runtime resume。
 - Legacy surface contract: `await_user_input`/`wait_for_user_input`/`spawn_subagent` 等旧别名与多工具模式叙事仅可作为历史背景，不得作为当前实现或迁移目标。
+- Session title refresh contract: `SessionExecutionRuntime.generateSessionTitleFromConversation` 必须基于会话历史触发模型生成标题，不允许返回恒定 `null` 导致刷新按钮退化为仅 fallback 标题。

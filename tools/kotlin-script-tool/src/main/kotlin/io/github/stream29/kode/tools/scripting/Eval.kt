@@ -7,7 +7,7 @@ import org.jetbrains.kotlin.mainKts.*
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import kotlin.concurrent.withLock
-import kotlin.reflect.typeOf
+import kotlin.reflect.full.starProjectedType
 import kotlin.script.experimental.api.*
 import kotlin.script.experimental.dependencies.DependsOn
 import kotlin.script.experimental.dependencies.Repository
@@ -15,7 +15,6 @@ import kotlin.script.experimental.host.toScriptSource
 import kotlin.script.experimental.jvm.dependenciesFromClassContext
 import kotlin.script.experimental.jvm.jvm
 import kotlin.script.experimental.jvm.util.renderError
-import kotlin.script.experimental.jvmhost.jsr223.configureProvidedPropertiesFromJsr223Context
 
 
 public suspend fun ScriptContext.evalInThreadCancellable(script: String): KotlinScriptResult {
@@ -31,13 +30,14 @@ public suspend fun ScriptContext.evalInThreadCancellable(script: String): Kotlin
 }
 
 public fun ScriptContext.eval(script: String): KotlinScriptResult {
+    val receiverClass = this::class
     return scriptEvaluationMutex.withLock {
         captureStdout {
             host.evalWithTemplate<MainKtsScript>(
                 script = script.toScriptSource(),
                 compilation = {
                     defaultImports(
-                        ScriptContext::class,
+                        receiverClass,
                         DependsOn::class,
                         Repository::class,
                         Import::class,
@@ -63,7 +63,7 @@ public fun ScriptContext.eval(script: String): KotlinScriptResult {
                         )
                         onAnnotations(ScriptFileLocation::class, handler = ScriptFileLocationCustomConfigurator())
                     }
-                    implicitReceivers(typeOf<ScriptContext>())
+                    implicitReceivers(receiverClass.starProjectedType)
                 },
                 evaluation = {
                     constructorArgs(emptyArray<String>())
