@@ -644,46 +644,45 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
             Column(
                 modifier = Modifier.align(Alignment.BottomCenter)
             ) {
-                Row(
+                ElevatedCard(
                     modifier = Modifier
-                        .padding(bottom = if (isTodoSidebarCollapsed) 8.dp else 4.dp)
-                        .clickable { isTodoSidebarCollapsed = !isTodoSidebarCollapsed }
-                        .padding(4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        .padding(horizontal = 8.dp)
+                        .padding(bottom = 8.dp)
+                        .align(Alignment.Start)
+                        .animateContentSize(),
+                    shape = MaterialTheme.shapes.large,
+                    elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp)
                 ) {
-                    Text(
-                        text = "Todo List",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Icon(
-                        imageVector = if (isTodoSidebarCollapsed) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = if (isTodoSidebarCollapsed) "Expand Todo List" else "Collapse Todo List",
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                    Column {
+                        Row(
+                            modifier = Modifier
+                                .clickable { isTodoSidebarCollapsed = !isTodoSidebarCollapsed }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "Todo List",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Icon(
+                                imageVector = if (isTodoSidebarCollapsed) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                contentDescription = if (isTodoSidebarCollapsed) "Expand Todo List" else "Collapse Todo List",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
 
-                AnimatedVisibility(
-                    visible = !isTodoSidebarCollapsed,
-                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
-                ) {
-                    ElevatedCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 300.dp)
-                            .padding(horizontal = 8.dp)
-                            .padding(bottom = 8.dp),
-                        shape = MaterialTheme.shapes.large,
-                        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp)
-                    ) {
-                        TodoSidebar(
-                            todoState = sidebarTodoState,
-                            onToggleExpand = state::toggleTodoExpand,
-                            onToggleComplete = { _ -> },
-                        )
+                        if (!isTodoSidebarCollapsed) {
+                            HorizontalDivider()
+                            TodoSidebar(
+                                todoState = sidebarTodoState,
+                                onToggleExpand = state::toggleTodoExpand,
+                                onToggleComplete = { _ -> },
+                                modifier = Modifier.heightIn(max = 300.dp)
+                            )
+                        }
                     }
                 }
 
