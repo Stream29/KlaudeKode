@@ -1,6 +1,7 @@
 package io.github.stream29.kode.app.view
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
@@ -8,6 +9,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.foundation.clickable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,6 +32,10 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.scene.DialogSceneStrategy
 import androidx.navigation3.ui.NavDisplay
 import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
+import io.github.stream29.kode.ui.components.todo.TodoSidebar
+import io.github.stream29.kode.ui.components.todo.TodoUiNode as SidebarTodoUiNode
+import io.github.stream29.kode.ui.components.todo.TodoUiState as SidebarTodoUiState
+import io.github.stream29.kode.ui.core.todo.TodoUiState as CoreTodoUiState
 import io.github.stream29.kode.app.util.formatModelDisplayName
 import io.github.stream29.kode.app.viewmodel.AcpPageUiState
 import io.github.stream29.kode.app.viewmodel.AppUiState
@@ -606,7 +612,17 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
         { index: Int -> state.forkFromMessage(index) }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    var isTodoSidebarCollapsed by rememberSaveable(sessionUi.currentSessionId) {
+        mutableStateOf(true)
+    }
+
+    val sidebarTodoState = remember(sessionUi.todoState) {
+        sessionUi.todoState.toSidebarTodoUiState()
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+    ) {
         SessionControls(state = state, sessionUi = sessionUi, ui = ui)
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -620,6 +636,43 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
         )
 
         Spacer(modifier = Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier
+                .padding(bottom = if (isTodoSidebarCollapsed) 8.dp else 4.dp)
+                .clickable { isTodoSidebarCollapsed = !isTodoSidebarCollapsed }
+                .padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                text = "Todo List",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Icon(
+                imageVector = if (isTodoSidebarCollapsed) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = if (isTodoSidebarCollapsed) "Expand Todo List" else "Collapse Todo List",
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (!isTodoSidebarCollapsed) {
+            ElevatedCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 300.dp)
+                    .padding(bottom = 8.dp),
+                shape = MaterialTheme.shapes.large,
+            ) {
+                TodoSidebar(
+                    todoState = sidebarTodoState,
+                    onToggleExpand = state::toggleTodoExpand,
+                    onToggleComplete = { _ -> },
+                )
+            }
+        }
 
         InputSection(
             state = state,
@@ -1238,6 +1291,20 @@ private data class ToolItem(
     val description: String
 )
 
+private fun CoreTodoUiState.toSidebarTodoUiState(): SidebarTodoUiState {
+    return SidebarTodoUiState(
+        rootNodes = rootNodes.map { node ->
+            SidebarTodoUiNode(
+                node = node.node,
+                path = node.path,
+                expanded = node.expanded,
+                level = node.level,
+            )
+        },
+        allExpanded = allExpanded,
+    )
+}
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun InputSection(
@@ -1339,6 +1406,8 @@ private fun InputSection(
             )
 
             Spacer(modifier = Modifier.width(12.dp))
+
+
 
             val isInputValid = localTaskInput.isNotBlank()
             val canClick = when {
