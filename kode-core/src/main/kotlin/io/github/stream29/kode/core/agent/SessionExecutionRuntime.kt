@@ -16,7 +16,6 @@ import io.github.stream29.kode.core.port.SessionSideEffectPort
 import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.tools.scripting.DefaultScriptContext
 import io.github.stream29.kode.tools.scripting.ScriptContext
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
@@ -34,7 +33,7 @@ public class SessionExecutionRuntime(
     private val hookManager: HookManager,
     private val logger: (String) -> Unit,
     public val sessionManager: SessionManager,
-    private val scriptContextFactory: () -> ScriptContext = { DefaultScriptContext() },
+    private val scriptContextFactory: () -> MainAgentScriptContext = { MainAgentScriptContext() },
     private val runtimeSideEffectPortFactory:
         ((MessageHandler, AgentEventListener?, (String) -> Unit) -> RuntimeSideEffectPort)? = null,
     private val toolSideEffectPortFactory: ((HookManager) -> ToolSideEffectPort)? = null,

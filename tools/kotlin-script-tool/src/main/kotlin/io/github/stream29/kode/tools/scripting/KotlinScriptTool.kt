@@ -6,7 +6,8 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.times
 
 public class KotlinScriptTool(
-    public val scriptContext: ScriptContext
+    public val scriptContext: ScriptContext,
+    private val evalFunction: suspend (String) -> KotlinScriptResult,
 ) : Tool<KotlinScriptParams, KotlinScriptResult>(
     name = kotlinScriptToolName,
     description = "Execute Kotlin scripts with the embedded Kotlin scripting engine",
@@ -15,7 +16,14 @@ public class KotlinScriptTool(
 ) {
     override suspend fun execute(args: KotlinScriptParams): KotlinScriptResult {
         return withTimeout(args.timeoutSeconds * 1.seconds) {
-            scriptContext.evalInThreadCancellable(args.script)
+            evalFunction(args.script)
         }
     }
 }
+
+public inline fun <reified T : ScriptContext> KotlinScriptTool(
+    scriptContext: T
+): KotlinScriptTool = KotlinScriptTool(
+    scriptContext = scriptContext,
+    evalFunction = { scriptContext.evalInThreadCancellable(it) }
+)

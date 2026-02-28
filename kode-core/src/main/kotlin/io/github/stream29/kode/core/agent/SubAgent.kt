@@ -6,7 +6,6 @@ import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.tools.scripting.DefaultScriptContext
 import io.github.stream29.kode.tools.scripting.ScriptContext
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
@@ -20,7 +19,7 @@ public class SubAgent(
     eventListener: AgentEventListener?,
     logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
-    private val scriptContextFactory: () -> ScriptContext = { DefaultScriptContext() },
+    private val scriptContextFactory: () -> MainAgentScriptContext = { MainAgentScriptContext() },
 ) : Agent {
     private val engine = ScriptOnlyAgentEngine(
         promptExecutor = promptExecutor,

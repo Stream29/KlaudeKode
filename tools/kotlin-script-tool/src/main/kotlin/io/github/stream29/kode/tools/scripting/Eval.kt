@@ -7,7 +7,7 @@ import org.jetbrains.kotlin.mainKts.*
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import kotlin.concurrent.withLock
-import kotlin.reflect.full.starProjectedType
+import kotlin.reflect.typeOf
 import kotlin.script.experimental.api.*
 import kotlin.script.experimental.dependencies.DependsOn
 import kotlin.script.experimental.dependencies.Repository
@@ -17,7 +17,7 @@ import kotlin.script.experimental.jvm.jvm
 import kotlin.script.experimental.jvm.util.renderError
 
 
-public suspend fun ScriptContext.evalInThreadCancellable(script: String): KotlinScriptResult {
+public suspend inline fun <reified T : ScriptContext> T.evalInThreadCancellable(script: String): KotlinScriptResult {
     return suspendCancellableCoroutine { cont ->
         val thread = Thread {
             cont.resumeWith(runCatching { eval(script) })
@@ -29,15 +29,14 @@ public suspend fun ScriptContext.evalInThreadCancellable(script: String): Kotlin
     }
 }
 
-public fun ScriptContext.eval(script: String): KotlinScriptResult {
-    val receiverClass = this::class
+public inline fun <reified T : ScriptContext> T.eval(script: String): KotlinScriptResult {
     return scriptEvaluationMutex.withLock {
         captureStdout {
             host.evalWithTemplate<MainKtsScript>(
                 script = script.toScriptSource(),
                 compilation = {
                     defaultImports(
-                        receiverClass,
+                        T::class,
                         DependsOn::class,
                         Repository::class,
                         Import::class,
@@ -63,7 +62,7 @@ public fun ScriptContext.eval(script: String): KotlinScriptResult {
                         )
                         onAnnotations(ScriptFileLocation::class, handler = ScriptFileLocationCustomConfigurator())
                     }
-                    implicitReceivers(receiverClass.starProjectedType)
+                    implicitReceivers(typeOf<T>())
                 },
                 evaluation = {
                     constructorArgs(emptyArray<String>())
@@ -75,7 +74,7 @@ public fun ScriptContext.eval(script: String): KotlinScriptResult {
     }
 }
 
-private inline fun <T> captureStdout(block: () -> T): WithStdout<T> {
+@PublishedApi internal inline fun <T> captureStdout(block: () -> T): WithStdout<T> {
     val originalOut = System.out
     val outputStream = ByteArrayOutputStream()
     val printStream = PrintStream(outputStream, true, Charsets.UTF_8)
@@ -92,9 +91,9 @@ private inline fun <T> captureStdout(block: () -> T): WithStdout<T> {
     }
 }
 
-private data class WithStdout<T>(val value: T, val stdout: String)
+@PublishedApi internal data class WithStdout<T>(val value: T, val stdout: String)
 
-private fun WithStdout<ResultWithDiagnostics<EvaluationResult>>.toEvalResult(): KotlinScriptResult {
+@PublishedApi internal fun WithStdout<ResultWithDiagnostics<EvaluationResult>>.toEvalResult(): KotlinScriptResult {
     val (evaluationResult, stdout) = this
     return when (evaluationResult) {
         is ResultWithDiagnostics.Success<EvaluationResult> -> {

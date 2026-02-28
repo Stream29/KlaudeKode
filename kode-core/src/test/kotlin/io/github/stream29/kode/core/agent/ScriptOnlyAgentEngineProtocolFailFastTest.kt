@@ -13,7 +13,6 @@ import io.github.stream29.kode.core.testsupport.FakeMessageHandler
 import io.github.stream29.kode.core.testsupport.FakeSessionRepository
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.tool.ToolNames
-import io.github.stream29.kode.tools.scripting.DefaultScriptContext
 import io.github.stream29.kode.tools.scripting.ScriptContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -65,7 +64,7 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
 
     @Test
     fun scriptContextSideChannelConsumeMethodsAreDeterministicAndConsumeOnce() {
-        val context = DefaultScriptContext()
+        val context = MainAgentScriptContext()
 
         context.sayToUser("first")
         context.sayToUser("second")
@@ -145,7 +144,7 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 eventListener = null,
                 logger = {},
                 runtimeContext = AgentRuntimeContext(),
-                scriptContextFactory = { PromptInjectionScriptContext() },
+                scriptContextFactory = { MainAgentScriptContext(systemPromptInjection = "Prompt injection from PromptInjectionScriptContext") },
                 sessionSideEffectPort = object : SessionSideEffectPort {
                     override suspend fun prepareMessagesForAgent(sessionId: String, agentId: String?): List<ai.koog.prompt.message.Message> {
                         return emptyList()
@@ -186,7 +185,7 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
 
             assertContains(
                 charSequence = capturedFallback.orEmpty(),
-                other = PromptInjectionScriptContext.SYSTEM_PROMPT_INJECTION,
+                other = "Prompt injection from PromptInjectionScriptContext",
             )
             assertContains(
                 charSequence = capturedFallback.orEmpty(),
@@ -242,35 +241,6 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
 
         override fun isSafeStopRequested(sessionId: String): Boolean {
             return safeStopRequested
-        }
-    }
-
-    private class PromptInjectionScriptContext : ScriptContext {
-        private val delegate = DefaultScriptContext()
-
-        override val systemPromptInjection: String = SYSTEM_PROMPT_INJECTION
-
-        override fun sayToUser(message: String) {
-            delegate.sayToUser(message)
-        }
-
-        override fun consumeOutputList(): List<String> {
-            return delegate.consumeOutputList()
-        }
-
-        override fun suspendForUserInput() {
-            delegate.suspendForUserInput()
-        }
-
-        override fun consumeAwaitForUserInputSignal(): Boolean {
-            return delegate.consumeAwaitForUserInputSignal()
-        }
-
-        override fun getTodoList(): List<TodoNode> = delegate.getTodoList()
-        override fun updateTodoList(todos: List<TodoNode>) = delegate.updateTodoList(todos)
-
-        companion object {
-            const val SYSTEM_PROMPT_INJECTION: String = "Prompt injection from PromptInjectionScriptContext"
         }
     }
 

@@ -15,9 +15,45 @@ import kotlin.test.assertTrue
 import io.github.stream29.kode.session.core.model.TodoNode
 
 class KotlinScriptToolTest {
+    class TestScriptContext : ScriptContext {
+        override val systemPromptInjection: String = "Extended script context prompt injection"
+
+        private val outputLock: Any = Any()
+        private val outputList: MutableList<String> = mutableListOf()
+        private var awaitInput = false
+
+        fun sayToUser(message: String) {
+            synchronized(outputLock) {
+                outputList.add(message)
+            }
+        }
+
+        fun consumeOutputList(): List<String> {
+            synchronized(outputLock) {
+                val snapshot = outputList.toList()
+                outputList.clear()
+                return snapshot
+            }
+        }
+
+        fun suspendForUserInput() {
+            awaitInput = true
+        }
+
+        fun consumeAwaitForUserInputSignal(): Boolean {
+            val res = awaitInput
+            awaitInput = false
+            return res
+        }
+
+        fun greet(name: String): String {
+            return "hello, $name"
+        }
+    }
+
     @Test
     fun consumeOutputList_returnsItemsInAppendOrderAndClearsBuffer() {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         scriptContext.sayToUser("first")
         scriptContext.sayToUser("second")
@@ -28,7 +64,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun consumeSignal_defaultsToFalseAndResetsAfterConsume() {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         assertFalse(scriptContext.consumeAwaitForUserInputSignal())
 
@@ -39,7 +75,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun suspendSignal_isIdempotentAcrossMultipleSetCalls() {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         scriptContext.suspendForUserInput()
         scriptContext.suspendForUserInput()
@@ -50,7 +86,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_returnsSuccessAndCapturesStdout() {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -67,7 +103,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_canRaiseAwaitInputSignalThroughReceiver() {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -84,7 +120,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_canAppendUserVisibleOutputsThroughReceiver() {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -104,7 +140,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_canCallMethodsDefinedOnConcreteScriptContextImplementation() {
-        val scriptContext = ExtendedScriptContext()
+        val scriptContext = TestScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -119,7 +155,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_returnsFailureForScriptError() {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         val result = scriptContext.eval("error(\"boom\")")
 
@@ -129,7 +165,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_returnsFailureForCompilationError() {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         val result = scriptContext.eval("val broken =")
 
@@ -138,7 +174,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_returnsUnitForUnitExpression() {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -154,7 +190,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun eval_capturesStdoutOnFailure() {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         val result = scriptContext.eval(
             script =
@@ -171,7 +207,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun evalInThreadCancellable_returnsSuccess() = runTest {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         val result = scriptContext.evalInThreadCancellable(
             script =
@@ -188,7 +224,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun evalInThreadCancellable_returnsFailureForScriptError() = runTest {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
 
         val result = scriptContext.evalInThreadCancellable("error(\"thread-boom\")")
 
@@ -199,7 +235,7 @@ class KotlinScriptToolTest {
     @Test
     fun execute_returnsSuccessForValidScript() = runTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            val scriptContext = DefaultScriptContext()
+            val scriptContext = TestScriptContext()
             val tool = KotlinScriptTool(scriptContext = scriptContext)
 
             val result = tool.execute(
@@ -217,7 +253,7 @@ class KotlinScriptToolTest {
     @Test
     fun execute_timesOutForLongRunningScript() = runTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            val scriptContext = DefaultScriptContext()
+            val scriptContext = TestScriptContext()
             val tool = KotlinScriptTool(scriptContext = scriptContext)
 
             assertFailsWith<TimeoutCancellationException> {
@@ -240,7 +276,7 @@ class KotlinScriptToolTest {
     @Test
     fun execute_returnsFailureForScriptError() = runTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            val scriptContext = DefaultScriptContext()
+            val scriptContext = TestScriptContext()
             val tool = KotlinScriptTool(scriptContext = scriptContext)
 
             val result = tool.execute(
@@ -258,7 +294,7 @@ class KotlinScriptToolTest {
     @Test
     fun execute_propagatesAwaitSignalToProvidedContext() = runTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            val scriptContext = DefaultScriptContext()
+            val scriptContext = TestScriptContext()
             val tool = KotlinScriptTool(scriptContext = scriptContext)
 
             val result = tool.execute(
@@ -281,7 +317,7 @@ class KotlinScriptToolTest {
     @Test
     fun execute_propagatesUserVisibleOutputsToProvidedContext() = runTest {
         withContext(Dispatchers.Default.limitedParallelism(1)) {
-            val scriptContext = DefaultScriptContext()
+            val scriptContext = TestScriptContext()
             val tool = KotlinScriptTool(scriptContext = scriptContext)
 
             val result = tool.execute(
@@ -305,7 +341,7 @@ class KotlinScriptToolTest {
 
     @Test
     fun execute_zeroTimeoutSeconds_timesOutImmediately() = runTest {
-        val scriptContext = DefaultScriptContext()
+        val scriptContext = TestScriptContext()
         val tool = KotlinScriptTool(scriptContext = scriptContext)
 
         assertFailsWith<TimeoutCancellationException> {
@@ -318,33 +354,4 @@ class KotlinScriptToolTest {
         }
     }
 
-    class ExtendedScriptContext : ScriptContext {
-        private val delegate = DefaultScriptContext()
-
-        override val systemPromptInjection: String = "Extended script context prompt injection"
-
-        override fun sayToUser(message: String) {
-            delegate.sayToUser(message)
-        }
-
-        override fun consumeOutputList(): List<String> {
-            return delegate.consumeOutputList()
-        }
-
-        override fun suspendForUserInput() {
-            delegate.suspendForUserInput()
-        }
-
-        override fun consumeAwaitForUserInputSignal(): Boolean {
-            return delegate.consumeAwaitForUserInputSignal()
-        }
-
-        override fun getTodoList() = delegate.getTodoList()
-        override fun updateTodoList(todos: List<TodoNode>) = delegate.updateTodoList(todos)
-
-        @Suppress("unused")
-        fun greet(name: String): String {
-            return "hello, $name"
-        }
-    }
 }

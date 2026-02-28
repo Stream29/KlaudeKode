@@ -14,12 +14,11 @@ import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.tool.ToolNames
-import io.github.stream29.kode.tools.scripting.DefaultScriptContext
+import io.github.stream29.kode.tools.scripting.ScriptContext
 import io.github.stream29.kode.tools.scripting.KotlinScriptTool
 import io.github.stream29.kode.session.core.model.TodoNode
 import io.github.stream29.kode.session.core.todo.generateTodoGuidelineInjection
 
-import io.github.stream29.kode.tools.scripting.ScriptContext
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
@@ -30,11 +29,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
-import kotlin.reflect.KProperty1
-import kotlin.reflect.full.memberProperties
-import kotlin.reflect.full.functions
-import kotlin.reflect.full.callSuspend
-import kotlin.reflect.jvm.isAccessible
 
 import kotlin.time.Clock
 
@@ -47,7 +41,7 @@ internal class ScriptOnlyAgentEngine(
     private val eventListener: AgentEventListener?,
     private val logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
-    private val scriptContextFactory: () -> ScriptContext = { DefaultScriptContext() },
+    private val scriptContextFactory: () -> MainAgentScriptContext = { MainAgentScriptContext() },
     private val runtimeSideEffectPort: RuntimeSideEffectPort = RuntimeSideEffectAdapter(
         messageHandler = messageHandler,
         eventListener = eventListener,
@@ -62,8 +56,8 @@ internal class ScriptOnlyAgentEngine(
     ),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val defaultScriptContext: ScriptContext = scriptContextFactory()
-    private val scriptToolDescriptor = KotlinScriptTool(scriptContext = defaultScriptContext).descriptor
+    private val defaultScriptContext: MainAgentScriptContext = scriptContextFactory()
+    private val scriptToolDescriptor = KotlinScriptTool(defaultScriptContext).descriptor
     private val defaultSystemPrompt: String = buildDefaultSystemPrompt(defaultScriptContext.systemPromptInjection)
 
     private data class ResolvedToolCall(
@@ -505,11 +499,11 @@ internal class ScriptOnlyAgentEngine(
         val scriptContext = if (initialTodos.isEmpty()) {
             scriptContextFactory()
         } else {
-            DefaultScriptContext(initialTodos = initialTodos)
+            MainAgentScriptContext(initialTodos = initialTodos)
         }
-        val tool = KotlinScriptTool(scriptContext = scriptContext)
-        val todoStateFlow = (scriptContext as? DefaultScriptContext)?.getTodoStateFlow()
-        val todoSnapshot = todoStateFlow?.value?.toList()
+        val tool = KotlinScriptTool(scriptContext)
+        val todoStateFlow = scriptContext.getTodoStateFlow()
+        val todoSnapshot = todoStateFlow.value.toList()
         
         return try {
             val argsJson = runCatching { json.parseToJsonElement(toolArgs).jsonObject }
@@ -539,8 +533,8 @@ internal class ScriptOnlyAgentEngine(
                     )
                 }
             val result = tool.execute(args)
-            val currentTodos = todoStateFlow?.value ?: initialTodos
-            val todoChanged = todoStateFlow != null && todoSnapshot != todoStateFlow.value
+            val currentTodos = todoStateFlow.value
+            val todoChanged = todoSnapshot != todoStateFlow.value
             
             println("[DEBUG_LOG] todoSnapshot: $todoSnapshot")
             println("[DEBUG_LOG] currentTodos: $currentTodos")
@@ -557,8 +551,8 @@ internal class ScriptOnlyAgentEngine(
             )
         } catch (error: Exception) {
             val message = "Error executing tool ${ToolNames.EXECUTE_KOTLIN_SCRIPT}: ${error.message}"
-            val currentTodos = todoStateFlow?.value ?: initialTodos
-            val todoChanged = todoStateFlow != null && todoSnapshot != todoStateFlow.value
+            val currentTodos = todoStateFlow.value
+            val todoChanged = todoSnapshot != todoStateFlow.value
             
             ToolExecutionOutcome(
                 content = message,
@@ -751,6 +745,6 @@ internal class ScriptOnlyAgentEngine(
             """.trimIndent()
         }
 
-        val DEFAULT_SYSTEM_PROMPT: String = buildDefaultSystemPrompt(DefaultScriptContext.DEFAULT_SYSTEM_PROMPT_INJECTION)
+        val DEFAULT_SYSTEM_PROMPT: String = buildDefaultSystemPrompt(MainAgentScriptContext.DEFAULT_SYSTEM_PROMPT_INJECTION)
     }
 }

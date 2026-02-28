@@ -71,7 +71,7 @@ import io.github.stream29.kode.ui.core.MessageHandler
 import io.github.stream29.kode.ui.core.todo.TodoUiNode
 import io.github.stream29.kode.ui.core.todo.TodoUiState
 import io.github.stream29.kode.tools.scripting.KotlinScriptResult
-import io.github.stream29.kode.tools.scripting.DefaultScriptContext
+import io.github.stream29.kode.core.agent.MainAgentScriptContext
 import io.github.stream29.kode.tools.scripting.evalInThreadCancellable
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
@@ -3005,7 +3005,7 @@ logging:
         scriptRunning = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val result = DefaultScriptContext().evalInThreadCancellable(script = script)
+                val result = MainAgentScriptContext().evalInThreadCancellable(script = script)
                 scriptOutput = result.toUiScriptOutput()
             } catch (e: Exception) {
                 scriptOutput = "Script failed: ${e.message}"
