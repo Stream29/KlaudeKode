@@ -17,8 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.stream29.kode.app.util.parseKeyValueLines
-import io.github.stream29.kode.app.viewmodel.MainViewModel
-import io.github.stream29.kode.app.viewmodel.McpPageUiState
+import io.github.stream29.kode.app.viewmodel.mcp.McpUiState
+import io.github.stream29.kode.app.viewmodel.mcp.McpViewModel
 import io.github.stream29.kode.config.api.McpServerConfig
 import io.github.stream29.kode.config.api.McpTransportType
 import io.github.stream29.kode.config.api.supportsBrowserOAuth
@@ -28,7 +28,7 @@ import io.github.stream29.kode.ui.bridge.mcp.McpTestStatus
 import io.github.stream29.kode.ui.bridge.mcp.McpToolParameterSummary
 
 @Composable
-internal fun McpPage(state: MainViewModel, ui: McpPageUiState) {
+internal fun McpPage(viewModel: McpViewModel, ui: McpUiState) {
     var showAddDialog by remember { mutableStateOf(false) }
     var timeoutText by remember { mutableStateOf(ui.mcpToolTimeoutMs.toString()) }
     var pendingDialogServer by remember { mutableStateOf<String?>(null) }
@@ -82,7 +82,7 @@ internal fun McpPage(state: MainViewModel, ui: McpPageUiState) {
                     timeoutText = input
                     val parsed = input.toIntOrNull()
                     if (parsed != null) {
-                        state.mcpToolTimeoutMs = parsed
+                        viewModel.updateMcpToolTimeoutMs(parsed)
                     }
                 },
                 label = { Text("Tool call timeout (ms)") },
@@ -169,20 +169,20 @@ internal fun McpPage(state: MainViewModel, ui: McpPageUiState) {
                                     onClick = {
                                         pendingDialogServer = name
                                         toolDialogResult = null
-                                        state.clearMcpTestResult(name)
-                                        state.testMcpServer(name)
+                                        viewModel.clearMcpTestResult(name)
+                                        viewModel.testMcpServer(name)
                                     },
                                     enabled = !inFlight,
                                 ) {
                                     Text(if (inFlight) "Testing..." else "Test")
                                 }
                                 if (server.supportsBrowserOAuth()) {
-                                    FilledTonalButton(onClick = { state.authMcpServer(name) }) {
+                                    FilledTonalButton(onClick = { viewModel.authMcpServer(name) }) {
                                         Text("Auth")
                                     }
                                 }
                                 FilledTonalButton(
-                                    onClick = { state.removeMcpServer(name) },
+                                    onClick = { viewModel.removeMcpServer(name) },
                                     colors = ButtonDefaults.filledTonalButtonColors(
                                         containerColor = MaterialTheme.colorScheme.errorContainer,
                                         contentColor = MaterialTheme.colorScheme.onErrorContainer,
@@ -210,7 +210,7 @@ internal fun McpPage(state: MainViewModel, ui: McpPageUiState) {
         McpServerDialog(
             onDismiss = closeAddDialog,
             onConfirm = { name, config ->
-                state.addMcpServer(name, config)
+                viewModel.addMcpServer(name, config)
                 closeAddDialog()
             },
         )

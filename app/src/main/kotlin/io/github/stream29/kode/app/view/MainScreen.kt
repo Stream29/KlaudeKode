@@ -27,6 +27,17 @@ import androidx.navigation3.scene.DialogSceneStrategy
 import androidx.navigation3.ui.NavDisplay
 import io.github.stream29.kode.app.util.formatModelDisplayName
 import io.github.stream29.kode.app.viewmodel.*
+import io.github.stream29.kode.app.viewmodel.acp.AcpViewModel
+import io.github.stream29.kode.app.viewmodel.chat.ChatViewModel
+import io.github.stream29.kode.app.viewmodel.config.ConfigViewModel
+import io.github.stream29.kode.app.viewmodel.info.InfoViewModel
+import io.github.stream29.kode.app.viewmodel.mcp.McpViewModel
+import io.github.stream29.kode.app.viewmodel.sessions.SessionsViewModel
+import io.github.stream29.kode.app.viewmodel.sessions.SessionsUiState
+import io.github.stream29.kode.app.viewmodel.models.ModelsViewModel
+import io.github.stream29.kode.app.viewmodel.terminal.TerminalViewModel
+import io.github.stream29.kode.app.viewmodel.tools.ToolsViewModel
+import io.github.stream29.kode.app.viewmodel.web.WebViewModel
 import io.github.stream29.kode.ui.components.todo.TodoSidebar
 import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
 import io.github.stream29.kode.ui.components.todo.TodoUiNode as SidebarTodoUiNode
@@ -38,9 +49,6 @@ import io.github.stream29.kode.ui.core.todo.TodoUiState as CoreTodoUiState
 @Composable
 public fun MainScreen(state: MainViewModel) {
     val chromeUi by state.mainChromeUiState.collectAsStateWithLifecycle()
-    val appUi by state.appUiState.collectAsStateWithLifecycle()
-    val sessionUi by state.sessionUiState.collectAsStateWithLifecycle()
-    val configEditorUi by state.configEditorUiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     val nextToast = chromeUi.toasts.firstOrNull()
@@ -97,6 +105,14 @@ public fun MainScreen(state: MainViewModel) {
         val navBackStack = remember { mutableStateListOf<NavKey>(chromeUi.currentPage) }
         val dialogSceneStrategy = remember { DialogSceneStrategy<NavKey>() }
 
+        LaunchedEffect(chromeUi.currentPage) {
+            val root = navBackStack.firstOrNull()
+            if (root != chromeUi.currentPage) {
+                navBackStack.clear()
+                navBackStack.add(chromeUi.currentPage)
+            }
+        }
+
         val navEntryProvider = entryProvider {
             entry<AppPage> { key ->
                 when (key) {
@@ -112,250 +128,28 @@ public fun MainScreen(state: MainViewModel) {
                     AppPage.Info -> InfoRoute(state = state)
                 }
             }
-            entry<ConfigEditorDialogRoute>(metadata = DialogSceneStrategy.dialog()) {
-                ConfigEditorDialog(
-                    ui = configEditorUi,
-                    onConfigTextChange = { value -> state.configText = value },
-                    onSave = { state.saveConfig() },
-                    onDismiss = {
-                        state.showConfigEditor = false
-                        navBackStack.removeDialogRoute(ConfigEditorDialogRoute)
-                    },
-                )
-            }
             entry<SessionManagerDialogRoute>(metadata = DialogSceneStrategy.dialog()) {
                 SessionManagerDialog(
                     viewModel = state,
                     onDismiss = {
-                        state.requestCloseSessionManagerDialog()
                         navBackStack.removeDialogRoute(SessionManagerDialogRoute)
                     },
                 )
             }
-            entry<AddModelDialogRoute>(metadata = DialogSceneStrategy.dialog()) { key ->
-                AddModelDialogDestination(
-                    viewModel = state,
-                    ui = appUi,
-                    preselectedAuthId = key.preselectedAuthId,
-                    onDismiss = {
-                        navBackStack.removeDialogRoute(key)
-                    },
-                )
-            }
-            entry<EditModelDialogRoute>(metadata = DialogSceneStrategy.dialog()) { key ->
-                EditModelDialogDestination(
-                    viewModel = state,
-                    ui = appUi,
-                    modelId = key.modelId,
-                    onDismiss = {
-                        navBackStack.removeDialogRoute(key)
-                    },
-                )
-            }
-            entry<AddAuthDialogRoute>(metadata = DialogSceneStrategy.dialog()) { key ->
-                AddAuthDialogDestination(
-                    viewModel = state,
-                    ui = appUi,
-                    onDismiss = {
-                        navBackStack.removeDialogRoute(key)
-                    },
-                )
-            }
-            entry<EditAuthDialogRoute>(metadata = DialogSceneStrategy.dialog()) { key ->
-                EditAuthDialogDestination(
-                    viewModel = state,
-                    ui = appUi,
-                    authId = key.authId,
-                    onDismiss = {
-                        navBackStack.removeDialogRoute(key)
-                    },
-                )
-            }
-            entry<DeleteAuthConfirmDialogRoute>(metadata = DialogSceneStrategy.dialog()) { key ->
-                DeleteAuthConfirmDialogDestination(
-                    viewModel = state,
-                    ui = appUi,
-                    authId = key.authId,
-                    onDismiss = {
-                        navBackStack.removeDialogRoute(key)
-                    },
-                )
-            }
-            entry<NewSessionDirDialogRoute>(metadata = DialogSceneStrategy.dialog()) {
-                NewSessionDirDialog(
-                    value = sessionUi.newSessionDirInput,
-                    onValueChange = { value -> state.newSessionDirInput = value },
-                    onConfirm = { state.confirmNewSessionDir() },
-                    onDismiss = {
-                        state.cancelNewSessionDir()
-                        navBackStack.removeDialogRoute(NewSessionDirDialogRoute)
-                    },
-                )
-            }
-            entry<EditSessionDirDialogRoute>(metadata = DialogSceneStrategy.dialog()) {
-                EditSessionDirDialog(
-                    value = sessionUi.sessionDirDraft,
-                    onValueChange = { value -> state.sessionDirDraft = value },
-                    onConfirm = { state.confirmSessionDirDialog() },
-                    onDismiss = {
-                        state.cancelSessionDirDialog()
-                        navBackStack.removeDialogRoute(EditSessionDirDialogRoute)
-                    },
-                )
-            }
-        }
-
-        LaunchedEffect(chromeUi.currentPage) {
-            if (chromeUi.currentPage == AppPage.Sessions) {
-                state.loadSessionList()
-            }
-            val activeDialogRoutes = navBackStack.filter { entry ->
-                when (entry) {
-                    ConfigEditorDialogRoute -> chromeUi.showConfigEditor
-                    SessionManagerDialogRoute -> true
-                    is AddModelDialogRoute,
-                    is EditModelDialogRoute,
-                    is AddAuthDialogRoute,
-                    is EditAuthDialogRoute,
-                    is DeleteAuthConfirmDialogRoute,
-                        -> chromeUi.currentPage == AppPage.Models
-
-                    NewSessionDirDialogRoute -> sessionUi.showNewSessionDialog
-                    EditSessionDirDialogRoute -> sessionUi.showSessionDirDialog
-
-                    else -> false
-                }
-            }
-            navBackStack.clear()
-            navBackStack.add(chromeUi.currentPage)
-            navBackStack.addAll(activeDialogRoutes)
-        }
-
-        LaunchedEffect(chromeUi.showConfigEditor) {
-            val hasRoute = navBackStack.any { entry -> entry == ConfigEditorDialogRoute }
-            if (chromeUi.showConfigEditor && !hasRoute) {
-                navBackStack.add(ConfigEditorDialogRoute)
-            }
-            if (!chromeUi.showConfigEditor && hasRoute) {
-                navBackStack.removeAll { entry -> entry == ConfigEditorDialogRoute }
-            }
-        }
-
-        LaunchedEffect(appUi.overlayDialogRequests.openSessionManagerDialogRequest?.requestNonce) {
-            val request = appUi.overlayDialogRequests.openSessionManagerDialogRequest ?: return@LaunchedEffect
-            val hasRoute = navBackStack.any { entry -> entry == SessionManagerDialogRoute }
-            if (!hasRoute) {
-                navBackStack.add(SessionManagerDialogRoute)
-            }
-            state.consumeOpenSessionManagerDialogRequest(requestNonce = request.requestNonce)
-        }
-
-        LaunchedEffect(appUi.overlayDialogRequests.closeSessionManagerDialogRequest?.requestNonce) {
-            val request = appUi.overlayDialogRequests.closeSessionManagerDialogRequest ?: return@LaunchedEffect
-            navBackStack.removeAll { entry -> entry == SessionManagerDialogRoute }
-            state.consumeCloseSessionManagerDialogRequest(requestNonce = request.requestNonce)
-        }
-
-        LaunchedEffect(sessionUi.showNewSessionDialog) {
-            val hasRoute = navBackStack.any { entry -> entry == NewSessionDirDialogRoute }
-            if (sessionUi.showNewSessionDialog && !hasRoute) {
-                navBackStack.add(NewSessionDirDialogRoute)
-            }
-            if (!sessionUi.showNewSessionDialog && hasRoute) {
-                navBackStack.removeAll { entry -> entry == NewSessionDirDialogRoute }
-            }
-        }
-
-        LaunchedEffect(sessionUi.showSessionDirDialog) {
-            val hasRoute = navBackStack.any { entry -> entry == EditSessionDirDialogRoute }
-            if (sessionUi.showSessionDirDialog && !hasRoute) {
-                navBackStack.add(EditSessionDirDialogRoute)
-            }
-            if (!sessionUi.showSessionDirDialog && hasRoute) {
-                navBackStack.removeAll { entry -> entry == EditSessionDirDialogRoute }
-            }
-        }
-
-        LaunchedEffect(appUi.overlayDialogRequests.openAddModelDialogRequest?.requestNonce) {
-            val request = appUi.overlayDialogRequests.openAddModelDialogRequest ?: return@LaunchedEffect
-            if (navBackStack.none { entry -> entry == AppPage.Models }) {
-                navBackStack.clear()
-                navBackStack.add(AppPage.Models)
-            }
-            navBackStack.upsertDialogRoute(
-                route = AddModelDialogRoute(
-                    preselectedAuthId = request.preselectedAuthId,
-                    requestNonce = request.requestNonce,
-                ),
-                predicate = { entry -> entry is AddModelDialogRoute },
-            )
-            state.consumeOpenAddModelDialogRequest(requestNonce = request.requestNonce)
-        }
-
-        LaunchedEffect(appUi.overlayDialogRequests.openEditModelDialogRequest?.requestNonce) {
-            val request = appUi.overlayDialogRequests.openEditModelDialogRequest ?: return@LaunchedEffect
-            if (navBackStack.none { entry -> entry == AppPage.Models }) {
-                navBackStack.clear()
-                navBackStack.add(AppPage.Models)
-            }
-            navBackStack.upsertDialogRoute(
-                route = EditModelDialogRoute(
-                    modelId = request.modelId,
-                    requestNonce = request.requestNonce,
-                ),
-                predicate = { entry -> entry is EditModelDialogRoute },
-            )
-            state.consumeOpenEditModelDialogRequest(requestNonce = request.requestNonce)
-        }
-
-        LaunchedEffect(appUi.overlayDialogRequests.openAddAuthDialogRequest?.requestNonce) {
-            val request = appUi.overlayDialogRequests.openAddAuthDialogRequest ?: return@LaunchedEffect
-            if (navBackStack.none { entry -> entry == AppPage.Models }) {
-                navBackStack.clear()
-                navBackStack.add(AppPage.Models)
-            }
-            navBackStack.upsertDialogRoute(
-                route = AddAuthDialogRoute(requestNonce = request.requestNonce),
-                predicate = { entry -> entry is AddAuthDialogRoute },
-            )
-            state.consumeOpenAddAuthDialogRequest(requestNonce = request.requestNonce)
-        }
-
-        LaunchedEffect(appUi.overlayDialogRequests.openEditAuthDialogRequest?.requestNonce) {
-            val request = appUi.overlayDialogRequests.openEditAuthDialogRequest ?: return@LaunchedEffect
-            if (navBackStack.none { entry -> entry == AppPage.Models }) {
-                navBackStack.clear()
-                navBackStack.add(AppPage.Models)
-            }
-            navBackStack.upsertDialogRoute(
-                route = EditAuthDialogRoute(
-                    authId = request.authId,
-                    requestNonce = request.requestNonce,
-                ),
-                predicate = { entry -> entry is EditAuthDialogRoute },
-            )
-            state.consumeOpenEditAuthDialogRequest(requestNonce = request.requestNonce)
-        }
-
-        LaunchedEffect(appUi.overlayDialogRequests.openDeleteAuthDialogRequest?.requestNonce) {
-            val request = appUi.overlayDialogRequests.openDeleteAuthDialogRequest ?: return@LaunchedEffect
-            if (navBackStack.none { entry -> entry == AppPage.Models }) {
-                navBackStack.clear()
-                navBackStack.add(AppPage.Models)
-            }
-            navBackStack.upsertDialogRoute(
-                route = DeleteAuthConfirmDialogRoute(
-                    authId = request.authId,
-                    requestNonce = request.requestNonce,
-                ),
-                predicate = { entry -> entry is DeleteAuthConfirmDialogRoute },
-            )
-            state.consumeOpenDeleteAuthDialogRequest(requestNonce = request.requestNonce)
         }
 
         Scaffold(
             topBar = {
-                AppTopBar(state = state, currentPage = chromeUi.currentPage)
+                AppTopBar(
+                    state = state,
+                    currentPage = chromeUi.currentPage,
+                    onOpenSessionManager = {
+                        navBackStack.upsertDialogRoute(
+                            route = SessionManagerDialogRoute,
+                            predicate = { entry -> entry == SessionManagerDialogRoute },
+                        )
+                    },
+                )
             },
             snackbarHost = {
                 SnackbarHost(hostState = snackbarHostState)
@@ -385,32 +179,7 @@ public fun MainScreen(state: MainViewModel) {
                         backStack = navBackStack,
                         onBack = {
                             when (navBackStack.lastOrNull()) {
-                                ConfigEditorDialogRoute -> {
-                                    state.showConfigEditor = false
-                                    navBackStack.removeLastOrNull()
-                                }
-
                                 SessionManagerDialogRoute -> {
-                                    state.requestCloseSessionManagerDialog()
-                                    navBackStack.removeLastOrNull()
-                                }
-
-                                is AddModelDialogRoute,
-                                is EditModelDialogRoute,
-                                is AddAuthDialogRoute,
-                                is EditAuthDialogRoute,
-                                is DeleteAuthConfirmDialogRoute,
-                                    -> {
-                                    navBackStack.removeLastOrNull()
-                                }
-
-                                NewSessionDirDialogRoute -> {
-                                    state.cancelNewSessionDir()
-                                    navBackStack.removeLastOrNull()
-                                }
-
-                                EditSessionDirDialogRoute -> {
-                                    state.cancelSessionDirDialog()
                                     navBackStack.removeLastOrNull()
                                 }
 
@@ -448,16 +217,74 @@ private fun SnapshotStateList<NavKey>.upsertDialogRoute(
 
 @Composable
 private fun ChatRoute(state: MainViewModel) {
-    val chatUi by state.chatPageUiState.collectAsStateWithLifecycle()
-    val sessionUi by state.sessionUiState.collectAsStateWithLifecycle()
-    ChatPage(state = state, sessionUi = sessionUi, ui = chatUi)
+    val chatViewModel: ChatViewModel = org.koin.compose.koinInject()
+    val sessionsViewModel: SessionsViewModel = org.koin.compose.koinInject()
+    val modelsViewModel: ModelsViewModel = org.koin.compose.koinInject()
+    val configViewModel: ConfigViewModel = org.koin.compose.koinInject()
+    val chatUi by chatViewModel.uiState.collectAsStateWithLifecycle()
+    val sessionsUi by sessionsViewModel.uiState.collectAsStateWithLifecycle()
+    val modelsUi by modelsViewModel.uiState.collectAsStateWithLifecycle()
+    val configUi by configViewModel.uiState.collectAsStateWithLifecycle()
+    val currentSessionId by state.currentSessionIdFlow.collectAsStateWithLifecycle()
+    val activePresetName by state.activePresetNameFlow.collectAsStateWithLifecycle()
+    val agentPresets by state.agentPresetsFlow.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        sessionsViewModel.loadSessionList()
+    }
+
+    ChatPage(
+        state = state,
+        chatViewModel = chatViewModel,
+        sessionUi = SessionUiState(
+            messages = chatUi.messages,
+            currentSessionId = currentSessionId,
+            currentSessionWorkDir = chatUi.currentSessionWorkDir,
+            isRunning = chatUi.isRunning,
+            isWaitingForInput = chatUi.isWaitingForInput,
+            currentTask = chatUi.currentTask,
+            todoState = chatUi.todoState,
+            isGeneratingSessionTitle = chatUi.isGeneratingSessionTitle,
+            taskInput = chatUi.taskInput,
+        ),
+        ui = ChatPageUiState(
+            sessionSummaries = sessionsUi.sessionSummaries,
+            messageAlignment = configUi.messageAlignment,
+            messageMaxWidthRatio = configUi.messageMaxWidthRatio,
+            sendKeyMode = configUi.sendKeyMode,
+            agentPresets = agentPresets,
+            activePresetName = activePresetName,
+            models = modelsUi.models,
+            auths = modelsUi.auths,
+            activeModelId = state.activeModelIdFlow.value,
+        ),
+    )
 }
 
 @Composable
 private fun SessionsRoute(state: MainViewModel) {
-    val sessionsUi by state.sessionsPageUiState.collectAsStateWithLifecycle()
-    val sessionUi by state.sessionUiState.collectAsStateWithLifecycle()
-    SessionsPage(state = state, sessionUi = sessionUi, ui = sessionsUi)
+    val sessionsViewModel: SessionsViewModel = org.koin.compose.koinInject()
+    val chatViewModel: ChatViewModel = org.koin.compose.koinInject()
+    val sessionsUi by sessionsViewModel.uiState.collectAsStateWithLifecycle()
+    val chatUi by chatViewModel.uiState.collectAsStateWithLifecycle()
+    val currentSessionId by state.currentSessionIdFlow.collectAsStateWithLifecycle()
+
+    SessionsPage(
+        state = state,
+        sessionsViewModel = sessionsViewModel,
+        sessionUi = SessionUiState(
+            messages = chatUi.messages,
+            currentSessionId = currentSessionId,
+            currentSessionWorkDir = chatUi.currentSessionWorkDir,
+            isRunning = chatUi.isRunning,
+            isWaitingForInput = chatUi.isWaitingForInput,
+            currentTask = chatUi.currentTask,
+            todoState = chatUi.todoState,
+            isGeneratingSessionTitle = chatUi.isGeneratingSessionTitle,
+            taskInput = chatUi.taskInput,
+        ),
+        ui = sessionsUi,
+    )
 }
 
 @Composable
@@ -474,43 +301,49 @@ private fun SettingsRoute(state: MainViewModel) {
 
 @Composable
 private fun ToolsRoute(state: MainViewModel) {
-    val ui by state.toolsPageUiState.collectAsStateWithLifecycle()
-    ToolsPage(state = state, ui = ui)
+    val toolsViewModel: ToolsViewModel = org.koin.compose.koinInject()
+    val ui by toolsViewModel.uiState.collectAsStateWithLifecycle()
+    ToolsPage(viewModel = toolsViewModel, ui = ui)
 }
 
 @Composable
 private fun McpRoute(state: MainViewModel) {
-    val ui by state.mcpPageUiState.collectAsStateWithLifecycle()
-    McpPage(state = state, ui = ui)
+    val mcpViewModel: McpViewModel = org.koin.compose.koinInject()
+    val ui by mcpViewModel.uiState.collectAsStateWithLifecycle()
+    McpPage(viewModel = mcpViewModel, ui = ui)
 }
 
 @Composable
 private fun AcpRoute(state: MainViewModel) {
-    val ui by state.acpPageUiState.collectAsStateWithLifecycle()
-    AcpPage(state = state, ui = ui)
+    val acpViewModel: AcpViewModel = org.koin.compose.koinInject()
+    val ui by acpViewModel.uiState.collectAsStateWithLifecycle()
+    AcpPage(viewModel = acpViewModel, ui = ui)
 }
 
 @Composable
 private fun TerminalRoute(state: MainViewModel) {
-    val ui by state.terminalPageUiState.collectAsStateWithLifecycle()
-    TerminalPage(state = state, ui = ui)
+    val terminalViewModel: TerminalViewModel = org.koin.compose.koinInject()
+    val ui by terminalViewModel.uiState.collectAsStateWithLifecycle()
+    TerminalPage(viewModel = terminalViewModel, ui = ui)
 }
 
 @Composable
 private fun WebRoute(state: MainViewModel) {
-    val ui by state.webPageUiState.collectAsStateWithLifecycle()
-    WebPage(state = state, ui = ui)
+    val webViewModel: WebViewModel = org.koin.compose.koinInject()
+    val ui by webViewModel.uiState.collectAsStateWithLifecycle()
+    WebPage(viewModel = webViewModel, ui = ui)
 }
 
 @Composable
 private fun InfoRoute(state: MainViewModel) {
-    val ui by state.infoPageUiState.collectAsStateWithLifecycle()
-    InfoPage(state = state, ui = ui)
+    val infoViewModel: InfoViewModel = org.koin.compose.koinInject()
+    val ui by infoViewModel.uiState.collectAsStateWithLifecycle()
+    InfoPage(viewModel = infoViewModel, ui = ui)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppTopBar(state: MainViewModel, currentPage: AppPage) {
+private fun AppTopBar(state: MainViewModel, currentPage: AppPage, onOpenSessionManager: () -> Unit) {
     CenterAlignedTopAppBar(
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -540,8 +373,7 @@ private fun AppTopBar(state: MainViewModel, currentPage: AppPage) {
 
             FilledTonalIconButton(
                 onClick = {
-                    state.loadSessionList()
-                    state.requestOpenSessionManagerDialog()
+                    onOpenSessionManager()
                 }
             ) {
                 Icon(
@@ -589,13 +421,14 @@ private fun AppNavigationRail(
 }
 
 @Composable
-private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPageUiState) {
-    LaunchedEffect(Unit) {
-        state.loadSessionList()
-        state.restoreLastSessionIfNeeded()
-    }
-    val onForkFromMessage = remember(state) {
-        { index: Int -> state.forkFromMessage(index) }
+private fun ChatPage(
+    state: MainViewModel,
+    chatViewModel: ChatViewModel,
+    sessionUi: SessionUiState,
+    ui: ChatPageUiState
+) {
+    val onForkFromMessage = remember(chatViewModel) {
+        { index: Int -> chatViewModel.forkFromMessage(index) }
     }
 
     var isTodoSidebarCollapsed by rememberSaveable(sessionUi.currentSessionId) {
@@ -609,7 +442,7 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
     Column(
         modifier = Modifier.fillMaxSize(),
     ) {
-        SessionControls(state = state, sessionUi = sessionUi, ui = ui)
+        SessionControls(state = state, chatViewModel = chatViewModel, sessionUi = sessionUi, ui = ui)
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -666,7 +499,7 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
                             HorizontalDivider()
                             TodoSidebar(
                                 todoState = sidebarTodoState,
-                                onToggleExpand = state::toggleTodoExpand,
+                                onToggleExpand = chatViewModel::toggleTodoExpand,
                                 onToggleComplete = { _ -> },
                                 modifier = Modifier.heightIn(max = 300.dp)
                             )
@@ -676,6 +509,7 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
 
                 InputSection(
                     state = state,
+                    chatViewModel = chatViewModel,
                     sessionUi = sessionUi,
                     sendKeyMode = ui.sendKeyMode,
                 )
@@ -685,7 +519,12 @@ private fun ChatPage(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPa
 }
 
 @Composable
-private fun SessionsPage(state: MainViewModel, sessionUi: SessionUiState, ui: SessionsPageUiState) {
+private fun SessionsPage(
+    state: MainViewModel,
+    sessionsViewModel: SessionsViewModel,
+    sessionUi: SessionUiState,
+    ui: SessionsUiState
+) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
             text = "Sessions",
@@ -705,17 +544,11 @@ private fun SessionsPage(state: MainViewModel, sessionUi: SessionUiState, ui: Se
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(
-                    onClick = { state.openSessionDirDialog() },
-                    enabled = !sessionUi.isRunning && !sessionUi.isWaitingForInput,
-                ) {
-                    Text("Edit")
-                }
             }
             Spacer(modifier = Modifier.height(8.dp))
         }
         SessionManagerContent(
-            viewModel = state,
+            viewModel = sessionsViewModel,
             ui = ui,
             sessionUi = sessionUi,
             modifier = Modifier.fillMaxSize()
@@ -726,7 +559,7 @@ private fun SessionsPage(state: MainViewModel, sessionUi: SessionUiState, ui: Se
 @Composable
 private fun ModelsPage(state: MainViewModel, ui: AppUiState) {
     val tabs = listOf("Models", "Auth Providers", "Preferences")
-    val selectedTab = ui.modelsPageSelectedTab
+    var selectedTab by rememberSaveable { mutableStateOf(0) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
@@ -740,7 +573,7 @@ private fun ModelsPage(state: MainViewModel, ui: AppUiState) {
             ui = ui,
             modifier = Modifier.fillMaxSize(),
             selectedTab = selectedTab,
-            onTabSelected = { state.modelsPageSelectedTab = it },
+            onTabSelected = { tab -> selectedTab = tab },
             tabs = tabs,
         )
     }
@@ -760,7 +593,7 @@ private fun SettingsPage(state: MainViewModel, ui: AppUiState) {
 }
 
 @Composable
-private fun ToolsPage(state: MainViewModel, ui: ToolsPageUiState) {
+private fun ToolsPage(viewModel: ToolsViewModel, ui: ToolsPageUiState) {
     val toolItems = listOf(
         ToolItem(key = "file", title = "File (read/list)", description = "Read and list files"),
         ToolItem(key = "file-edit", title = "File edit", description = "Edit files"),
@@ -807,7 +640,7 @@ private fun ToolsPage(state: MainViewModel, ui: ToolsPageUiState) {
                         Switch(
                             checked = isEnabled,
                             onCheckedChange = { enabled ->
-                                state.setToolEnabled(tool.key, enabled)
+                                viewModel.setToolEnabled(tool.key, enabled)
                             }
                         )
                     }
@@ -830,7 +663,7 @@ private fun ToolsPage(state: MainViewModel, ui: ToolsPageUiState) {
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
-                    TextButton(onClick = { state.clearToolLogs() }) {
+                    TextButton(onClick = { viewModel.clearToolLogs() }) {
                         Text("Clear")
                     }
                 }
@@ -938,7 +771,7 @@ private fun EditSessionDirDialog(
 }
 
 @Composable
-private fun AcpPage(state: MainViewModel, ui: AcpPageUiState) {
+private fun AcpPage(viewModel: AcpViewModel, ui: AcpPageUiState) {
     var portText by remember { mutableStateOf(ui.acpPort.toString()) }
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
@@ -952,7 +785,7 @@ private fun AcpPage(state: MainViewModel, ui: AcpPageUiState) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = ui.acpHost,
-                    onValueChange = { state.acpHost = it },
+                    onValueChange = { value -> viewModel.updateHost(value) },
                     label = { Text("Host") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
@@ -963,7 +796,7 @@ private fun AcpPage(state: MainViewModel, ui: AcpPageUiState) {
                         portText = input
                         val parsed = input.toIntOrNull()
                         if (parsed != null) {
-                            state.acpPort = parsed
+                            viewModel.updatePort(parsed)
                         }
                     },
                     label = { Text("Port") },
@@ -975,13 +808,13 @@ private fun AcpPage(state: MainViewModel, ui: AcpPageUiState) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FilledTonalButton(
-                        onClick = { state.startAcpServer() },
+                        onClick = { viewModel.startAcpServer() },
                         enabled = !ui.acpRunning
                     ) {
                         Text("Start")
                     }
                     FilledTonalButton(
-                        onClick = { state.stopAcpServer() },
+                        onClick = { viewModel.stopAcpServer() },
                         enabled = ui.acpRunning
                     ) {
                         Text("Stop")
@@ -1030,7 +863,7 @@ private fun AcpPage(state: MainViewModel, ui: AcpPageUiState) {
 }
 
 @Composable
-private fun TerminalPage(state: MainViewModel, ui: TerminalPageUiState) {
+private fun TerminalPage(viewModel: TerminalViewModel, ui: TerminalPageUiState) {
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("Shell", "KTS")
 
@@ -1055,15 +888,15 @@ private fun TerminalPage(state: MainViewModel, ui: TerminalPageUiState) {
         Spacer(modifier = Modifier.height(12.dp))
 
         if (selectedTab == 0) {
-            ShellPanel(state = state, ui = ui)
+            ShellPanel(viewModel = viewModel, ui = ui)
         } else {
-            ScriptPanel(state = state, ui = ui)
+            ScriptPanel(viewModel = viewModel, ui = ui)
         }
     }
 }
 
 @Composable
-private fun WebPage(state: MainViewModel, ui: WebPageUiState) {
+private fun WebPage(viewModel: WebViewModel, ui: WebPageUiState) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
             text = "Web",
@@ -1079,19 +912,19 @@ private fun WebPage(state: MainViewModel, ui: WebPageUiState) {
         ) {
             OutlinedTextField(
                 value = ui.webUrl,
-                onValueChange = { state.webUrl = it },
+                onValueChange = { value -> viewModel.updateWebUrl(value) },
                 label = { Text("URL") },
                 modifier = Modifier.weight(1f),
                 singleLine = true
             )
             FilledTonalButton(
-                onClick = { state.fetchWebContent() },
+                onClick = { viewModel.fetchWebContent() },
                 enabled = !ui.webLoading
             ) {
                 Text("Fetch")
             }
             FilledTonalButton(
-                onClick = { state.openWebInBrowser() }
+                onClick = { viewModel.openWebInBrowser() }
             ) {
                 Text("Open")
             }
@@ -1110,7 +943,7 @@ private fun WebPage(state: MainViewModel, ui: WebPageUiState) {
 }
 
 @Composable
-private fun InfoPage(state: MainViewModel, ui: InfoPageUiState) {
+private fun InfoPage(viewModel: InfoViewModel, ui: InfoPageUiState) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
             text = "Diagnostics",
@@ -1147,13 +980,13 @@ private fun InfoPage(state: MainViewModel, ui: InfoPageUiState) {
         Spacer(modifier = Modifier.height(16.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(onClick = { state.exportLogs() }) {
+            FilledTonalButton(onClick = { viewModel.exportLogs() }) {
                 Icon(imageVector = Icons.Default.Download, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Export Logs")
             }
 
-            FilledTonalButton(onClick = { state.refreshPresetAndSkillsPreview() }) {
+            FilledTonalButton(onClick = { viewModel.refreshPresetAndSkillsPreview() }) {
                 Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Refresh")
@@ -1229,11 +1062,11 @@ private fun InfoRow(label: String, value: String) {
 }
 
 @Composable
-private fun ShellPanel(state: MainViewModel, ui: TerminalPageUiState) {
+private fun ShellPanel(viewModel: TerminalViewModel, ui: TerminalPageUiState) {
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = ui.terminalCommand,
-            onValueChange = { state.terminalCommand = it },
+            onValueChange = { value -> viewModel.updateTerminalCommand(value) },
             label = { Text("Shell command") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
@@ -1241,7 +1074,7 @@ private fun ShellPanel(state: MainViewModel, ui: TerminalPageUiState) {
         Spacer(modifier = Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilledTonalButton(
-                onClick = { state.runShellCommand() },
+                onClick = { viewModel.runShellCommand() },
                 enabled = !ui.terminalRunning
             ) {
                 Text("Run")
@@ -1259,11 +1092,11 @@ private fun ShellPanel(state: MainViewModel, ui: TerminalPageUiState) {
 }
 
 @Composable
-private fun ScriptPanel(state: MainViewModel, ui: TerminalPageUiState) {
+private fun ScriptPanel(viewModel: TerminalViewModel, ui: TerminalPageUiState) {
     Column(modifier = Modifier.fillMaxSize()) {
         OutlinedTextField(
             value = ui.scriptContent,
-            onValueChange = { state.scriptContent = it },
+            onValueChange = { value -> viewModel.updateScriptContent(value) },
             label = { Text("KTS Script") },
             modifier = Modifier.fillMaxWidth().weight(1f),
             singleLine = false,
@@ -1271,7 +1104,7 @@ private fun ScriptPanel(state: MainViewModel, ui: TerminalPageUiState) {
         )
         Spacer(modifier = Modifier.height(8.dp))
         FilledTonalButton(
-            onClick = { state.runScript() },
+            onClick = { viewModel.runScript() },
             enabled = !ui.scriptRunning
         ) {
             Text("Run Script")
@@ -1315,6 +1148,7 @@ private fun CoreTodoUiState.toSidebarTodoUiState(): SidebarTodoUiState {
 @Composable
 private fun InputSection(
     state: MainViewModel,
+    chatViewModel: ChatViewModel,
     sessionUi: SessionUiState,
     sendKeyMode: String,
 ) {
@@ -1336,7 +1170,7 @@ private fun InputSection(
     val hasActiveSession = sessionUi.currentSessionId != null
 
     fun submitDraftInput() {
-        state.continueFromInput(localTaskInput)
+        chatViewModel.submitInput(localTaskInput)
         localTaskInput = ""
     }
 
@@ -1389,7 +1223,7 @@ private fun InputSection(
                         }
                         if (canSubmitFromKeyboard) {
                             if (localTaskInput.isBlank()) {
-                                state.continueCurrentSession()
+                                chatViewModel.continueCurrentSession()
                             } else {
                                 submitDraftInput()
                             }
@@ -1424,7 +1258,7 @@ private fun InputSection(
             FilledIconButton(
                 onClick = {
                     if (sessionUi.isRunning) {
-                        state.stopCurrentSession()
+                        chatViewModel.stopRun()
                     } else {
                         submitDraftInput()
                     }
@@ -1461,9 +1295,12 @@ private fun InputSection(
 }
 
 @Composable
-private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPageUiState) {
-    val canEditWorkDir = sessionUi.currentSessionId != null && !sessionUi.isRunning && !sessionUi.isWaitingForInput
-
+private fun SessionControls(
+    state: MainViewModel,
+    chatViewModel: ChatViewModel,
+    sessionUi: SessionUiState,
+    ui: ChatPageUiState
+) {
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1482,20 +1319,7 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
             }
         )
 
-        AssistChip(
-            onClick = { state.openSessionDirDialog() },
-            enabled = canEditWorkDir,
-            label = { Text("Work Dir") },
-            leadingIcon = {
-                Icon(
-                    Icons.Default.Folder,
-                    contentDescription = null,
-                    Modifier.size(AssistChipDefaults.IconSize)
-                )
-            }
-        )
-
-        SessionQuickSwitch(state = state, sessionUi = sessionUi, ui = ui)
+        SessionQuickSwitch(state = state, chatViewModel = chatViewModel, sessionUi = sessionUi, ui = ui)
 
         PresetQuickSwitch(state = state, ui = ui)
         ModelQuickSwitch(state = state, ui = ui)
@@ -1504,7 +1328,12 @@ private fun SessionControls(state: MainViewModel, sessionUi: SessionUiState, ui:
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SessionQuickSwitch(state: MainViewModel, sessionUi: SessionUiState, ui: ChatPageUiState) {
+private fun SessionQuickSwitch(
+    state: MainViewModel,
+    chatViewModel: ChatViewModel,
+    sessionUi: SessionUiState,
+    ui: ChatPageUiState,
+) {
     val sessions = ui.sessionSummaries
     val activeId = sessionUi.currentSessionId
     val activeSession = sessions.firstOrNull { it.id == activeId }
@@ -1579,7 +1408,7 @@ private fun SessionQuickSwitch(state: MainViewModel, sessionUi: SessionUiState, 
             state = rememberTooltipState(),
         ) {
             FilledTonalIconButton(
-                onClick = { state.regenerateCurrentSessionTitle() },
+                onClick = { chatViewModel.regenerateCurrentSessionTitle() },
                 enabled = hasActiveSession && !titleGenerating,
                 modifier = Modifier.size(36.dp),
             ) {
@@ -1636,7 +1465,7 @@ private fun SessionQuickSwitch(state: MainViewModel, sessionUi: SessionUiState, 
             confirmButton = {
                 FilledTonalButton(
                     onClick = {
-                        state.updateCurrentSessionTitle(titleDraft)
+                        chatViewModel.updateCurrentSessionTitle(titleDraft)
                         showEditDialogState.value = false
                     },
                     enabled = titleDraft.isNotBlank(),

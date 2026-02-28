@@ -19,12 +19,15 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.stream29.kode.app.viewmodel.MainViewModel
 import io.github.stream29.kode.app.viewmodel.SessionUiState
-import io.github.stream29.kode.app.viewmodel.SessionsPageUiState
+import io.github.stream29.kode.app.viewmodel.chat.ChatViewModel
+import io.github.stream29.kode.app.viewmodel.sessions.SessionsUiState
+import io.github.stream29.kode.app.viewmodel.sessions.SessionsViewModel
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.storage.SessionStatusFilter
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import org.koin.compose.koinInject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,8 +35,24 @@ public fun SessionManagerDialog(
     viewModel: MainViewModel,
     onDismiss: () -> Unit
 ) {
-    val ui by viewModel.sessionsPageUiState.collectAsStateWithLifecycle()
-    val sessionUi by viewModel.sessionUiState.collectAsStateWithLifecycle()
+    val sessionsViewModel: SessionsViewModel = koinInject()
+    val chatViewModel: ChatViewModel = koinInject()
+
+    val ui by sessionsViewModel.uiState.collectAsStateWithLifecycle()
+    val chatUi by chatViewModel.uiState.collectAsStateWithLifecycle()
+    val currentSessionId by viewModel.currentSessionIdFlow.collectAsStateWithLifecycle()
+
+    val sessionUi = SessionUiState(
+        messages = chatUi.messages,
+        currentSessionId = currentSessionId,
+        currentSessionWorkDir = chatUi.currentSessionWorkDir,
+        isRunning = chatUi.isRunning,
+        isWaitingForInput = chatUi.isWaitingForInput,
+        currentTask = chatUi.currentTask,
+        todoState = chatUi.todoState,
+        isGeneratingSessionTitle = chatUi.isGeneratingSessionTitle,
+        taskInput = chatUi.taskInput,
+    )
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -53,7 +72,7 @@ public fun SessionManagerDialog(
         },
         text = {
             SessionManagerContent(
-                viewModel = viewModel,
+                viewModel = sessionsViewModel,
                 ui = ui,
                 sessionUi = sessionUi,
                 modifier = Modifier
@@ -63,7 +82,7 @@ public fun SessionManagerDialog(
         },
         confirmButton = {
             FilledTonalButton(
-                onClick = { viewModel.loadSessionList() }
+                onClick = { sessionsViewModel.loadSessionList() }
             ) {
                 Icon(
                     imageVector = Icons.Default.Refresh,
@@ -84,9 +103,42 @@ public fun SessionManagerDialog(
 
 @Composable
 public fun SessionManagerContent(
-    viewModel: MainViewModel,
-    ui: SessionsPageUiState,
+    viewModel: SessionsViewModel,
+    ui: SessionsUiState,
     sessionUi: SessionUiState,
+    modifier: Modifier
+) {
+    SessionManagerContent(
+        onUpdateSearchQuery = { viewModel.updateSessionSearchQuery(it) },
+        onImportSession = { viewModel.importSession() },
+        onUpdateStatusFilter = { viewModel.updateSessionStatusFilter(it) },
+        onSwitchToSession = { viewModel.switchToSession(it) },
+        onForkSession = { viewModel.forkSession(it) },
+        onDeleteSession = { viewModel.deleteSession(it) },
+        onArchiveSession = { viewModel.archiveSession(it) },
+        onRestoreSession = { viewModel.restoreSession(it) },
+        currentSessionWorkDir = sessionUi.currentSessionWorkDir,
+        currentSessionId = sessionUi.currentSessionId,
+        ui = ui,
+        modifier = modifier,
+        onEditSessionDir = { /* Session dir edit remains in main for now */ }
+    )
+}
+
+@Composable
+private fun SessionManagerContent(
+    onUpdateSearchQuery: (String) -> Unit,
+    onImportSession: () -> Unit,
+    onUpdateStatusFilter: (SessionStatusFilter) -> Unit,
+    onSwitchToSession: (String) -> Unit,
+    onForkSession: (String) -> Unit,
+    onDeleteSession: (String) -> Unit,
+    onArchiveSession: (String) -> Unit,
+    onRestoreSession: (String) -> Unit,
+    onEditSessionDir: () -> Unit,
+    currentSessionWorkDir: String,
+    currentSessionId: String?,
+    ui: SessionsUiState,
     modifier: Modifier
 ) {
     Column(modifier = modifier) {
@@ -97,13 +149,13 @@ public fun SessionManagerContent(
         ) {
             OutlinedTextField(
                 value = ui.sessionSearchQuery,
-                onValueChange = { viewModel.updateSessionSearchQuery(it) },
+                onValueChange = onUpdateSearchQuery,
                 label = { Text("Search") },
                 modifier = Modifier.weight(1f),
                 singleLine = true
             )
             FilledTonalButton(
-                onClick = { viewModel.importSession() }
+                onClick = onImportSession
             ) {
                 Icon(
                     imageVector = Icons.Default.UploadFile,
@@ -118,7 +170,7 @@ public fun SessionManagerContent(
         Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedTextField(
-            value = sessionUi.currentSessionWorkDir,
+            value = currentSessionWorkDir,
             onValueChange = {},
             label = { Text("Session directory") },
             modifier = Modifier.fillMaxWidth(),
@@ -127,8 +179,8 @@ public fun SessionManagerContent(
         )
         Spacer(modifier = Modifier.height(8.dp))
         FilledTonalButton(
-            onClick = { viewModel.openSessionDirDialog() },
-            enabled = sessionUi.currentSessionId != null
+            onClick = onEditSessionDir,
+            enabled = currentSessionId != null
         ) {
             Icon(
                 imageVector = Icons.Default.Edit,
@@ -152,17 +204,17 @@ public fun SessionManagerContent(
             ) {
                 FilterChip(
                     selected = ui.sessionStatusFilter == SessionStatusFilter.ACTIVE,
-                    onClick = { viewModel.updateSessionStatusFilter(SessionStatusFilter.ACTIVE) },
+                    onClick = { onUpdateStatusFilter(SessionStatusFilter.ACTIVE) },
                     label = { Text("Active") }
                 )
                 FilterChip(
                     selected = ui.sessionStatusFilter == SessionStatusFilter.ARCHIVED,
-                    onClick = { viewModel.updateSessionStatusFilter(SessionStatusFilter.ARCHIVED) },
+                    onClick = { onUpdateStatusFilter(SessionStatusFilter.ARCHIVED) },
                     label = { Text("Archived") }
                 )
                 FilterChip(
                     selected = ui.sessionStatusFilter == SessionStatusFilter.ALL,
-                    onClick = { viewModel.updateSessionStatusFilter(SessionStatusFilter.ALL) },
+                    onClick = { onUpdateStatusFilter(SessionStatusFilter.ALL) },
                     label = { Text("All") }
                 )
             }
@@ -202,13 +254,13 @@ public fun SessionManagerContent(
                 ) { session ->
                     SessionCard(
                         session = session,
-                        isCurrent = session.id == sessionUi.currentSessionId,
-                        onSwitch = { viewModel.switchToSession(session.id) },
-                        onFork = { viewModel.forkSession(session.id) },
-                        onExport = { viewModel.exportSession(session.id) },
-                        onRestore = { viewModel.restoreSession(session.id) },
-                        onDelete = { viewModel.deleteSession(session.id) },
-                        onArchive = { viewModel.archiveSession(session.id) }
+                        isCurrent = session.id == currentSessionId,
+                        onSwitch = { onSwitchToSession(session.id) },
+                        onFork = { onForkSession(session.id) },
+                        onExport = { /* TODO */ },
+                        onRestore = { onRestoreSession(session.id) },
+                        onDelete = { onDeleteSession(session.id) },
+                        onArchive = { onArchiveSession(session.id) }
                     )
                 }
             }
