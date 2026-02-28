@@ -10,8 +10,8 @@ import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.core.testsupport.FakeMessageHandler
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.model.TodoNode
-import io.github.stream29.kode.session.core.tool.ToolNames
 import io.github.stream29.kode.session.core.storage.FileSessionStorage
+import io.github.stream29.kode.session.core.tool.ToolNames
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
@@ -21,14 +21,8 @@ import kotlinx.serialization.serializer
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.Base64
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
-
-import io.github.stream29.kode.session.core.model.SessionMessage
+import java.util.*
+import kotlin.test.*
 
 class TodoAutoPersistTest {
     @Test
@@ -60,7 +54,7 @@ class TodoAutoPersistTest {
                         suspendForUserInput()
                     """.trimIndent(),
                 )
-                
+
                 val msgs = sessionManager.getAgentMessages(session.id, "main-${session.id}")
                 println("[DEBUG_LOG] messages: ${msgs.joinToString("\n")}")
 

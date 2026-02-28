@@ -37,8 +37,8 @@
 - 恢复前历史不得存在 trailing `AgentScript.status == PENDING_INPUT`。
 - 若存在上述状态，按协议违规处理。
 - Stop 采用两阶段：
-  - 第一次 stop: safe-stop，等待当前工具调用结束并在安全点挂起。
-  - 第二次 stop: force-stop，取消运行并回滚未完成的尾部 pending script。
+    - 第一次 stop: safe-stop，等待当前工具调用结束并在安全点挂起。
+    - 第二次 stop: force-stop，取消运行并回滚未完成的尾部 pending script。
 - stop/continue 路径结束后，不得遗留非法 pending-script 状态。
 
 ## 运行边界
@@ -54,4 +54,5 @@
 
 ## 历史说明
 
-旧版 Session 设计曾包含多工具 agent loop 与 subagent 编排，这些内容已被严格 script-only 契约替代。阅读历史资料时，请以 AGENTS.md 的 Critical Interaction Contract 为准。
+旧版 Session 设计曾包含多工具 agent loop 与 subagent 编排，这些内容已被严格 script-only 契约替代。阅读历史资料时，请以
+AGENTS.md 的 Critical Interaction Contract 为准。

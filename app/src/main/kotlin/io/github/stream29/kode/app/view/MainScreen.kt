@@ -1,7 +1,8 @@
 package io.github.stream29.kode.app.view
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
@@ -9,17 +10,9 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.animation.*
-import androidx.compose.foundation.clickable
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshots.SnapshotStateList
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -32,23 +25,14 @@ import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.scene.DialogSceneStrategy
 import androidx.navigation3.ui.NavDisplay
-import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
+import io.github.stream29.kode.app.util.formatModelDisplayName
+import io.github.stream29.kode.app.viewmodel.*
 import io.github.stream29.kode.ui.components.todo.TodoSidebar
-import io.github.stream29.kode.ui.core.todo.TodoUiNode as CoreTodoUiNode
+import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
 import io.github.stream29.kode.ui.components.todo.TodoUiNode as SidebarTodoUiNode
 import io.github.stream29.kode.ui.components.todo.TodoUiState as SidebarTodoUiState
+import io.github.stream29.kode.ui.core.todo.TodoUiNode as CoreTodoUiNode
 import io.github.stream29.kode.ui.core.todo.TodoUiState as CoreTodoUiState
-import io.github.stream29.kode.app.util.formatModelDisplayName
-import io.github.stream29.kode.app.viewmodel.AcpPageUiState
-import io.github.stream29.kode.app.viewmodel.AppUiState
-import io.github.stream29.kode.app.viewmodel.ChatPageUiState
-import io.github.stream29.kode.app.viewmodel.InfoPageUiState
-import io.github.stream29.kode.app.viewmodel.MainViewModel
-import io.github.stream29.kode.app.viewmodel.SessionUiState
-import io.github.stream29.kode.app.viewmodel.SessionsPageUiState
-import io.github.stream29.kode.app.viewmodel.TerminalPageUiState
-import io.github.stream29.kode.app.viewmodel.ToolsPageUiState
-import io.github.stream29.kode.app.viewmodel.WebPageUiState
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -1428,7 +1412,6 @@ private fun InputSection(
             )
 
             Spacer(modifier = Modifier.width(12.dp))
-
 
 
             val isInputValid = localTaskInput.isNotBlank()

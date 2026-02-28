@@ -1,7 +1,5 @@
 package io.github.stream29.kode.session.core.todo
 
-import io.github.stream29.kode.session.core.model.TodoNode
-
 public fun generateTodoGuidelineInjection(): String {
     return """
         ## Todo List Guidelines

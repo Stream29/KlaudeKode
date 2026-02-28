@@ -4,14 +4,11 @@ import ai.koog.agents.core.tools.annotations.LLMDescription
 import ai.koog.agents.core.tools.annotations.Tool
 import ai.koog.agents.core.tools.reflect.ToolSet
 import io.github.stream29.kode.ui.core.MessageHandler
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.HttpHeaders
-import io.ktor.http.contentType
-import io.ktor.http.encodeURLQueryComponent
+import io.ktor.client.*
+import io.ktor.client.engine.cio.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -36,7 +33,8 @@ public class WebTools public constructor(
     public companion object {
         private const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         private const val MAX_CONTENT_CHARS = 50_000
-        private const val MAIN_CONTENT_SELECTOR = "article, main, [role='main'], .content, .post-content, .entry-content"
+        private const val MAIN_CONTENT_SELECTOR =
+            "article, main, [role='main'], .content, .post-content, .entry-content"
         private const val STRIPPED_ELEMENTS_SELECTOR = "script, style, nav, footer, header, aside, .advertisement, .ads"
         private val WHITESPACE_REGEX = Regex("\\s+")
         private val EXTRA_BLANK_LINES_REGEX = Regex("\\n\\s*\\n\\s*\\n+")
@@ -45,8 +43,8 @@ public class WebTools public constructor(
     @Tool
     @LLMDescription(
         "Fetch the content of a web page from a URL. " +
-        "Extracts the main text content from HTML pages. " +
-        "Use this to read documentation, articles, or any web content."
+                "Extracts the main text content from HTML pages. " +
+                "Use this to read documentation, articles, or any web content."
     )
     public suspend fun fetchURL(
         @LLMDescription("The URL to fetch content from")
@@ -101,14 +99,13 @@ public class WebTools public constructor(
     }
 
     @Tool
-    @Suppress("RedundantSuspendModifier")
     @LLMDescription(
         "Search the web for information. " +
-        "Note: This is a placeholder implementation. In production, integrate with a search API " +
-        "like Google Custom Search, Bing API, or Moonshot's search service. " +
-        "Returns helpful guidance for manual searching."
+                "Note: This is a placeholder implementation. In production, integrate with a search API " +
+                "like Google Custom Search, Bing API, or Moonshot's search service. " +
+                "Returns helpful guidance for manual searching."
     )
-    public suspend fun searchWeb(
+    public fun searchWeb(
         @LLMDescription("The search query")
         query: String,
         @LLMDescription("Number of results to request (1-10, default 5)")

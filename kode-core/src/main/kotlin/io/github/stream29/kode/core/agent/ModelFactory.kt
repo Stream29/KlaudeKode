@@ -38,7 +38,11 @@ internal object ModelFactory {
         val provider = BuiltinLlmProviderRegistry.findProvider(providerId)
             ?: throw IllegalArgumentException("Provider not found: $providerId")
         val baseModel = provider.models().firstOrNull { it.id == modelConfig.model }
-            ?: createDynamicModel(provider = provider.llmProvider, providerTemplate = provider.models().firstOrNull(), modelConfig = modelConfig)
+            ?: createDynamicModel(
+                provider = provider.llmProvider,
+                providerTemplate = provider.models().firstOrNull(),
+                modelConfig = modelConfig
+            )
 
         val resolvedModel = applyOverrides(
             baseModel = baseModel,

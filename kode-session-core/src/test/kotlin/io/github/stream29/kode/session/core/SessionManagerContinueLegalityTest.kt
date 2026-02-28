@@ -8,12 +8,7 @@ import io.github.stream29.kode.session.core.model.UserMessage
 import io.github.stream29.kode.session.core.testsupport.FakeSessionRepository
 import io.github.stream29.kode.session.core.tool.ToolNames
 import kotlinx.coroutines.runBlocking
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertIs
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
+import kotlin.test.*
 
 class SessionManagerContinueLegalityTest {
     @Test

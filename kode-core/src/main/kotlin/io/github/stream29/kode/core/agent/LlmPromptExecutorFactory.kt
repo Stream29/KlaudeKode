@@ -4,19 +4,14 @@ import ai.koog.prompt.executor.clients.LLMClient
 import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
 import ai.koog.prompt.llm.LLMProvider
 import io.github.stream29.kode.config.api.LlmAuthConfig
-import io.github.stream29.kode.config.api.LlmAuth as ConfigLlmAuth
 import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER
 import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE
-import io.github.stream29.kode.oauth.core.DefaultOAuthAuthCodePkceClient
-import io.github.stream29.kode.oauth.core.DefaultOAuthCredentialManager
-import io.github.stream29.kode.oauth.core.DefaultOAuthDeviceFlowClient
-import io.github.stream29.kode.oauth.core.FileOAuthTokenStore
-import io.github.stream29.kode.oauth.core.OAuthCredentialManager
-import io.github.stream29.kode.oauth.core.OAuthTokenRecord
-import io.github.stream29.kode.providers.api.LlmAuth as RuntimeLlmAuth
+import io.github.stream29.kode.oauth.core.*
 import io.github.stream29.kode.providers.builtin.BuiltinLlmProviderRegistry
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import io.github.stream29.kode.config.api.LlmAuth as ConfigLlmAuth
+import io.github.stream29.kode.providers.api.LlmAuth as RuntimeLlmAuth
 
 internal object LlmPromptExecutorFactory {
     fun create(auths: List<LlmAuthConfig>): MultiLLMPromptExecutor {

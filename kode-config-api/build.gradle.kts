@@ -4,6 +4,6 @@ plugins {
 
 dependencies {
     implementation(libs.bundles.serialization)
-    
+
     testImplementation(libs.bundles.testing)
 }

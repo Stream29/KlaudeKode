@@ -1,5 +1,5 @@
-import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.internal.os.OperatingSystem
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 val os: OperatingSystem = OperatingSystem.current()
 val arch: String = System.getProperty("os.arch").lowercase()
@@ -45,10 +45,10 @@ dependencies {
     implementation(projects.providers.providerGroq)
     implementation(projects.providers.providerMistral)
     implementation(projects.providers.providerXai)
-    
+
     // Script engine + script tool module
     implementation(projects.tools.kotlinScriptTool)
-    
+
     // External dependencies
     implementation(libs.bundles.koog)
     implementation(libs.bundles.compose)
@@ -68,7 +68,7 @@ dependencies {
     implementation("org.openjfx:javafx-media:$javafxVersion:$javafxPlatform")
     implementation("org.openjfx:javafx-web:$javafxVersion:$javafxPlatform")
     implementation("org.openjfx:javafx-swing:$javafxVersion:$javafxPlatform")
-    
+
     testImplementation(libs.bundles.testing)
 }
 

@@ -13,12 +13,10 @@ import io.github.stream29.kode.core.port.ToolCallPreHookResult
 import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.session.core.tool.ToolNames
-import io.github.stream29.kode.tools.scripting.ScriptContext
-import io.github.stream29.kode.tools.scripting.KotlinScriptTool
 import io.github.stream29.kode.session.core.model.TodoNode
 import io.github.stream29.kode.session.core.todo.generateTodoGuidelineInjection
-
+import io.github.stream29.kode.session.core.tool.ToolNames
+import io.github.stream29.kode.tools.scripting.KotlinScriptTool
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
@@ -29,7 +27,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
-
 import kotlin.time.Clock
 
 internal class ScriptOnlyAgentEngine(
@@ -191,7 +188,7 @@ internal class ScriptOnlyAgentEngine(
                 allMessages = refreshedMessages.toMutableList()
             }
 
-            val currentTodos = resolveCurrentTodos(sessionId = sessionId)
+            resolveCurrentTodos(sessionId = sessionId)
             val currentSystemPrompt = buildSystemPromptWithTodoInjection(
                 sessionId = sessionId,
             )
@@ -292,7 +289,8 @@ internal class ScriptOnlyAgentEngine(
             )
         }
 
-        val preHook = toolSideEffectPort.applyToolCallBeforeHooks(sessionId, resolvedCall.toolName, resolvedCall.toolArgs)
+        val preHook =
+            toolSideEffectPort.applyToolCallBeforeHooks(sessionId, resolvedCall.toolName, resolvedCall.toolArgs)
         if (!preHook.allowed) {
             val reason = preHook.reason ?: "Tool call blocked by hook"
             return rejectToolCall(
@@ -504,7 +502,7 @@ internal class ScriptOnlyAgentEngine(
         val tool = KotlinScriptTool(scriptContext)
         val todoStateFlow = scriptContext.getTodoStateFlow()
         val todoSnapshot = todoStateFlow.value.toList()
-        
+
         return try {
             val argsJson = runCatching { json.parseToJsonElement(toolArgs).jsonObject }
                 .getOrElse { parseError ->
@@ -535,11 +533,11 @@ internal class ScriptOnlyAgentEngine(
             val result = tool.execute(args)
             val currentTodos = todoStateFlow.value
             val todoChanged = todoSnapshot != todoStateFlow.value
-            
+
             println("[DEBUG_LOG] todoSnapshot: $todoSnapshot")
             println("[DEBUG_LOG] currentTodos: $currentTodos")
             println("[DEBUG_LOG] todoChanged: $todoChanged")
-            
+
             ToolExecutionOutcome(
                 content = tool.encodeResultToString(result),
                 isError = false,
@@ -553,7 +551,7 @@ internal class ScriptOnlyAgentEngine(
             val message = "Error executing tool ${ToolNames.EXECUTE_KOTLIN_SCRIPT}: ${error.message}"
             val currentTodos = todoStateFlow.value
             val todoChanged = todoSnapshot != todoStateFlow.value
-            
+
             ToolExecutionOutcome(
                 content = message,
                 isError = true,
@@ -636,7 +634,11 @@ internal class ScriptOnlyAgentEngine(
     private class ToolSideEffectAdapter(
         private val hookManager: HookManager,
     ) : ToolSideEffectPort {
-        override fun applyToolCallBeforeHooks(sessionId: String, toolName: String, toolArgs: String): ToolCallPreHookResult {
+        override fun applyToolCallBeforeHooks(
+            sessionId: String,
+            toolName: String,
+            toolArgs: String
+        ): ToolCallPreHookResult {
             val result = hookManager.applyToolCallBeforeHooks(
                 sessionId = sessionId,
                 toolName = toolName,
@@ -649,7 +651,12 @@ internal class ScriptOnlyAgentEngine(
             )
         }
 
-        override fun applyToolCallAfterHooks(sessionId: String, toolName: String, toolArgs: String, result: String): String {
+        override fun applyToolCallAfterHooks(
+            sessionId: String,
+            toolName: String,
+            toolArgs: String,
+            result: String
+        ): String {
             return hookManager.applyToolCallAfterHooks(
                 sessionId = sessionId,
                 toolName = toolName,
@@ -745,6 +752,7 @@ internal class ScriptOnlyAgentEngine(
             """.trimIndent()
         }
 
-        val DEFAULT_SYSTEM_PROMPT: String = buildDefaultSystemPrompt(MainAgentScriptContext.DEFAULT_SYSTEM_PROMPT_INJECTION)
+        val DEFAULT_SYSTEM_PROMPT: String =
+            buildDefaultSystemPrompt(MainAgentScriptContext.DEFAULT_SYSTEM_PROMPT_INJECTION)
     }
 }

@@ -18,8 +18,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.stream29.kode.app.viewmodel.MainViewModel
-import io.github.stream29.kode.app.viewmodel.SessionsPageUiState
 import io.github.stream29.kode.app.viewmodel.SessionUiState
+import io.github.stream29.kode.app.viewmodel.SessionsPageUiState
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.storage.SessionStatusFilter

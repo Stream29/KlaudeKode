@@ -48,7 +48,6 @@ public data class AgentScript(
     override val metadata: Map<String, String>? = null,
 ) : AgentMessage
 
-@Suppress("DEPRECATION")
 public fun AgentMessage.toKoogMessages(): List<Message> {
     val rawMessages = when (this) {
         is UserMessage -> koogMessages

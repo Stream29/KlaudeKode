@@ -4,8 +4,8 @@ plugins {
 
 dependencies {
     api(projects.config.api)
-    
+
     implementation(libs.bundles.serialization)
-    
+
     testImplementation(libs.bundles.testing)
 }

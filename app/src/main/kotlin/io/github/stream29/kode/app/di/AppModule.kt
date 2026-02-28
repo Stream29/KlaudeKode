@@ -5,14 +5,7 @@ import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemConfigFactory
 import io.github.stream29.kode.config.fs.FileSystemLocations
 import io.github.stream29.kode.core.hooks.HookManager
-import io.github.stream29.kode.oauth.core.DefaultOAuthAuthCodePkceClient
-import io.github.stream29.kode.oauth.core.DefaultOAuthCredentialManager
-import io.github.stream29.kode.oauth.core.DefaultOAuthDeviceFlowClient
-import io.github.stream29.kode.oauth.core.FileOAuthTokenStore
-import io.github.stream29.kode.oauth.core.OAuthAuthCodePkceClient
-import io.github.stream29.kode.oauth.core.OAuthCredentialManager
-import io.github.stream29.kode.oauth.core.OAuthDeviceFlowClient
-import io.github.stream29.kode.oauth.core.OAuthTokenStore
+import io.github.stream29.kode.oauth.core.*
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.SessionRepository
 import io.github.stream29.kode.session.core.storage.FileSessionStorage

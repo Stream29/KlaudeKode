@@ -6,14 +6,10 @@ import ai.koog.prompt.executor.clients.anthropic.AnthropicLLMClient
 import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
-import io.github.stream29.kode.providers.api.LlmAuth
-import io.github.stream29.kode.providers.api.LlmProvider
-import io.github.stream29.kode.providers.api.ProviderAuthMode
-import io.github.stream29.kode.providers.api.ProviderPreset
-import io.github.stream29.kode.providers.api.requireApiKeyAuth
-import io.ktor.client.HttpClient
-import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.request.header
+import io.github.stream29.kode.providers.api.*
+import io.ktor.client.*
+import io.ktor.client.plugins.*
+import io.ktor.client.request.*
 
 public object AnthropicApiKeyProvider : LlmProvider {
     override val id: String = "anthropic"

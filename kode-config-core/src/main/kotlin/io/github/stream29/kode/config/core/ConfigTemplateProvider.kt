@@ -1,9 +1,9 @@
 package io.github.stream29.kode.config.core
 
 public object ConfigTemplateProvider {
-    
+
     public fun getDefaultTemplate(): String = DEFAULT_TEMPLATE
-    
+
     private val DEFAULT_TEMPLATE = """
         # Kode Configuration
         # Three-level architecture:

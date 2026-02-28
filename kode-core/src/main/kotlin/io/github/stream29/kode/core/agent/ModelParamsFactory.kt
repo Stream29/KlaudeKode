@@ -18,30 +18,11 @@ import ai.koog.prompt.executor.clients.openai.models.Truncation
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
-import io.github.stream29.kode.config.api.AnthropicServiceTierConfig
-import io.github.stream29.kode.config.api.AnthropicThinkingConfig
-import io.github.stream29.kode.config.api.BaseModelParamsConfig
-import io.github.stream29.kode.config.api.GeminiThinkingConfig
-import io.github.stream29.kode.config.api.GeminiThinkingLevelConfig
-import io.github.stream29.kode.config.api.JsonSchemaConfig
-import io.github.stream29.kode.config.api.JsonSchemaLevelConfig
-import io.github.stream29.kode.config.api.LlmAuthConfig
-import io.github.stream29.kode.config.api.LlmModelConfig
-import io.github.stream29.kode.config.api.LlmModelParamsConfig
-import io.github.stream29.kode.config.api.OpenAiEndpoint
-import io.github.stream29.kode.config.api.OpenAiReasoningConfig
-import io.github.stream29.kode.config.api.OpenAiReasoningEffortConfig
-import io.github.stream29.kode.config.api.OpenAiReasoningSummaryConfig
-import io.github.stream29.kode.config.api.OpenAiServiceTierConfig
-import io.github.stream29.kode.config.api.OpenAiTruncationConfig
-import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER
-import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE
-import io.github.stream29.kode.config.api.ToolChoiceConfig
+import io.github.stream29.kode.config.api.*
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
 internal object ModelParamsFactory {
     fun enforceRequiredToolChoice(params: LLMParams?): LLMParams {
@@ -107,8 +88,8 @@ internal object ModelParamsFactory {
 
     private fun toOpenAiParams(
         endpoint: OpenAiEndpoint,
-        chat: io.github.stream29.kode.config.api.OpenAiChatParamsConfig,
-        responses: io.github.stream29.kode.config.api.OpenAiResponsesParamsConfig,
+        chat: OpenAiChatParamsConfig,
+        responses: OpenAiResponsesParamsConfig,
         model: LLModel,
         modelConfig: LlmModelConfig,
     ): LLMParams {
@@ -129,7 +110,7 @@ internal object ModelParamsFactory {
         }
     }
 
-    private fun toOpenAiChatParams(config: io.github.stream29.kode.config.api.OpenAiChatParamsConfig): OpenAIChatParams {
+    private fun toOpenAiChatParams(config: OpenAiChatParamsConfig): OpenAIChatParams {
         val base = toBaseParams(config.base)
         return OpenAIChatParams(
             temperature = base.temperature,
@@ -155,7 +136,7 @@ internal object ModelParamsFactory {
         )
     }
 
-    private fun toOpenAiResponsesParams(config: io.github.stream29.kode.config.api.OpenAiResponsesParamsConfig): OpenAIResponsesParams {
+    private fun toOpenAiResponsesParams(config: OpenAiResponsesParamsConfig): OpenAIResponsesParams {
         val base = toBaseParams(config.base)
         val include = config.include
             ?.mapNotNull { includeValue -> mapOpenAiInclude(includeValue) }

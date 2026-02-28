@@ -1,10 +1,10 @@
 package io.github.stream29.kode.config.api
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.ExperimentalSerializationApi
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonClassDiscriminator
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 private const val PROVIDER_ID_ANTHROPIC: String = "anthropic"
@@ -331,8 +331,8 @@ public sealed interface OAuthConfig {
 
     public fun hasDeviceFlowRequiredFields(): Boolean {
         val hasBaseFields = !tokenEndpoint.isNullOrBlank() &&
-            !clientId.isNullOrBlank() &&
-            !deviceAuthorizationEndpoint.isNullOrBlank()
+                !clientId.isNullOrBlank() &&
+                !deviceAuthorizationEndpoint.isNullOrBlank()
         if (!hasBaseFields) {
             return false
         }

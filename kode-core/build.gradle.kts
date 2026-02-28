@@ -11,10 +11,10 @@ dependencies {
     implementation(projects.kodeSessionCore)
     implementation(projects.providers.providerApi)
     implementation(projects.providers.providerBuiltin)
-    
+
     implementation(libs.bundles.koog)
     implementation(libs.bundles.serialization)
-    
+
     testImplementation(libs.koogAgentsTest)
     testImplementation(libs.bundles.testing)
 }

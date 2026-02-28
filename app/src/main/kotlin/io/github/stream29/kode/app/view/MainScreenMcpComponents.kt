@@ -2,20 +2,7 @@ package io.github.stream29.kode.app.view
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -24,12 +11,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -397,7 +379,7 @@ private fun McpHealthBadge(status: McpHealthStatus) {
     }
 }
 
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun McpServerDialog(
     onDismiss: () -> Unit,
@@ -436,7 +418,7 @@ private fun McpServerDialog(
                         label = { Text("Transport") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                         modifier = Modifier.fillMaxWidth().menuAnchor(
-                            androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable,
+                            ExposedDropdownMenuAnchorType.PrimaryNotEditable,
                         ),
                     )
                     ExposedDropdownMenu(
@@ -503,7 +485,7 @@ private fun McpServerDialog(
                     val server = when (transportType) {
                         McpTransportType.Http,
                         McpTransportType.Sse,
-                        -> {
+                            -> {
                             if (transportType == McpTransportType.Http) {
                                 McpServerConfig.Http(
                                     url = urlOrCommand.takeIf { it.isNotBlank() },
@@ -521,7 +503,7 @@ private fun McpServerDialog(
 
                         McpTransportType.Stdio,
                         McpTransportType.Unsupported,
-                        -> {
+                            -> {
                             McpServerConfig.Stdio(
                                 command = urlOrCommand.takeIf { it.isNotBlank() },
                                 args = args.split(" ").filter { it.isNotBlank() },

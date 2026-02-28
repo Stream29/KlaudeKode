@@ -3,26 +3,7 @@ package io.github.stream29.kode.session.core.storage
 import app.softwork.serialization.csv.CSVFormat
 import io.github.stream29.kode.config.fs.FileSystemLocations
 import io.github.stream29.kode.session.core.SessionRepository
-import io.github.stream29.kode.session.core.model.AgentMessage
-import io.github.stream29.kode.session.core.model.Agent
-import io.github.stream29.kode.session.core.model.AgentConfig
-import io.github.stream29.kode.session.core.model.AgentState
-import io.github.stream29.kode.session.core.model.SessionSnapshot
-import io.github.stream29.kode.session.core.model.SessionState
-import io.github.stream29.kode.session.core.model.SessionCheckpoint
-import io.github.stream29.kode.session.core.model.SessionConfig
-import io.github.stream29.kode.session.core.model.SessionMessage
-import io.github.stream29.kode.session.core.model.SessionMetadata
-import io.github.stream29.kode.session.core.model.SessionMetadataCsvRow
-import io.github.stream29.kode.session.core.model.SessionRunState
-import io.github.stream29.kode.session.core.model.SessionStatus
-import io.github.stream29.kode.session.core.model.SessionSummary
-import io.github.stream29.kode.session.core.model.SubAgent
-import io.github.stream29.kode.session.core.model.TodoNode
-import io.github.stream29.kode.session.core.model.toSessionSnapshot
-import io.github.stream29.kode.session.core.model.toCsvRow
-import io.github.stream29.kode.session.core.model.toMetadata
-import io.github.stream29.kode.session.core.model.toSessionState
+import io.github.stream29.kode.session.core.model.*
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.persistentHashMapOf
 import kotlinx.collections.immutable.persistentListOf
@@ -37,7 +18,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.util.Base64
+import java.util.*
 
 @OptIn(ExperimentalSerializationApi::class)
 public class FileSessionStorage(
@@ -574,23 +555,24 @@ public class FileSessionStorage(
         }
     }
 
-    override suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoNode>? = withContext(Dispatchers.IO) {
-        val file = getAgentTodoFile(sessionId = sessionId, agentId = agentId)
-        if (!file.isFile) {
-            return@withContext null
+    override suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoNode>? =
+        withContext(Dispatchers.IO) {
+            val file = getAgentTodoFile(sessionId = sessionId, agentId = agentId)
+            if (!file.isFile) {
+                return@withContext null
+            }
+            return@withContext try {
+                json.decodeFromString(
+                    deserializer = ListSerializer(TodoNode.serializer()),
+                    string = file.readText(),
+                )
+            } catch (error: Exception) {
+                throw IllegalStateException(
+                    "Failed to decode agent todo: sessionId=$sessionId, agentId=$agentId",
+                    error,
+                )
+            }
         }
-        return@withContext try {
-            json.decodeFromString(
-                deserializer = ListSerializer(TodoNode.serializer()),
-                string = file.readText(),
-            )
-        } catch (error: Exception) {
-            throw IllegalStateException(
-                "Failed to decode agent todo: sessionId=$sessionId, agentId=$agentId",
-                error,
-            )
-        }
-    }
 
     private fun writeAgentMeta(sessionId: String, meta: AgentFileMeta) {
         val file = getAgentMetaFile(sessionId = sessionId, agentId = meta.agentId)
@@ -600,9 +582,10 @@ public class FileSessionStorage(
         )
     }
 
-    override suspend fun writeAgentTodo(sessionId: String, agentId: String, todos: List<TodoNode>): Unit = withContext(Dispatchers.IO) {
-        writeAgentTodoSync(sessionId, agentId, todos)
-    }
+    override suspend fun writeAgentTodo(sessionId: String, agentId: String, todos: List<TodoNode>): Unit =
+        withContext(Dispatchers.IO) {
+            writeAgentTodoSync(sessionId, agentId, todos)
+        }
 
     private fun writeAgentTodoSync(sessionId: String, agentId: String, todos: List<TodoNode>) {
         println("[DEBUG_LOG] writeAgentTodoSync for agentId=$agentId, todos size=${todos.size}")

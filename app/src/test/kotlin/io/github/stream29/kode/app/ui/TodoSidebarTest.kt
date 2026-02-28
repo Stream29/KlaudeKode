@@ -2,6 +2,7 @@ package io.github.stream29.kode.app.ui
 
 import io.github.stream29.kode.ui.components.todo.TodoUiNode
 import io.github.stream29.kode.ui.components.todo.TodoUiState
+import io.github.stream29.kode.ui.components.todo.buildVisibleNodes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -49,7 +50,8 @@ class TodoSidebarTest {
         val incompleteState = buildParentChildState(rootExpanded = true, childCompleted = false)
         val completedState = buildParentChildState(rootExpanded = true, childCompleted = true)
 
-        val incompleteChild = buildVisibleNodes(todoState = incompleteState).single { node -> node.path == "root:child" }
+        val incompleteChild =
+            buildVisibleNodes(todoState = incompleteState).single { node -> node.path == "root:child" }
         val completedChild = buildVisibleNodes(todoState = completedState).single { node -> node.path == "root:child" }
 
         assertFalse(incompleteChild.isCompleted)
@@ -98,19 +100,11 @@ class TodoSidebarTest {
         )
     }
 
-    @Suppress("UNCHECKED_CAST")
     private fun buildVisibleNodes(todoState: TodoUiState): List<TodoUiNode> {
-        return BUILD_VISIBLE_NODES_METHOD.invoke(null, todoState.rootNodes) as List<TodoUiNode>
+        return buildVisibleNodes(todoState.rootNodes)
     }
 
     private companion object {
-        private val BUILD_VISIBLE_NODES_METHOD = Class
-            .forName("io.github.stream29.kode.ui.components.todo.TodoSidebarKt")
-            .getDeclaredMethod("buildVisibleNodes", List::class.java)
-            .apply {
-                isAccessible = true
-            }
-
         private val MANUAL_VERIFICATION_STEPS: List<String> = listOf(
             "1. 打开 Chat 页面，确认宽屏下输入区右侧可切换 Todo 侧边栏可见性。",
             "2. 在侧边栏点击父节点箭头，验证子节点展开与折叠都正常。",

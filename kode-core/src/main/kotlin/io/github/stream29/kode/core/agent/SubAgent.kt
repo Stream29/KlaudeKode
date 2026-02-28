@@ -6,7 +6,6 @@ import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.tools.scripting.ScriptContext
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
 

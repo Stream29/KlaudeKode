@@ -4,13 +4,8 @@ import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.model.UserMessage
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
-import java.util.Base64
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertIs
-import kotlin.test.assertNotNull
-import kotlin.test.assertTrue
+import java.util.*
+import kotlin.test.*
 
 class FileSessionStorageFailFastTest {
     @Test

@@ -1,100 +1,61 @@
 package io.github.stream29.kode.app.viewmodel
 
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import androidx.compose.runtime.snapshotFlow
-import io.github.stream29.kode.config.api.LlmAuthConfig
-import io.github.stream29.kode.config.api.LlmModelConfig
-import io.github.stream29.kode.config.api.LlmModelParamsConfig
-import io.github.stream29.kode.config.api.McpTransportType
-import io.github.stream29.kode.config.api.OpenAiEndpoint
-import io.github.stream29.kode.config.api.AppConfig
-import io.github.stream29.kode.config.api.ServiceConfig
-import io.github.stream29.kode.config.api.transportType
-import io.github.stream29.kode.config.api.AUTH_MODE_API_KEY
-import io.github.stream29.kode.config.api.AUTH_MODE_CLOUD_CREDENTIAL_CHAIN
-import io.github.stream29.kode.config.api.AUTH_MODE_OAUTH_DEVICE
-import io.github.stream29.kode.config.api.AUTH_MODE_OAUTH_SUBSCRIPTION
-import io.github.stream29.kode.config.api.AUTH_MODE_WELL_KNOWN
-import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_COMPATIBLE
-import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_BROWSER
-import io.github.stream29.kode.config.api.PROVIDER_ID_OPENAI_SUBSCRIPTION_DEVICE
-import ai.koog.agents.mcp.McpToolRegistryProvider
-import ai.koog.agents.mcp.defaultStdioTransport
 import ai.koog.agents.core.tools.ToolParameterDescriptor
 import ai.koog.agents.core.tools.ToolParameterType
 import ai.koog.agents.core.tools.ToolRegistry
+import ai.koog.agents.mcp.McpToolRegistryProvider
+import ai.koog.agents.mcp.defaultStdioTransport
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLModel
+import androidx.compose.runtime.snapshotFlow
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import io.github.stream29.kode.app.util.parseKeyValueLines
-import io.github.stream29.kode.ui.core.preferences.MessageAlignmentPreference
-import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
-import io.github.stream29.kode.ui.core.message.isSystemRoleUi
-import io.github.stream29.kode.ui.core.message.projectedTextForSessionSummary
+import io.github.stream29.kode.config.api.*
 import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemLocations
+import io.github.stream29.kode.core.agent.MainAgentScriptContext
 import io.github.stream29.kode.core.agent.SessionExecutionRuntime
 import io.github.stream29.kode.core.hooks.HookManager
+import io.github.stream29.kode.oauth.core.OAuthCredentialManager
+import io.github.stream29.kode.oauth.core.OAuthCredentialStatus
 import io.github.stream29.kode.providers.api.ProviderAuthMode
 import io.github.stream29.kode.providers.api.ProviderOAuthAuthCodePkcePreset
 import io.github.stream29.kode.providers.api.ProviderOAuthDeviceFlowPreset
 import io.github.stream29.kode.providers.api.ProviderPreset
 import io.github.stream29.kode.providers.builtin.BuiltinLlmProviderRegistry
 import io.github.stream29.kode.providers.builtin.BuiltinProviderPresetRegistry
-import io.github.stream29.kode.oauth.core.OAuthCredentialStatus
-import io.github.stream29.kode.oauth.core.OAuthCredentialManager
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.session.core.model.SessionSnapshot
 import io.github.stream29.kode.session.core.model.SessionMessage
+import io.github.stream29.kode.session.core.model.SessionSnapshot
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.storage.SessionFilter
 import io.github.stream29.kode.session.core.storage.SessionStatusFilter
 import io.github.stream29.kode.session.core.storage.SortBy
 import io.github.stream29.kode.session.core.storage.SortOrder
 import io.github.stream29.kode.tools.WebTools
+import io.github.stream29.kode.tools.scripting.KotlinScriptResult
+import io.github.stream29.kode.tools.scripting.evalInThreadCancellable
 import io.github.stream29.kode.ui.bridge.auth.OAuthStatusUi
-import io.github.stream29.kode.ui.bridge.mcp.McpHealthResult
-import io.github.stream29.kode.ui.bridge.mcp.McpHealthStatus
-import io.github.stream29.kode.ui.bridge.mcp.McpTestResult
-import io.github.stream29.kode.ui.bridge.mcp.McpTestStatus
-import io.github.stream29.kode.ui.bridge.mcp.McpToolParameterSummary
-import io.github.stream29.kode.ui.bridge.mcp.McpToolSummary
-import io.github.stream29.kode.ui.bridge.provider.UiProviderAuthMode
-import io.github.stream29.kode.ui.bridge.provider.UiProviderModelPreset
-import io.github.stream29.kode.ui.bridge.provider.UiProviderOAuthAuthCodePkcePreset
-import io.github.stream29.kode.ui.bridge.provider.UiProviderOAuthDeviceFlowPreset
-import io.github.stream29.kode.ui.bridge.provider.UiProviderPreset
+import io.github.stream29.kode.ui.bridge.mcp.*
+import io.github.stream29.kode.ui.bridge.provider.*
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.AgentState
 import io.github.stream29.kode.ui.core.MessageHandler
+import io.github.stream29.kode.ui.core.message.isSystemRoleUi
+import io.github.stream29.kode.ui.core.message.projectedTextForSessionSummary
+import io.github.stream29.kode.ui.core.preferences.MessageAlignmentPreference
+import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
 import io.github.stream29.kode.ui.core.todo.TodoUiNode
 import io.github.stream29.kode.ui.core.todo.TodoUiState
-import io.github.stream29.kode.tools.scripting.KotlinScriptResult
-import io.github.stream29.kode.core.agent.MainAgentScriptContext
-import io.github.stream29.kode.tools.scripting.evalInThreadCancellable
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import java.awt.Desktop
 import java.io.File
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
-import java.util.UUID
+import java.util.*
 import kotlin.coroutines.coroutineContext
 
 public class MainViewModel(
@@ -791,7 +752,7 @@ public class MainViewModel(
         get() = _appUiState.value.mcpToolTimeoutMs
         set(value) = updateAppUiState { it.copy(mcpToolTimeoutMs = value) }
 
-    public var mcpServers: Map<String, io.github.stream29.kode.config.api.McpServerConfig>
+    public var mcpServers: Map<String, McpServerConfig>
         get() = _appUiState.value.mcpServers
         set(value) = updateAppUiState { it.copy(mcpServers = value) }
 
@@ -1167,7 +1128,7 @@ public class MainViewModel(
         refreshPresetAndSkillsPreview()
     }
 
-    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    @OptIn(FlowPreview::class)
     private fun startAutoSaveObservers() {
         autoSaveEnabled = true
 
@@ -1267,9 +1228,59 @@ public class MainViewModel(
         continueFromInput(input = "")
     }
 
-    public fun toggleTodoExpand(id: String) {
-        if (id.isBlank()) {
+    public fun toggleTodoExpand(path: String) {
+        if (path.isBlank()) {
             return
+        }
+
+        updateSessionUiState { current ->
+            fun toggleInNodes(nodes: List<TodoUiNode>): List<TodoUiNode> {
+                return nodes.map { node ->
+                    if (node.path == path) {
+                        node.copy(expanded = !node.expanded)
+                    } else if (path.startsWith("${node.path}:")) {
+                        node.copy(subtasks = toggleInNodes(node.subtasks))
+                    } else {
+                        node
+                    }
+                }
+            }
+
+            val newRootNodes = toggleInNodes(current.todoState.rootNodes)
+            current.copy(
+                todoState = current.todoState.copy(rootNodes = newRootNodes)
+            )
+        }
+    }
+
+    public fun toggleTodoComplete(path: String) {
+        if (path.isBlank()) {
+            return
+        }
+
+        val sessionId = currentSessionId ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val runtime = sessionManager.getSessionState(sessionId) ?: return@launch
+            val currentTodos = runtime.agent.value.todoState.value
+
+            fun toggleInNodes(
+                nodes: List<io.github.stream29.kode.session.core.model.TodoNode>,
+                currentPrefix: String
+            ): List<io.github.stream29.kode.session.core.model.TodoNode> {
+                return nodes.map { node ->
+                    val fullPath = if (currentPrefix.isEmpty()) node.name else "$currentPrefix:${node.name}"
+                    if (fullPath == path) {
+                        node.copy(isCompleted = !node.isCompleted)
+                    } else if (path.startsWith("$fullPath:")) {
+                        node.copy(subtasks = toggleInNodes(node.subtasks, fullPath))
+                    } else {
+                        node
+                    }
+                }
+            }
+
+            val newTodos = toggleInNodes(currentTodos, "")
+            runtime.agent.value.todoState.value = newTodos
         }
     }
 
@@ -2123,14 +2134,18 @@ public class MainViewModel(
             collectExpanded(oldUiState.rootNodes)
         }
 
-        fun mapNode(node: io.github.stream29.kode.session.core.model.TodoNode, pathPrefix: String, level: Int): TodoUiNode {
+        fun mapNode(
+            node: io.github.stream29.kode.session.core.model.TodoNode,
+            pathPrefix: String,
+            level: Int
+        ): TodoUiNode {
             val currentPath = if (pathPrefix.isEmpty()) node.name else "$pathPrefix:${node.name}"
             return TodoUiNode(
                 name = node.name,
                 isCompleted = node.isCompleted,
                 subtasks = node.subtasks.map { mapNode(it, currentPath, level + 1) },
                 path = currentPath,
-                expanded = if (oldUiState != null) expandedPaths.contains(currentPath) else false,
+                expanded = expandedPaths.contains(currentPath),
                 level = level,
             )
         }
@@ -2765,7 +2780,7 @@ logging:
         }
     }
 
-    public fun addMcpServer(name: String, config: io.github.stream29.kode.config.api.McpServerConfig) {
+    public fun addMcpServer(name: String, config: McpServerConfig) {
         mcpServers = mcpServers + (name to config)
         mcpHealthResults = mcpHealthResults + (name to McpHealthResult(McpHealthStatus.Unknown, ""))
         mcpTestResults = mcpTestResults - name
@@ -2831,7 +2846,7 @@ logging:
 
     private suspend fun runMcpTest(
         name: String,
-        server: io.github.stream29.kode.config.api.McpServerConfig,
+        server: McpServerConfig,
     ): McpTestResult {
         return when (server.transportType()) {
             McpTransportType.Stdio -> {
@@ -2879,7 +2894,7 @@ logging:
     }
 
     private fun startMcpTestProcess(
-        server: io.github.stream29.kode.config.api.McpServerConfig,
+        server: McpServerConfig,
         command: String,
     ): Process {
         val args = server.args
@@ -3521,7 +3536,7 @@ logging:
                 addSystemMessage(
                     "Quick setup completed: ${preset.displayName} ($authId), added $addedModelCount model(s)"
                 )
-                if (connectOAuthNow && authConfig.auth is io.github.stream29.kode.config.api.LlmAuth.OAuth) {
+                if (connectOAuthNow && authConfig.auth is LlmAuth.OAuth) {
                     startOAuthConnectJob(authId = authId, authOverride = authConfig)
                 } else {
                     initializeAgentFactory()
@@ -3561,7 +3576,7 @@ logging:
                 )
             }
             if (oauthDevicePreset != null) {
-                io.github.stream29.kode.config.api.OAuthConfig.DeviceFlow(
+                OAuthConfig.DeviceFlow(
                     storage = "file",
                     key = buildOAuthTokenStorageKey(authId = authId),
                     tokenEndpoint = oauthDevicePreset.tokenEndpoint,
@@ -3578,7 +3593,7 @@ logging:
                 requireNotNull(oauthAuthCodePreset) {
                     "Provider ${preset.displayName} does not define auth-code OAuth preset for mode: $authMode"
                 }
-                io.github.stream29.kode.config.api.OAuthConfig.AuthCodePkce(
+                OAuthConfig.AuthCodePkce(
                     storage = "file",
                     key = buildOAuthTokenStorageKey(authId = authId),
                     authorizationEndpoint = oauthAuthCodePreset.authorizationEndpoint,
@@ -3594,14 +3609,14 @@ logging:
 
         val providerId = resolveProviderIdForPreset(presetId = preset.id)
         val auth = if (authMode == AUTH_MODE_API_KEY) {
-            io.github.stream29.kode.config.api.LlmAuth.ApiKey(
+            LlmAuth.ApiKey(
                 apiKey = apiKey,
                 envKeys = preset.envKeys,
                 baseUrl = resolvedBaseUrl,
                 customHeaders = emptyMap(),
             )
         } else {
-            io.github.stream29.kode.config.api.LlmAuth.OAuth(
+            LlmAuth.OAuth(
                 oauth = requireNotNull(oauthConfig) { "oauthConfig is null for authMode=$authMode" },
                 baseUrl = resolvedBaseUrl,
                 customHeaders = emptyMap(),
@@ -4054,13 +4069,13 @@ logging:
 
     private fun normalizeOAuthConfigForRuntime(
         auth: LlmAuthConfig,
-        oauth: io.github.stream29.kode.config.api.OAuthConfig,
-    ): io.github.stream29.kode.config.api.OAuthConfig {
+        oauth: OAuthConfig,
+    ): OAuthConfig {
         if (!isOpenAiSubscriptionBrowserProvider(auth.providerId)) {
             return oauth
         }
 
-        if (oauth !is io.github.stream29.kode.config.api.OAuthConfig.AuthCodePkce) {
+        if (oauth !is OAuthConfig.AuthCodePkce) {
             return oauth
         }
 
@@ -4332,7 +4347,7 @@ public data class ToolsPageUiState(
 
 public data class McpPageUiState(
     val mcpToolTimeoutMs: Int = 60000,
-    val mcpServers: Map<String, io.github.stream29.kode.config.api.McpServerConfig> = emptyMap(),
+    val mcpServers: Map<String, McpServerConfig> = emptyMap(),
     val mcpTestResults: Map<String, McpTestResult> = emptyMap(),
     val mcpTestsInFlight: Set<String> = emptySet(),
     val mcpHealthResults: Map<String, McpHealthResult> = emptyMap(),
@@ -4452,7 +4467,7 @@ public data class AppUiState(
     val messageMaxWidthRatio: Float = 0.9f,
     val sendKeyMode: String = "ctrl_or_cmd_enter_send",
     val mcpToolTimeoutMs: Int = 60000,
-    val mcpServers: Map<String, io.github.stream29.kode.config.api.McpServerConfig> = emptyMap(),
+    val mcpServers: Map<String, McpServerConfig> = emptyMap(),
     val mcpTestResults: Map<String, McpTestResult> = emptyMap(),
     val mcpTestsInFlight: Set<String> = emptySet(),
     val mcpHealthResults: Map<String, McpHealthResult> = emptyMap(),
@@ -4565,5 +4580,5 @@ private data class PreferencesSnapshot(
 
 private data class McpSnapshot(
     val timeoutMs: Int,
-    val servers: Map<String, io.github.stream29.kode.config.api.McpServerConfig>
+    val servers: Map<String, McpServerConfig>
 )

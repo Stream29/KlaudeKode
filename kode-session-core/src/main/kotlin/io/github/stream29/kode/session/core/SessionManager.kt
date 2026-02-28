@@ -2,32 +2,16 @@ package io.github.stream29.kode.session.core
 
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.RequestMetaInfo
-import io.github.stream29.kode.session.core.model.AgentConfig
-import io.github.stream29.kode.session.core.model.AgentScript
-import io.github.stream29.kode.session.core.model.AgentScriptStatus
-import io.github.stream29.kode.session.core.model.AgentState
-import io.github.stream29.kode.session.core.model.Agent
-import io.github.stream29.kode.session.core.model.SessionSnapshot
-import io.github.stream29.kode.session.core.model.SessionState
-import io.github.stream29.kode.session.core.model.SessionCheckpoint
-import io.github.stream29.kode.session.core.model.SessionConfiguration
-import io.github.stream29.kode.session.core.model.SessionMessage
-import io.github.stream29.kode.session.core.model.SessionRunState
-import io.github.stream29.kode.session.core.model.SessionStatus
-import io.github.stream29.kode.session.core.model.SessionSummary
-import io.github.stream29.kode.session.core.model.SubAgent
-import io.github.stream29.kode.session.core.model.UserMessage
-import io.github.stream29.kode.session.core.tool.ToolNames
-import io.github.stream29.kode.session.core.model.toSessionSnapshot
-import io.github.stream29.kode.session.core.model.toSessionState
+import io.github.stream29.kode.session.core.model.*
 import io.github.stream29.kode.session.core.storage.SessionFilter
 import io.github.stream29.kode.session.core.storage.querySessionSummaries
+import io.github.stream29.kode.session.core.tool.ToolNames
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withTimeout
-import kotlinx.serialization.json.Json
 import kotlinx.datetime.toDeprecatedInstant
+import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Clock
@@ -757,8 +741,8 @@ public class SessionManager(
         }
     }
 
-    @Suppress("UNUSED_PARAMETER", "RedundantSuspendModifier")
-    public suspend fun createSubAgent(
+    @Suppress("UNUSED_PARAMETER")
+    public fun createSubAgent(
         sessionId: String,
         agentId: String,
         parentAgentId: String?,
@@ -908,8 +892,8 @@ public class SessionManager(
         )
     }
 
-    @Suppress("UNUSED_PARAMETER", "RedundantSuspendModifier")
-    public suspend fun injectReceiveAgentMessage(
+    @Suppress("UNUSED_PARAMETER")
+    public fun injectReceiveAgentMessage(
         sessionId: String,
         targetAgentId: String,
         fromAgentId: String,
@@ -1052,7 +1036,10 @@ public class SessionManager(
 
     private fun <E> List<E>.toPersistentList() = persistentListOf<E>().addAll(this)
 
-    public suspend fun getAgentTodo(sessionId: String, agentId: String): List<io.github.stream29.kode.session.core.model.TodoNode> {
+    public suspend fun getAgentTodo(
+        sessionId: String,
+        agentId: String
+    ): List<TodoNode> {
         val state = getSessionState(sessionId)
         if (state != null) {
             val agent = resolveAgent(state, sessionId, agentId)
@@ -1061,7 +1048,11 @@ public class SessionManager(
         return repository.readAgentTodo(sessionId, agentId) ?: emptyList()
     }
 
-    public suspend fun updateAgentTodo(sessionId: String, agentId: String, todos: List<io.github.stream29.kode.session.core.model.TodoNode>) {
+    public suspend fun updateAgentTodo(
+        sessionId: String,
+        agentId: String,
+        todos: List<TodoNode>
+    ) {
         val state = getSessionState(sessionId)
         if (state != null) {
             val agent = resolveAgent(state, sessionId, agentId)

@@ -2,7 +2,10 @@ package io.github.stream29.kode.app.view
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -42,7 +45,7 @@ public fun ConfigEditorDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
-                
+
                 OutlinedTextField(
                     value = ui.configText,
                     onValueChange = onConfigTextChange,
@@ -84,7 +87,7 @@ ui:
                         )
                     }
                 )
-                
+
                 ui.configError?.let { error ->
                     Spacer(modifier = Modifier.height(12.dp))
                     ElevatedCard(
@@ -109,9 +112,9 @@ ui:
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 ElevatedCard(
                     colors = CardDefaults.elevatedCardColors(
                         containerColor = MaterialTheme.colorScheme.secondaryContainer

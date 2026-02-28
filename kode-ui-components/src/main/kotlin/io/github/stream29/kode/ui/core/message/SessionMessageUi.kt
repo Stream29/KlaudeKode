@@ -1,12 +1,7 @@
 package io.github.stream29.kode.ui.core.message
 
 import ai.koog.prompt.message.Message
-import io.github.stream29.kode.session.core.model.AgentScript
-import io.github.stream29.kode.session.core.model.AgentScriptStatus
-import io.github.stream29.kode.session.core.model.SCRIPT_TOOL_ARGS_METADATA_KEY
-import io.github.stream29.kode.session.core.model.SCRIPT_TOOL_NAME_METADATA_KEY
-import io.github.stream29.kode.session.core.model.SessionMessage
-import io.github.stream29.kode.session.core.model.UserMessage
+import io.github.stream29.kode.session.core.model.*
 import kotlin.reflect.KClass
 
 private enum class UiRole {

@@ -11,15 +11,14 @@ import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
+import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.port.RuntimeSideEffectPort
 import io.github.stream29.kode.core.port.SessionSideEffectPort
 import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.tools.scripting.ScriptContext
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
-import io.github.stream29.kode.core.hooks.HookManager
 import kotlinx.datetime.toDeprecatedClock
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -35,10 +34,10 @@ public class SessionExecutionRuntime(
     public val sessionManager: SessionManager,
     private val scriptContextFactory: () -> MainAgentScriptContext = { MainAgentScriptContext() },
     private val runtimeSideEffectPortFactory:
-        ((MessageHandler, AgentEventListener?, (String) -> Unit) -> RuntimeSideEffectPort)? = null,
+    ((MessageHandler, AgentEventListener?, (String) -> Unit) -> RuntimeSideEffectPort)? = null,
     private val toolSideEffectPortFactory: ((HookManager) -> ToolSideEffectPort)? = null,
     private val sessionSideEffectPortFactory:
-        ((SessionManager, KoogSessionBridge) -> SessionSideEffectPort)? = null,
+    ((SessionManager, KoogSessionBridge) -> SessionSideEffectPort)? = null,
 ) {
     init {
         val hasRuntimeFactory = runtimeSideEffectPortFactory != null

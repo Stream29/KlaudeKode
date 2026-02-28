@@ -1,6 +1,8 @@
 package io.github.stream29.kode.app
 
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import io.github.stream29.kode.app.di.appModule
 import io.github.stream29.kode.app.view.MainScreen
@@ -9,9 +11,6 @@ import io.github.stream29.kode.config.fs.FileSystemConfigFactory
 import kotlinx.coroutines.runBlocking
 import org.koin.compose.KoinApplication
 import org.koin.compose.koinInject
-
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.WindowState
 
 public fun main() {
     val startupConfigError = validateStartupConfig()

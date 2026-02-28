@@ -17,32 +17,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.github.stream29.kode.ui.core.preferences.MessageAlignmentPreference
-import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
 import io.github.stream29.kode.app.util.formatModelDisplayName
 import io.github.stream29.kode.app.viewmodel.AppUiState
 import io.github.stream29.kode.app.viewmodel.MainViewModel
-import io.github.stream29.kode.config.api.AnthropicServiceTierConfig
-import io.github.stream29.kode.config.api.AnthropicThinkingConfig
-import io.github.stream29.kode.config.api.GeminiThinkingConfig
-import io.github.stream29.kode.config.api.GeminiThinkingLevelConfig
-import io.github.stream29.kode.config.api.OPENAI_COMPATIBLE_PROVIDER_IDS
-import io.github.stream29.kode.config.api.OPENAI_NATIVE_PROVIDER_IDS
-import io.github.stream29.kode.config.api.LlmAuthConfig
-import io.github.stream29.kode.config.api.LlmModelConfig
-import io.github.stream29.kode.config.api.LlmModelParamsConfig
-import io.github.stream29.kode.config.api.OAuthConfig
-import io.github.stream29.kode.config.api.OpenAiEndpoint
-import io.github.stream29.kode.config.api.OpenAiReasoningEffortConfig
-import io.github.stream29.kode.config.api.OpenAiReasoningSummaryConfig
-import io.github.stream29.kode.config.api.OpenAiServiceTierConfig
-import io.github.stream29.kode.config.api.OpenAiTruncationConfig
+import io.github.stream29.kode.config.api.*
 import io.github.stream29.kode.ui.bridge.auth.OAuthStatusUi
-import io.github.stream29.kode.ui.bridge.provider.UiProviderAuthMode
-import io.github.stream29.kode.ui.bridge.provider.UiProviderModelPreset
-import io.github.stream29.kode.ui.bridge.provider.UiProviderOAuthAuthCodePkcePreset
-import io.github.stream29.kode.ui.bridge.provider.UiProviderOAuthDeviceFlowPreset
-import io.github.stream29.kode.ui.bridge.provider.UiProviderPreset
+import io.github.stream29.kode.ui.bridge.provider.*
+import io.github.stream29.kode.ui.core.preferences.MessageAlignmentPreference
+import io.github.stream29.kode.ui.core.preferences.SendKeyModePreference
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
@@ -2920,14 +2902,14 @@ private fun buildOpenAiFamilyParams(
     buildParams: (
         existingOpenAiFamily: LlmModelParamsConfig.OpenAiFamily?,
         openAiEndpoint: OpenAiEndpoint,
-        nextChat: io.github.stream29.kode.config.api.OpenAiChatParamsConfig,
-        nextResponses: io.github.stream29.kode.config.api.OpenAiResponsesParamsConfig,
+        nextChat: OpenAiChatParamsConfig,
+        nextResponses: OpenAiResponsesParamsConfig,
     ) -> LlmModelParamsConfig,
 ): ParamsBuildResult {
     val existingOpenAiFamily = input.existing as? LlmModelParamsConfig.OpenAiFamily
-    val currentChat = existingOpenAiFamily?.chat ?: io.github.stream29.kode.config.api.OpenAiChatParamsConfig()
+    val currentChat = existingOpenAiFamily?.chat ?: OpenAiChatParamsConfig()
     val currentResponses =
-        existingOpenAiFamily?.responses ?: io.github.stream29.kode.config.api.OpenAiResponsesParamsConfig()
+        existingOpenAiFamily?.responses ?: OpenAiResponsesParamsConfig()
 
     val chatBaseResult = buildOpenAiBaseParams(
         existing = currentChat.base,
@@ -3027,7 +3009,7 @@ private fun buildOpenAiFamilyParams(
         topP = chatTopPResult.value,
     )
 
-    val nextReasoning = io.github.stream29.kode.config.api.OpenAiReasoningConfig(
+    val nextReasoning = OpenAiReasoningConfig(
         effort = input.openAiReasoningEffort,
         summary = input.openAiReasoningSummary,
     ).takeUnless { reasoning ->
@@ -3078,7 +3060,7 @@ private fun extractOpenAiResponsesBaseEditorState(params: LlmModelParamsConfig?)
     return extractOpenAiBaseEditorState(base)
 }
 
-private fun extractOpenAiBaseEditorState(base: io.github.stream29.kode.config.api.BaseModelParamsConfig?): OpenAiBaseEditorState {
+private fun extractOpenAiBaseEditorState(base: BaseModelParamsConfig?): OpenAiBaseEditorState {
     return OpenAiBaseEditorState(
         temperatureInput = base?.temperature?.toString().orEmpty(),
         maxTokensInput = base?.maxTokens?.toString().orEmpty(),
@@ -3086,7 +3068,7 @@ private fun extractOpenAiBaseEditorState(base: io.github.stream29.kode.config.ap
         speculationInput = base?.speculation.orEmpty(),
         userInput = base?.user.orEmpty(),
         toolChoiceMode = OptionalToolChoiceModeChoice.fromToolChoice(base?.toolChoice),
-        toolChoiceNameInput = (base?.toolChoice as? io.github.stream29.kode.config.api.ToolChoiceConfig.Named)?.name.orEmpty(),
+        toolChoiceNameInput = (base?.toolChoice as? ToolChoiceConfig.Named)?.name.orEmpty(),
         schemaLevel = OptionalSchemaLevelChoice.fromLevel(base?.schema?.level),
         schemaNameInput = base?.schema?.name.orEmpty(),
         schemaJsonInput = base?.schema?.schema?.let { schema ->
@@ -3353,13 +3335,13 @@ private enum class OptionalToolChoiceModeChoice(
     ;
 
     companion object {
-        fun fromToolChoice(toolChoice: io.github.stream29.kode.config.api.ToolChoiceConfig?): OptionalToolChoiceModeChoice {
+        fun fromToolChoice(toolChoice: ToolChoiceConfig?): OptionalToolChoiceModeChoice {
             return when (toolChoice) {
                 null -> Default
-                io.github.stream29.kode.config.api.ToolChoiceConfig.Auto -> Auto
-                io.github.stream29.kode.config.api.ToolChoiceConfig.None -> None
-                io.github.stream29.kode.config.api.ToolChoiceConfig.Required -> Required
-                is io.github.stream29.kode.config.api.ToolChoiceConfig.Named -> Named
+                ToolChoiceConfig.Auto -> Auto
+                ToolChoiceConfig.None -> None
+                ToolChoiceConfig.Required -> Required
+                is ToolChoiceConfig.Named -> Named
             }
         }
     }
@@ -3367,15 +3349,15 @@ private enum class OptionalToolChoiceModeChoice(
 
 private enum class OptionalSchemaLevelChoice(
     val label: String,
-    val level: io.github.stream29.kode.config.api.JsonSchemaLevelConfig?,
+    val level: JsonSchemaLevelConfig?,
 ) {
     Default(label = "Default", level = null),
-    Basic(label = "basic", level = io.github.stream29.kode.config.api.JsonSchemaLevelConfig.Basic),
-    Standard(label = "standard", level = io.github.stream29.kode.config.api.JsonSchemaLevelConfig.Standard),
+    Basic(label = "basic", level = JsonSchemaLevelConfig.Basic),
+    Standard(label = "standard", level = JsonSchemaLevelConfig.Standard),
     ;
 
     companion object {
-        fun fromLevel(level: io.github.stream29.kode.config.api.JsonSchemaLevelConfig?): OptionalSchemaLevelChoice {
+        fun fromLevel(level: JsonSchemaLevelConfig?): OptionalSchemaLevelChoice {
             return entries.firstOrNull { choice -> choice.level == level } ?: Default
         }
     }
@@ -3670,12 +3652,12 @@ private fun parseOptionalJsonObjectField(
 }
 
 private data class BaseParamsBuildResult(
-    val base: io.github.stream29.kode.config.api.BaseModelParamsConfig? = null,
+    val base: BaseModelParamsConfig? = null,
     val error: String? = null,
 )
 
 private fun buildOpenAiBaseParams(
-    existing: io.github.stream29.kode.config.api.BaseModelParamsConfig,
+    existing: BaseModelParamsConfig,
     editor: OpenAiBaseEditorState,
     fieldPrefix: String,
 ): BaseParamsBuildResult {
@@ -3705,15 +3687,15 @@ private fun buildOpenAiBaseParams(
 
     val toolChoice = when (editor.toolChoiceMode) {
         OptionalToolChoiceModeChoice.Default -> null
-        OptionalToolChoiceModeChoice.Auto -> io.github.stream29.kode.config.api.ToolChoiceConfig.Auto
-        OptionalToolChoiceModeChoice.None -> io.github.stream29.kode.config.api.ToolChoiceConfig.None
-        OptionalToolChoiceModeChoice.Required -> io.github.stream29.kode.config.api.ToolChoiceConfig.Required
+        OptionalToolChoiceModeChoice.Auto -> ToolChoiceConfig.Auto
+        OptionalToolChoiceModeChoice.None -> ToolChoiceConfig.None
+        OptionalToolChoiceModeChoice.Required -> ToolChoiceConfig.Required
         OptionalToolChoiceModeChoice.Named -> {
             val name = editor.toolChoiceNameInput.trim()
             if (name.isBlank()) {
                 return BaseParamsBuildResult(error = "$fieldPrefix toolChoice.name is required when mode=named")
             }
-            io.github.stream29.kode.config.api.ToolChoiceConfig.Named(
+            ToolChoiceConfig.Named(
                 name = name,
             )
         }
@@ -3736,7 +3718,7 @@ private fun buildOpenAiBaseParams(
         }.getOrNull() as? JsonObject
             ?: return BaseParamsBuildResult(error = "$fieldPrefix schema JSON must be a valid JSON object")
 
-        io.github.stream29.kode.config.api.JsonSchemaConfig(
+        JsonSchemaConfig(
             name = schemaName,
             level = schemaLevel,
             schema = schemaObject,
@@ -5016,14 +4998,14 @@ private fun AuthDialog(
                     val resolvedBaseUrl = baseUrl.trim().takeIf { it.isNotBlank() }
                     val resolvedName = customName.trim().takeIf { it.isNotBlank() }
                     val resolvedAuth = if (isApiKeyMode) {
-                        io.github.stream29.kode.config.api.LlmAuth.ApiKey(
+                        LlmAuth.ApiKey(
                             apiKey = apiKey,
                             envKeys = envKeys,
                             baseUrl = resolvedBaseUrl,
                             customHeaders = emptyMap(),
                         )
                     } else {
-                        io.github.stream29.kode.config.api.LlmAuth.OAuth(
+                        LlmAuth.OAuth(
                             oauth = requireNotNull(resolvedOauth) { "OAuth config is null" },
                             baseUrl = resolvedBaseUrl,
                             customHeaders = emptyMap(),

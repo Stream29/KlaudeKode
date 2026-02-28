@@ -1,7 +1,7 @@
 package io.github.stream29.kode.session.core
 
-import io.github.stream29.kode.session.core.model.SessionState
 import io.github.stream29.kode.session.core.model.SessionMetadata
+import io.github.stream29.kode.session.core.model.SessionState
 import io.github.stream29.kode.session.core.model.TodoNode
 
 public interface SessionRepository {

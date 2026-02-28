@@ -1,7 +1,7 @@
 package io.github.stream29.kode.session.core.storage
 
-import io.github.stream29.kode.session.core.model.SessionSnapshot
 import io.github.stream29.kode.session.core.model.SessionCheckpoint
+import io.github.stream29.kode.session.core.model.SessionSnapshot
 import io.github.stream29.kode.session.core.model.SessionStatus
 import io.github.stream29.kode.session.core.model.SessionSummary
 import kotlin.time.Instant
@@ -11,53 +11,53 @@ import kotlin.time.Instant
  * Implementations can use file system, database, or in-memory storage.
  */
 public interface SessionStorage {
-    
+
     /**
      * Save or update a session.
      */
     public suspend fun saveSession(session: SessionSnapshot)
-    
+
     /**
      * Get a session by ID.
      * @return The session, or null if not found.
      */
     public suspend fun getSession(sessionId: String): SessionSnapshot?
-    
+
     /**
      * List all sessions with optional filtering.
      */
     public suspend fun listSessions(filter: SessionFilter?): List<SessionSummary>
-    
+
     /**
      * Delete a session (soft or hard delete based on implementation).
      */
     public suspend fun deleteSession(sessionId: String, hardDelete: Boolean)
-    
+
     /**
      * Save a checkpoint for a session.
      */
     public suspend fun saveCheckpoint(checkpoint: SessionCheckpoint)
-    
+
     /**
      * Get all checkpoints for a session.
      */
     public suspend fun getCheckpoints(sessionId: String): List<SessionCheckpoint>
-    
+
     /**
      * Get the latest checkpoint for a session.
      */
     public suspend fun getLatestCheckpoint(sessionId: String): SessionCheckpoint?
-    
+
     /**
      * Get a specific checkpoint.
      */
     public suspend fun getCheckpoint(sessionId: String, checkpointId: String): SessionCheckpoint?
-    
+
     /**
      * Delete a checkpoint.
      */
     public suspend fun deleteCheckpoint(sessionId: String, checkpointId: String)
-    
+
     /**
      * Delete all checkpoints for a session.
      */

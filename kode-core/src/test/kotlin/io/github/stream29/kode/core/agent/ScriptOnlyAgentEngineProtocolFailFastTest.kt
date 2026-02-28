@@ -13,21 +13,12 @@ import io.github.stream29.kode.core.testsupport.FakeMessageHandler
 import io.github.stream29.kode.core.testsupport.FakeSessionRepository
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.tool.ToolNames
-import io.github.stream29.kode.tools.scripting.ScriptContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.serializer
 import kotlinx.serialization.json.JsonElement
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertFailsWith
-import kotlin.test.assertNull
-import kotlin.test.assertTrue
-
-import io.github.stream29.kode.session.core.model.TodoNode
+import kotlinx.serialization.serializer
+import kotlin.test.*
 
 class ScriptOnlyAgentEngineProtocolFailFastTest {
     @Test
@@ -146,11 +137,18 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 runtimeContext = AgentRuntimeContext(),
                 scriptContextFactory = { MainAgentScriptContext(systemPromptInjection = "Prompt injection from PromptInjectionScriptContext") },
                 sessionSideEffectPort = object : SessionSideEffectPort {
-                    override suspend fun prepareMessagesForAgent(sessionId: String, agentId: String?): List<ai.koog.prompt.message.Message> {
+                    override suspend fun prepareMessagesForAgent(
+                        sessionId: String,
+                        agentId: String?
+                    ): List<ai.koog.prompt.message.Message> {
                         return emptyList()
                     }
 
-                    override suspend fun resolveSystemPrompt(sessionId: String, agentId: String?, fallback: String): String {
+                    override suspend fun resolveSystemPrompt(
+                        sessionId: String,
+                        agentId: String?,
+                        fallback: String
+                    ): String {
                         capturedFallback = fallback
                         throw FallbackCapturedException()
                     }
