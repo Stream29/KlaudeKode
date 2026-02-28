@@ -135,7 +135,13 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 eventListener = null,
                 logger = {},
                 runtimeContext = AgentRuntimeContext(),
-                scriptContextFactory = { MainAgentScriptContext(systemPromptInjection = "Prompt injection from PromptInjectionScriptContext") },
+                scriptContextFactory = {
+                    MainAgentScriptContext(
+                        userCommunicationScriptContext = object : UserCommunicationScriptContext by UserCommunicationScriptContextImpl() {
+                            override val systemPromptInjection: String = "Prompt injection from PromptInjectionScriptContext"
+                        }
+                    )
+                },
                 sessionSideEffectPort = object : SessionSideEffectPort {
                     override suspend fun prepareMessagesForAgent(
                         sessionId: String,

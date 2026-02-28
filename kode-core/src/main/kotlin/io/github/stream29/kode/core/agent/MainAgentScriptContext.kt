@@ -1,87 +1,35 @@
 package io.github.stream29.kode.core.agent
 
 import io.github.stream29.kode.session.core.model.TodoNode
-import io.github.stream29.kode.session.core.todo.TodoManager
 import io.github.stream29.kode.tools.scripting.ScriptContext
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlin.concurrent.atomics.AtomicBoolean
-import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 public class MainAgentScriptContext(
     initialTodos: List<TodoNode> = emptyList(),
-    override val systemPromptInjection: String = DEFAULT_SYSTEM_PROMPT_INJECTION,
-) : ScriptContext {
-    @OptIn(ExperimentalAtomicApi::class)
-    private val awaitForUserInput: AtomicBoolean = AtomicBoolean(false)
-    private val outputLock: Any = Any()
-    private val outputList: MutableList<String> = mutableListOf()
-    private var todoManager: TodoManager = TodoManager(initialNodes = initialTodos)
-    private val todoStateFlow: MutableStateFlow<List<TodoNode>> = MutableStateFlow(todoManager.listAllNodes())
+    private val todoListScriptContext: TodoListScriptContext = TodoListScriptContextImpl(initialTodos),
+    private val userCommunicationScriptContext: UserCommunicationScriptContext = UserCommunicationScriptContextImpl(),
+) : ScriptContext,
+    TodoListScriptContext by todoListScriptContext,
+    UserCommunicationScriptContext by userCommunicationScriptContext {
 
-    public fun sayToUser(message: String) {
-        synchronized(outputLock) {
-            outputList.add(message)
-        }
-    }
-
-    public fun consumeOutputList(): List<String> {
-        synchronized(outputLock) {
-            val snapshot = outputList.toList()
-            outputList.clear()
-            return snapshot
-        }
-    }
-
-    @OptIn(ExperimentalAtomicApi::class)
-    public fun suspendForUserInput() {
-        awaitForUserInput.compareAndSet(expectedValue = false, newValue = true)
-    }
-
-    @OptIn(ExperimentalAtomicApi::class)
-    public fun consumeAwaitForUserInputSignal(): Boolean {
-        return awaitForUserInput.exchange(newValue = false)
-    }
-
-    public fun getTodoStateFlow(): StateFlow<List<TodoNode>> {
-        return todoStateFlow.asStateFlow()
-    }
-
-    public fun getTodoList(): List<TodoNode> {
-        return todoManager.listAllNodes()
-    }
-
-    public fun updateTodoList(todos: List<TodoNode>) {
-        todoManager.updateNodes(todos)
-        syncTodoStateFlow()
-    }
-
-    private fun syncTodoStateFlow() {
-        todoStateFlow.value = todoManager.listAllNodes()
-    }
+    override val systemPromptInjection: String = buildSystemPromptInjection(
+        userCommunicationScriptContext.systemPromptInjection,
+        todoListScriptContext.systemPromptInjection
+    )
 
     public companion object {
-        public val DEFAULT_SYSTEM_PROMPT_INJECTION: String = """
+        public fun buildSystemPromptInjection(
+            userCommInjection: String,
+            todoInjection: String
+        ): String = """
             ## Script receiver API (implicit receiver = MainAgentScriptContext):
 
             You can call methods on `MainAgentScriptContext` in your script without `this` reference.
             Getting the receiver instance by referencing `this` is also acceptable.
+        """.trimIndent() + "\n\n" + userCommInjection + "\n" + todoInjection
 
-            ### `sayToUser(text: String)`
-            - Append one user-visible output entry.
-            - Each call corresponds to one UI message entry.
-            - May be written in markdown with mermaid.
-
-            ### `suspendForUserInput()`
-            - You must call `suspendForUserInput()` to finish your output. Otherwise, you will be forced to continue.
-            - Runtime behavior: the run enters pending-input and resumes after the user provides input.
-            - Do not call consumeAwaitForUserInputSignal(); it is runtime-internal.
-            - You can do other work in script and call this method at the end of the script.
-            ### Todo List API
-            - **Policy**: Use todo list for any complex task that can be further decomposed. Small, atomic tasks do not require todo entries.
-            - `getTodoList(): List<TodoNode>`: Get current state of the todo tree.
-            - `updateTodoList(todos: List<TodoNode>)`: Replace the entire todo list state.
-        """.trimIndent()
+        public val DEFAULT_SYSTEM_PROMPT_INJECTION: String = buildSystemPromptInjection(
+            UserCommunicationScriptContextImpl().systemPromptInjection,
+            TodoListScriptContextImpl().systemPromptInjection
+        )
     }
 }
