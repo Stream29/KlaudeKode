@@ -43,6 +43,8 @@ public inline fun <reified T : ScriptContext> T.eval(script: String): KotlinScri
                         CompilerOptions::class,
                         ScriptFileLocation::class,
                     )
+                    defaultImports.append("java.io.*")
+                    defaultImports.append(this@eval.defaultImports)
                     jvm {
                         dependenciesFromClassContext(
                             MainKtsScriptDefinition::class,
@@ -107,7 +109,8 @@ public inline fun <reified T : ScriptContext> T.eval(script: String): KotlinScri
 
         is ResultWithDiagnostics.Failure -> {
             Failure(
-                message = evaluationResult.reports.joinToString("\n").ifBlank { "Script evaluation failed" },
+                message = evaluationResult.reports.filter { it.severity != ScriptDiagnostic.Severity.DEBUG }
+                    .joinToString("\n").ifBlank { "Script evaluation failed" },
                 stdout = stdout,
             )
         }

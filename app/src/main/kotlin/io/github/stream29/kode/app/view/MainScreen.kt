@@ -1165,13 +1165,13 @@ private fun InfoPage(state: MainViewModel, ui: InfoPageUiState) {
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "AGENTS.md",
+                    text = "Preset File",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 if (ui.presetSpecPreview.isBlank()) {
                     Text(
-                        text = "No AGENTS.md found",
+                        text = "No preset file found",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

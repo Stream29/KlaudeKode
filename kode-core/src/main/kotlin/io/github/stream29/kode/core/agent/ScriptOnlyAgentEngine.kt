@@ -300,7 +300,7 @@ internal class ScriptOnlyAgentEngine(
             arguments = finalArgs,
         )
 
-        val execution = executeScriptTool(toolArgs = finalArgs, initialTodos = initialTodos)
+        val execution = executeScriptTool(sessionId = sessionId, toolArgs = finalArgs, initialTodos = initialTodos)
 
         val processedResult = toolSideEffectPort.applyToolCallAfterHooks(
             sessionId = sessionId,
@@ -479,16 +479,21 @@ internal class ScriptOnlyAgentEngine(
     }
 
     private suspend fun executeScriptTool(
+        sessionId: String,
         toolArgs: String,
         initialTodos: List<TodoNode>,
     ): ToolExecutionOutcome {
-        val scriptContext = if (initialTodos.isEmpty()) {
+        val agentId = runtimeContext.agentId
+        val activeFlow = if (agentId != null) sessionManager.getAgentTodoStateFlow(sessionId, agentId) else null
+        val scriptContext = if (activeFlow != null) {
+            MainAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeFlow)
+        } else if (initialTodos.isEmpty()) {
             scriptContextFactory()
         } else {
             MainAgentScriptContext(initialTodos = initialTodos)
         }
         val tool = KotlinScriptTool(scriptContext)
-        val todoStateFlow = scriptContext.getTodoStateFlow()
+        val todoStateFlow = scriptContext.todoStateFlow
         val todoSnapshot = todoStateFlow.value.toList()
 
         return try {

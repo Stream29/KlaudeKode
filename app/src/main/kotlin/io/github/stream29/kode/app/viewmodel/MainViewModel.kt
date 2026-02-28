@@ -3192,19 +3192,6 @@ logging:
             }
         }
 
-        val workDir = resolveSessionWorkingDir(currentSessionWorkDir)
-        val projectAgents = File(workDir, "AGENTS.md")
-        if (projectAgents.isFile) {
-            presetSpecPath = projectAgents.absolutePath
-            return projectAgents.readText()
-        }
-
-        val userAgents = File(resolveAppDataDir(), "AGENTS.md")
-        if (userAgents.isFile) {
-            presetSpecPath = userAgents.absolutePath
-            return userAgents.readText()
-        }
-
         presetSpecPath = ""
         return null
     }

@@ -165,6 +165,7 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 scriptContextFactory = {
                     MainAgentScriptContext(
                         userCommunicationScriptContext = object : UserCommunicationScriptContext by UserCommunicationScriptContextImpl() {
+                            override val defaultImports: List<String> = emptyList()
                             override val systemPromptInjection: String = "Prompt injection from PromptInjectionScriptContext"
                         }
                     )

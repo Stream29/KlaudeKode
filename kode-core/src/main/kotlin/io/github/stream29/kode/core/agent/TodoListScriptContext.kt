@@ -1,14 +1,13 @@
 package io.github.stream29.kode.core.agent
 
 import io.github.stream29.kode.session.core.model.TodoNode
-import io.github.stream29.kode.session.core.todo.TodoManager
 import io.github.stream29.kode.tools.scripting.ScriptContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 public interface TodoListScriptContext : ScriptContext {
-    public fun getTodoStateFlow(): StateFlow<List<TodoNode>>
+    public val todoStateFlow: StateFlow<List<TodoNode>>
     public fun getTodoList(): List<TodoNode>
     public fun updateTodoList(todos: List<TodoNode>)
     public fun updateTodoNode(vararg path: String, update: (TodoNode) -> TodoNode)
@@ -16,9 +15,12 @@ public interface TodoListScriptContext : ScriptContext {
 
 public class TodoListScriptContextImpl(
     initialTodos: List<TodoNode> = emptyList(),
+    activeFlow: MutableStateFlow<List<TodoNode>>? = null,
 ) : TodoListScriptContext {
-    private var todoManager: TodoManager = TodoManager(initialNodes = initialTodos)
-    private val todoStateFlow: MutableStateFlow<List<TodoNode>> = MutableStateFlow(todoManager.listAllNodes())
+    private val _todoStateFlow: MutableStateFlow<List<TodoNode>> = activeFlow ?: MutableStateFlow(initialTodos)
+    override val todoStateFlow: StateFlow<List<TodoNode>> = _todoStateFlow.asStateFlow()
+
+    override val defaultImports: List<String> = listOf(TodoNode::class.qualifiedName!!)
 
     override val systemPromptInjection: String = """
         ### Todo List API
@@ -29,17 +31,12 @@ public class TodoListScriptContextImpl(
         - `updateTodoNode(vararg path: String, update: (TodoNode) -> TodoNode)`: Update a specific node by its path (node names). For example: `updateTodoNode("Task", "Subtask") { it.copy(isCompleted = true) }`.
     """.trimIndent()
 
-    override fun getTodoStateFlow(): StateFlow<List<TodoNode>> {
-        return todoStateFlow.asStateFlow()
-    }
-
     override fun getTodoList(): List<TodoNode> {
-        return todoManager.listAllNodes()
+        return _todoStateFlow.value
     }
 
     override fun updateTodoList(todos: List<TodoNode>) {
-        todoManager.updateNodes(todos)
-        syncTodoStateFlow()
+        _todoStateFlow.value = todos
     }
 
     override fun updateTodoNode(vararg path: String, update: (TodoNode) -> TodoNode) {
@@ -71,11 +68,7 @@ public class TodoListScriptContextImpl(
             return newNodes
         }
 
-        val newTodos = updateNodeRecursively(todoManager.listAllNodes(), path.toList())
+        val newTodos = updateNodeRecursively(_todoStateFlow.value, path.toList())
         updateTodoList(newTodos)
-    }
-
-    private fun syncTodoStateFlow() {
-        todoStateFlow.value = todoManager.listAllNodes()
     }
 }

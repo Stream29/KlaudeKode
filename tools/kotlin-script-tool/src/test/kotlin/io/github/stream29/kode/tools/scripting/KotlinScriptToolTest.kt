@@ -8,6 +8,7 @@ import kotlin.test.*
 
 class KotlinScriptToolTest {
     class TestScriptContext : ScriptContext {
+        override val defaultImports: List<String> = emptyList()
         override val systemPromptInjection: String = "Extended script context prompt injection"
 
         private val outputLock: Any = Any()

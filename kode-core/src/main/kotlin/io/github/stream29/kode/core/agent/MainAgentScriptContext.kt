@@ -5,11 +5,17 @@ import io.github.stream29.kode.tools.scripting.ScriptContext
 
 public class MainAgentScriptContext(
     initialTodos: List<TodoNode> = emptyList(),
-    private val todoListScriptContext: TodoListScriptContext = TodoListScriptContextImpl(initialTodos),
+    activeTodoFlow: kotlinx.coroutines.flow.MutableStateFlow<List<TodoNode>>? = null,
+    private val todoListScriptContext: TodoListScriptContext = TodoListScriptContextImpl(
+        initialTodos = initialTodos,
+        activeFlow = activeTodoFlow
+    ),
     private val userCommunicationScriptContext: UserCommunicationScriptContext = UserCommunicationScriptContextImpl(),
 ) : ScriptContext,
     TodoListScriptContext by todoListScriptContext,
     UserCommunicationScriptContext by userCommunicationScriptContext {
+
+    override val defaultImports: List<String> = todoListScriptContext.defaultImports + userCommunicationScriptContext.defaultImports
 
     override val systemPromptInjection: String = buildSystemPromptInjection(
         userCommunicationScriptContext.systemPromptInjection,

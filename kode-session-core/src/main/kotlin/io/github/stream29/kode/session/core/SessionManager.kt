@@ -10,6 +10,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.datetime.toDeprecatedInstant
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -1035,6 +1036,14 @@ public class SessionManager(
     }
 
     private fun <E> List<E>.toPersistentList() = persistentListOf<E>().addAll(this)
+
+    public suspend fun getAgentTodoStateFlow(
+        sessionId: String,
+        agentId: String
+    ): MutableStateFlow<List<TodoNode>>? {
+        val state = getSessionState(sessionId) ?: return null
+        return resolveAgent(state, sessionId, agentId).todoState
+    }
 
     public suspend fun getAgentTodo(
         sessionId: String,

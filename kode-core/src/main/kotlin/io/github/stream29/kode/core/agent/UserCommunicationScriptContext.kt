@@ -17,6 +17,8 @@ public class UserCommunicationScriptContextImpl : UserCommunicationScriptContext
     private val outputLock: Any = Any()
     private val outputList: MutableList<String> = mutableListOf()
 
+    override val defaultImports: List<String> = emptyList()
+
     override val systemPromptInjection: String = """
         ### `sayToUser(text: String)`
         - Append one user-visible output entry.
