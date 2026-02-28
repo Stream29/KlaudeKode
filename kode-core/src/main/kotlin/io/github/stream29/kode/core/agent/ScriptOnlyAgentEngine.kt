@@ -14,7 +14,6 @@ import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.model.TodoNode
-import io.github.stream29.kode.session.core.todo.generateTodoGuidelineInjection
 import io.github.stream29.kode.session.core.tool.ToolNames
 import io.github.stream29.kode.tools.scripting.KotlinScriptTool
 import io.github.stream29.kode.ui.core.AgentEvent
@@ -55,7 +54,7 @@ internal class ScriptOnlyAgentEngine(
     private val json = Json { ignoreUnknownKeys = true }
     private val defaultScriptContext: MainAgentScriptContext = scriptContextFactory()
     private val scriptToolDescriptor = KotlinScriptTool(defaultScriptContext).descriptor
-    private val defaultSystemPrompt: String = buildDefaultSystemPrompt(defaultScriptContext.systemPromptInjection)
+    private val defaultSystemPrompt: String = buildDefaultSystemPrompt(BASE_SYSTEM_PROMPT, defaultScriptContext.systemPromptInjection)
 
     private data class ResolvedToolCall(
         val call: Message.Tool.Call,
@@ -96,13 +95,18 @@ internal class ScriptOnlyAgentEngine(
         return ""
     }
 
-    private suspend fun resolvePromptContext(sessionId: String, agentId: String?): Pair<String, List<Message>> {
-        val messages = sessionSideEffectPort.prepareMessagesForAgent(sessionId = sessionId, agentId = agentId)
-        val systemPrompt = sessionSideEffectPort.resolveSystemPrompt(
+    private suspend fun resolveSystemPrompt(sessionId: String, agentId: String?): String {
+        val baseSystemPrompt = sessionSideEffectPort.resolveSystemPrompt(
             sessionId = sessionId,
             agentId = agentId,
-            fallback = defaultSystemPrompt,
+            fallback = BASE_SYSTEM_PROMPT,
         )
+        return buildDefaultSystemPrompt(baseSystemPrompt, defaultScriptContext.systemPromptInjection)
+    }
+
+    private suspend fun resolvePromptContext(sessionId: String, agentId: String?): Pair<String, List<Message>> {
+        val messages = sessionSideEffectPort.prepareMessagesForAgent(sessionId = sessionId, agentId = agentId)
+        val systemPrompt = resolveSystemPrompt(sessionId, agentId)
         return systemPrompt to messages
     }
 
@@ -148,23 +152,6 @@ internal class ScriptOnlyAgentEngine(
         return sessionManager.getAgentTodo(sessionId, agentId)
     }
 
-    private suspend fun buildSystemPromptWithTodoInjection(
-        sessionId: String,
-    ): String {
-        val baseSystemPrompt = sessionSideEffectPort.resolveSystemPrompt(
-            sessionId = sessionId,
-            agentId = runtimeContext.agentId,
-            fallback = defaultSystemPrompt,
-        )
-        val todoGuideline = generateTodoGuidelineInjection()
-        return """
-            $baseSystemPrompt
-            
-            $todoGuideline
-        """.trimIndent()
-    }
-
-
     private suspend fun executeWithTools(
         sessionId: String,
         systemPrompt: String,
@@ -189,8 +176,9 @@ internal class ScriptOnlyAgentEngine(
             }
 
             resolveCurrentTodos(sessionId = sessionId)
-            val currentSystemPrompt = buildSystemPromptWithTodoInjection(
+            val currentSystemPrompt = resolveSystemPrompt(
                 sessionId = sessionId,
+                agentId = runtimeContext.agentId,
             )
 
             val currentPrompt = buildPrompt(
@@ -740,19 +728,19 @@ internal class ScriptOnlyAgentEngine(
 
         """.trimIndent()
 
-        fun buildDefaultSystemPrompt(systemPromptInjection: String): String {
+        fun buildDefaultSystemPrompt(baseSystemPrompt: String, systemPromptInjection: String): String {
             val normalizedInjection = systemPromptInjection.trim()
             if (normalizedInjection.isBlank()) {
-                return BASE_SYSTEM_PROMPT
+                return baseSystemPrompt
             }
             return """
-                $BASE_SYSTEM_PROMPT
+                $baseSystemPrompt
 
                 $normalizedInjection
             """.trimIndent()
         }
 
         val DEFAULT_SYSTEM_PROMPT: String =
-            buildDefaultSystemPrompt(MainAgentScriptContext.DEFAULT_SYSTEM_PROMPT_INJECTION)
+            buildDefaultSystemPrompt(BASE_SYSTEM_PROMPT, MainAgentScriptContext.DEFAULT_SYSTEM_PROMPT_INJECTION)
     }
 }

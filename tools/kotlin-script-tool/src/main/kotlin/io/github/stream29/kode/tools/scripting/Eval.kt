@@ -35,7 +35,7 @@ public inline fun <reified T : ScriptContext> T.eval(script: String): KotlinScri
             host.evalWithTemplate<MainKtsScript>(
                 script = script.toScriptSource(),
                 compilation = {
-                    defaultImports(
+                    defaultImports.invoke(
                         T::class,
                         DependsOn::class,
                         Repository::class,

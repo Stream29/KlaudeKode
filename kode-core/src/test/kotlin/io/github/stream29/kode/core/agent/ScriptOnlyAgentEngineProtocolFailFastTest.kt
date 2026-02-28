@@ -125,9 +125,36 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 preferredModelId = "test-model",
                 workDir = null,
             )
-            var capturedFallback: String? = null
+            var capturedSystemPrompt: String? = null
             val engine = ScriptOnlyAgentEngine(
-                promptExecutor = getMockExecutor { mockLLMAnswer("unused").asDefaultResponse },
+                promptExecutor = object : PromptExecutor {
+                    override suspend fun execute(
+                        prompt: ai.koog.prompt.dsl.Prompt,
+                        model: LLModel,
+                        tools: List<ai.koog.agents.core.tools.ToolDescriptor>
+                    ): List<ai.koog.prompt.message.Message.Response> {
+                        val sysMsg = prompt.messages.firstOrNull { msg -> msg is ai.koog.prompt.message.Message.System }
+                        capturedSystemPrompt = (sysMsg as? ai.koog.prompt.message.Message.System)?.content
+                        throw FallbackCapturedException()
+                    }
+
+                    override fun executeStreaming(
+                        prompt: ai.koog.prompt.dsl.Prompt,
+                        model: LLModel,
+                        tools: List<ai.koog.agents.core.tools.ToolDescriptor>
+                    ): kotlinx.coroutines.flow.Flow<ai.koog.prompt.streaming.StreamFrame> {
+                        error("Not supported")
+                    }
+
+                    override suspend fun moderate(
+                        prompt: ai.koog.prompt.dsl.Prompt,
+                        model: LLModel
+                    ): ai.koog.prompt.dsl.ModerationResult {
+                        error("Not supported")
+                    }
+
+                    override fun close() {}
+                },
                 sessionManager = sessionManager,
                 sessionBridge = KoogSessionBridge(sessionManager = sessionManager),
                 messageHandler = FakeMessageHandler(),
@@ -155,8 +182,7 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                         agentId: String?,
                         fallback: String
                     ): String {
-                        capturedFallback = fallback
-                        throw FallbackCapturedException()
+                        return fallback
                     }
 
                     override suspend fun suspendForUserInput(sessionId: String) {
@@ -188,11 +214,11 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
             }
 
             assertContains(
-                charSequence = capturedFallback.orEmpty(),
+                charSequence = capturedSystemPrompt.orEmpty(),
                 other = "Prompt injection from PromptInjectionScriptContext",
             )
             assertContains(
-                charSequence = capturedFallback.orEmpty(),
+                charSequence = capturedSystemPrompt.orEmpty(),
                 other = "You are a coding agent named `Kode`.",
             )
         }
