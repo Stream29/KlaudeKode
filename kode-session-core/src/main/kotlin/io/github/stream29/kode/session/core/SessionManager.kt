@@ -26,6 +26,7 @@ public class SessionManager(
 ) {
     private val sessionFactory: SessionFactory = SessionFactory(repository)
     private val subAgentJobs: ConcurrentHashMap<String, ConcurrentHashMap<String, Job>> = ConcurrentHashMap()
+    private val softStopRequestedSessions: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     public sealed interface SubAgentPollResult {
         public data class Pending(
@@ -121,12 +122,28 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
+            val currentOwner = runtime.runJob.value
+            if (
+                currentOwner != null &&
+                currentOwner != ownerJob &&
+                runtime.metadata.value.state == SessionRunState.Running
+            ) {
+                throw IllegalStateException("Session run is already owned by another active job")
+            }
+            val alreadyRunningByOwner =
+                currentOwner == ownerJob &&
+                        runtime.metadata.value.state == SessionRunState.Running &&
+                        runtime.agent.value.state.value == AgentState.Running
+            if (alreadyRunningByOwner) {
+                return
+            }
             runtime.runJob.value = ownerJob
             runtime.metadata.value = runtime.metadata.value.copy(
                 state = SessionRunState.Running,
                 updatedAt = clock.now(),
             )
             runtime.agent.value.state.value = AgentState.Running
+            clearSoftStopRequest(sessionId)
             persist(runtime)
         } finally {
             runtime.mutex.unlock()
@@ -149,12 +166,26 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
+            val targetState = computeSessionStateWhenMainSuspended(runtime)
+            val alreadySuspended =
+                runtime.runJob.value == null &&
+                        runtime.agent.value.state.value == AgentState.Suspended &&
+                        runtime.metadata.value.state == targetState
+            if (alreadySuspended) {
+                if (targetState == SessionRunState.Suspended) {
+                    clearSoftStopRequest(sessionId)
+                }
+                return
+            }
             runtime.runJob.value = null
             runtime.agent.value.state.value = AgentState.Suspended
             runtime.metadata.value = runtime.metadata.value.copy(
-                state = computeSessionState(runtime),
+                state = targetState,
                 updatedAt = clock.now(),
             )
+            if (targetState == SessionRunState.Suspended) {
+                clearSoftStopRequest(sessionId)
+            }
             persist(runtime)
         } finally {
             runtime.mutex.unlock()
@@ -165,25 +196,28 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            runtime.runJob.value?.cancel("Stopped by user")
-            subAgentJobs[sessionId]?.values?.forEach { job ->
-                job.cancel("Stopped by user")
-            }
-            runtime.subagents.value.forEach { (_, subAgent) ->
-                subAgent.delegate.state.value = AgentState.Suspended
-                if (!subAgent.result.isCompleted) {
-                    subAgent.result.complete("Cancelled by user")
-                }
-            }
             val rolledBackPending = normalizeTrailingPendingScript(runtime.agent.value)
-            runtime.runJob.value = null
-            runtime.agent.value.state.value = AgentState.Suspended
-            runtime.metadata.value = runtime.metadata.value.copy(
-                state = SessionRunState.Suspended,
-                updatedAt = clock.now(),
-                version = runtime.metadata.value.version + 1,
-                messageCount = runtime.agent.value.messages.value.size,
-            )
+            val sessionRunning = computeSessionState(runtime) == SessionRunState.Running
+            val softStopAlreadyRequested = isSoftStopRequested(sessionId)
+
+            if (sessionRunning && !softStopAlreadyRequested) {
+                requestSoftStop(sessionId = sessionId, runtime = runtime)
+                markSoftStopRequested(sessionId)
+                if (rolledBackPending) {
+                    updateMetadataAfterStopMutation(sessionId = sessionId, runtime = runtime)
+                    persist(runtime)
+                }
+                return rolledBackPending
+            }
+
+            if (sessionRunning) {
+                forceStop(sessionId = sessionId, runtime = runtime)
+            } else {
+                normalizeStoppedRuntime(runtime)
+                clearSoftStopRequest(sessionId)
+            }
+
+            updateMetadataAfterStopMutation(sessionId = sessionId, runtime = runtime)
             persist(runtime)
             return rolledBackPending
         } finally {
@@ -245,6 +279,9 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
+            if (runtime.metadata.value.state != SessionRunState.Suspended) {
+                throw IllegalStateException("Session continuation requires a suspended session")
+            }
             val targetAgent = resolveAgent(runtime, sessionId, agentId)
             val pendingScript = targetAgent.trailingPendingScript()
             if (pendingScript != null) {
@@ -352,6 +389,7 @@ public class SessionManager(
             )
             runtime.agent.value.state.value = AgentState.Suspended
             runtime.runJob.value = null
+            clearSoftStopRequest(sessionId)
             persist(runtime)
             return runtime.toSessionSnapshot()
         } finally {
@@ -372,6 +410,9 @@ public class SessionManager(
         val parent = requireRuntime(parentSessionId)
         parent.mutex.lock()
         try {
+            if (parent.metadata.value.state != SessionRunState.Suspended) {
+                throw IllegalStateException("Only suspended sessions can be forked")
+            }
             val parentMessages = parent.agent.value.messages.value
             val messages = if (atMessageId != null) {
                 val index = parentMessages.indexOfFirst { item -> item.id == atMessageId }
@@ -458,6 +499,7 @@ public class SessionManager(
             )
             runtime.runJob.value = null
             runtime.agent.value.state.value = AgentState.Suspended
+            clearSoftStopRequest(sessionId)
             persist(runtime)
             return runtime.toSessionSnapshot()
         } finally {
@@ -485,6 +527,7 @@ public class SessionManager(
             subAgentJobs.remove(sessionId)?.values?.forEach { job ->
                 job.cancel("Session hard deleted")
             }
+            clearSoftStopRequest(sessionId)
             repository.removeSession(sessionId)
             sessionFactory.evict(sessionId)
             return
@@ -500,6 +543,7 @@ public class SessionManager(
             )
             runtime.agent.value.state.value = AgentState.Suspended
             runtime.runJob.value = null
+            clearSoftStopRequest(sessionId)
             persist(runtime)
         } finally {
             runtime.mutex.unlock()
@@ -774,15 +818,23 @@ public class SessionManager(
             if (subAgent == null) {
                 false
             } else {
-                if (!subAgent.result.isCompleted) {
-                    subAgent.result.complete(resultText)
+                if (subAgent.result.isCompleted) {
+                    return false
                 }
+
+                cancelAndUnregisterSubAgentJob(
+                    sessionId = sessionId,
+                    agentId = agentId,
+                    reason = "Subagent finished",
+                )
+                subAgent.result.complete(resultText)
                 subAgent.delegate.state.value = AgentState.Suspended
                 runtime.metadata.value = runtime.metadata.value.copy(
                     state = computeSessionState(runtime),
                     updatedAt = clock.now(),
                     version = runtime.metadata.value.version + 1,
                 )
+                clearSoftStopRequestIfSuspended(sessionId = sessionId, state = runtime.metadata.value.state)
                 persist(runtime)
                 true
             }
@@ -799,16 +851,23 @@ public class SessionManager(
             if (subAgent == null) {
                 false
             } else {
-                subAgentJobs[sessionId]?.remove(agentId)?.cancel("Killed by parent agent")
-                if (!subAgent.result.isCompleted) {
-                    subAgent.result.complete("Killed by parent agent")
+                if (subAgent.result.isCompleted) {
+                    return false
                 }
+
+                cancelAndUnregisterSubAgentJob(
+                    sessionId = sessionId,
+                    agentId = agentId,
+                    reason = "Killed by parent agent",
+                )
+                subAgent.result.complete("Killed by parent agent")
                 runtime.subagents.value = runtime.subagents.value.remove(agentId)
                 runtime.metadata.value = runtime.metadata.value.copy(
                     state = computeSessionState(runtime),
                     updatedAt = clock.now(),
                     version = runtime.metadata.value.version + 1,
                 )
+                clearSoftStopRequestIfSuspended(sessionId = sessionId, state = runtime.metadata.value.state)
                 persist(runtime)
                 true
             }
@@ -838,7 +897,7 @@ public class SessionManager(
         return try {
             val activeIds = mutableListOf<String>()
             val mainRunning =
-                runtime.agent.value.state.value == AgentState.Running && (runtime.runJob.value?.isActive == true)
+                runtime.agent.value.state.value == AgentState.Running && runtime.runJob.value != null
             if (mainRunning) {
                 activeIds += mainAgentId(sessionId)
             }
@@ -912,6 +971,10 @@ public class SessionManager(
         subAgentJobs[sessionId]?.remove(agentId)
     }
 
+    private fun cancelAndUnregisterSubAgentJob(sessionId: String, agentId: String, reason: String) {
+        subAgentJobs[sessionId]?.remove(agentId)?.cancel(reason)
+    }
+
     private fun resolveAgent(runtime: SessionState, sessionId: String, agentId: String?): Agent {
         if (isMainAgent(sessionId, agentId)) {
             return runtime.agent.value
@@ -934,11 +997,75 @@ public class SessionManager(
 
     private fun computeSessionState(runtime: SessionState): SessionRunState {
         val mainRunning =
-            runtime.agent.value.state.value == AgentState.Running && (runtime.runJob.value?.isActive == true)
+            runtime.agent.value.state.value == AgentState.Running && runtime.runJob.value != null
+        if (mainRunning) {
+            return SessionRunState.Running
+        }
+        return computeSessionStateWhenMainSuspended(runtime)
+    }
+
+    private fun requestSoftStop(sessionId: String, runtime: SessionState) {
+        runtime.runJob.value?.cancel("Soft stop requested by user")
+        subAgentJobs[sessionId]?.values?.forEach { job ->
+            job.cancel("Soft stop requested by user")
+        }
+    }
+
+    private fun forceStop(sessionId: String, runtime: SessionState) {
+        runtime.runJob.value?.cancel("Stopped by user")
+        subAgentJobs[sessionId]?.values?.forEach { job ->
+            job.cancel("Stopped by user")
+        }
+        runtime.subagents.value.forEach { (_, subAgent) ->
+            subAgent.delegate.state.value = AgentState.Suspended
+            if (!subAgent.result.isCompleted) {
+                subAgent.result.complete("Cancelled by user")
+            }
+        }
+        runtime.runJob.value = null
+        runtime.agent.value.state.value = AgentState.Suspended
+        clearSoftStopRequest(sessionId)
+    }
+
+    private fun normalizeStoppedRuntime(runtime: SessionState) {
+        runtime.runJob.value = null
+        runtime.agent.value.state.value = AgentState.Suspended
+    }
+
+    private fun updateMetadataAfterStopMutation(sessionId: String, runtime: SessionState) {
+        val targetState = computeSessionState(runtime)
+        runtime.metadata.value = runtime.metadata.value.copy(
+            state = targetState,
+            updatedAt = clock.now(),
+            version = runtime.metadata.value.version + 1,
+            messageCount = runtime.agent.value.messages.value.size,
+        )
+        clearSoftStopRequestIfSuspended(sessionId = sessionId, state = targetState)
+    }
+
+    private fun markSoftStopRequested(sessionId: String) {
+        softStopRequestedSessions.add(sessionId)
+    }
+
+    private fun isSoftStopRequested(sessionId: String): Boolean {
+        return softStopRequestedSessions.contains(sessionId)
+    }
+
+    private fun clearSoftStopRequest(sessionId: String) {
+        softStopRequestedSessions.remove(sessionId)
+    }
+
+    private fun clearSoftStopRequestIfSuspended(sessionId: String, state: SessionRunState) {
+        if (state == SessionRunState.Suspended) {
+            clearSoftStopRequest(sessionId)
+        }
+    }
+
+    private fun computeSessionStateWhenMainSuspended(runtime: SessionState): SessionRunState {
         val subRunning = runtime.subagents.value.any { (_, subAgent) ->
             subAgent.delegate.state.value == AgentState.Running && !subAgent.result.isCompleted
         }
-        return if (mainRunning || subRunning) {
+        return if (subRunning) {
             SessionRunState.Running
         } else {
             SessionRunState.Suspended
@@ -1010,11 +1137,7 @@ public class SessionManager(
     }
 
     private fun Agent.trailingPendingScript(): AgentScript? {
-        val trailing = messages.value.lastOrNull() ?: return null
-        if (trailing !is AgentScript || trailing.status != AgentScriptStatus.PENDING_INPUT) {
-            return null
-        }
-        return trailing
+        return messages.value.trailingPendingInputScriptOrNull()
     }
 
     private suspend fun persist(runtime: SessionState) {
@@ -1063,13 +1186,25 @@ public class SessionManager(
         todos: List<TodoNode>
     ) {
         val state = getSessionState(sessionId)
-        if (state != null) {
-            val agent = resolveAgent(state, sessionId, agentId)
-            agent.todoState.value = todos
+        if (state == null) {
+            repository.writeAgentTodo(sessionId, agentId, todos)
+            return
         }
-        repository.writeAgentTodo(sessionId, agentId, todos)
-        if (state != null) {
+
+        state.mutex.lock()
+        try {
+            val agent = resolveAgent(state, sessionId, agentId)
+            if (agent.todoState.value == todos) {
+                return
+            }
+            agent.todoState.value = todos
+            state.metadata.value = state.metadata.value.copy(
+                updatedAt = clock.now(),
+                version = state.metadata.value.version + 1,
+            )
             persist(state)
+        } finally {
+            state.mutex.unlock()
         }
     }
 

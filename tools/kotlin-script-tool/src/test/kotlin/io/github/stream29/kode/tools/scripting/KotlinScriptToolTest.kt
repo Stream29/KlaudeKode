@@ -4,6 +4,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 class KotlinScriptToolTest {
@@ -13,7 +17,7 @@ class KotlinScriptToolTest {
 
         private val outputLock: Any = Any()
         private val outputList: MutableList<String> = mutableListOf()
-        private var awaitInput = false
+        private val awaitInput: AtomicBoolean = AtomicBoolean(false)
 
         fun sayToUser(message: String) {
             synchronized(outputLock) {
@@ -30,13 +34,11 @@ class KotlinScriptToolTest {
         }
 
         fun suspendForUserInput() {
-            awaitInput = true
+            awaitInput.set(true)
         }
 
         fun consumeAwaitForUserInputSignal(): Boolean {
-            val res = awaitInput
-            awaitInput = false
-            return res
+            return awaitInput.getAndSet(false)
         }
 
         fun greet(name: String): String {
@@ -52,6 +54,52 @@ class KotlinScriptToolTest {
         scriptContext.sayToUser("second")
 
         assertEquals(expected = listOf("first", "second"), actual = scriptContext.consumeOutputList())
+        assertTrue(scriptContext.consumeOutputList().isEmpty())
+
+        val concurrentWriteStart = CountDownLatch(1)
+        val firstWriteDone = CountDownLatch(1)
+        val concurrentWriteDone = CountDownLatch(2)
+        val concurrentWriteFailed = AtomicBoolean(false)
+
+        val firstWriter = Thread(
+            {
+                if (!concurrentWriteStart.await(1, TimeUnit.SECONDS)) {
+                    concurrentWriteFailed.set(true)
+                    concurrentWriteDone.countDown()
+                    return@Thread
+                }
+                scriptContext.sayToUser("thread-first")
+                firstWriteDone.countDown()
+                concurrentWriteDone.countDown()
+            },
+            "test-script-context-writer-1",
+        )
+        val secondWriter = Thread(
+            {
+                if (!concurrentWriteStart.await(1, TimeUnit.SECONDS)) {
+                    concurrentWriteFailed.set(true)
+                    concurrentWriteDone.countDown()
+                    return@Thread
+                }
+                if (!firstWriteDone.await(1, TimeUnit.SECONDS)) {
+                    concurrentWriteFailed.set(true)
+                    concurrentWriteDone.countDown()
+                    return@Thread
+                }
+                scriptContext.sayToUser("thread-second")
+                concurrentWriteDone.countDown()
+            },
+            "test-script-context-writer-2",
+        )
+        firstWriter.isDaemon = true
+        secondWriter.isDaemon = true
+        firstWriter.start()
+        secondWriter.start()
+
+        concurrentWriteStart.countDown()
+        assertTrue(concurrentWriteDone.await(2, TimeUnit.SECONDS))
+        assertFalse(concurrentWriteFailed.get())
+        assertEquals(expected = listOf("thread-first", "thread-second"), actual = scriptContext.consumeOutputList())
         assertTrue(scriptContext.consumeOutputList().isEmpty())
     }
 
@@ -74,6 +122,42 @@ class KotlinScriptToolTest {
         scriptContext.suspendForUserInput()
 
         assertTrue(scriptContext.consumeAwaitForUserInputSignal())
+        assertFalse(scriptContext.consumeAwaitForUserInputSignal())
+    }
+
+    @Test
+    fun consumeSignal_isConsumeOnceAcrossConcurrentConsumers() {
+        val scriptContext = TestScriptContext()
+        scriptContext.suspendForUserInput()
+
+        val consumeStart = CountDownLatch(1)
+        val consumeDone = CountDownLatch(8)
+        val consumeFailed = AtomicBoolean(false)
+        val trueCount = AtomicInteger(0)
+
+        repeat(8) {
+            val consumer = Thread(
+                {
+                    if (!consumeStart.await(1, TimeUnit.SECONDS)) {
+                        consumeFailed.set(true)
+                        consumeDone.countDown()
+                        return@Thread
+                    }
+                    if (scriptContext.consumeAwaitForUserInputSignal()) {
+                        trueCount.incrementAndGet()
+                    }
+                    consumeDone.countDown()
+                },
+                "test-script-context-signal-consumer-$it",
+            )
+            consumer.isDaemon = true
+            consumer.start()
+        }
+
+        consumeStart.countDown()
+        assertTrue(consumeDone.await(2, TimeUnit.SECONDS))
+        assertFalse(consumeFailed.get())
+        assertEquals(1, trueCount.get())
         assertFalse(scriptContext.consumeAwaitForUserInputSignal())
     }
 
@@ -223,6 +307,64 @@ class KotlinScriptToolTest {
 
         val failure = assertIs<KotlinScriptResult.Failure>(result)
         assertContains(failure.message, "thread-boom")
+    }
+
+    @Test
+    fun requestThreadCancellation_interruptsInterruptibleThread() {
+        val started = CountDownLatch(1)
+        val interrupted = AtomicBoolean(false)
+        val worker = Thread(
+            {
+                started.countDown()
+                try {
+                    Thread.sleep(10_000L)
+                } catch (_: InterruptedException) {
+                    interrupted.set(true)
+                }
+            },
+            "interruptible-worker",
+        )
+        worker.isDaemon = true
+        worker.start()
+        assertTrue(started.await(1, TimeUnit.SECONDS))
+
+        requestThreadCancellation(targetThread = worker)
+        worker.join(2_000L)
+
+        assertTrue(interrupted.get())
+        assertFalse(worker.isAlive)
+    }
+
+    @Test
+    fun requestThreadCancellation_interruptsNonCooperativeThreadWithoutLeaking() {
+        val started = CountDownLatch(1)
+        val keepRunning = AtomicBoolean(true)
+        val interruptedCount = AtomicInteger(0)
+        val worker = Thread(
+            {
+                started.countDown()
+                while (keepRunning.get()) {
+                    try {
+                        Thread.sleep(10_000L)
+                    } catch (_: InterruptedException) {
+                        interruptedCount.incrementAndGet()
+                    }
+                }
+            },
+            "non-cooperative-worker",
+        )
+        worker.isDaemon = true
+        worker.start()
+        assertTrue(started.await(1, TimeUnit.SECONDS))
+
+        requestThreadCancellation(targetThread = worker)
+        Thread.sleep(1_200L)
+        assertTrue(interruptedCount.get() > 0)
+
+        keepRunning.set(false)
+        worker.interrupt()
+        worker.join(2_000L)
+        assertFalse(worker.isAlive)
     }
 
     @Test

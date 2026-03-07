@@ -117,6 +117,8 @@ plugin-name = { id = "plugin.id", version.ref = "kotlin" }
 - 2026-02-19：测试链路默认执行离线确定性校验；需要设置 `KODE_AGENT_API_TEST_ENABLE_LIVE=true` 才运行 Anthropic live 链路。
 - 2026-02-19：移除 `:tools:file-search-tool` 模块与 `kode-core` 对该模块依赖；文件检索能力收敛到 script-only 路线（由 `executeKotlinScript` + `ScriptContext` 统一承载）。
 - 2026-02-25：Legacy pruning 硬切：移除已弃用工具模块，模块图以 `settings.gradle.kts` 为准；保留受保护表面 `:tools:web-tool`，并维持现行运行时兼容表面（strict script-only、`ToolNames` 单一事实源、legacy alias 仅历史语义不得回流）。
+- 2026-03-06：会话契约收敛为“运行态单一 owner + pending-input 单一真值源 + 两段 stop 语义”：`isWaitingForInput` 仅由 pending-input 派生，不得再以 `SessionRunState.Suspended` 直接等价。
+- 2026-03-06：持久化采用“迁移优先、默认非破坏”策略：schema 不匹配默认 fail-fast/迁移，不得无显式开关执行 destructive reset；新旧布局保持“新写入、旧可读”兼容。
 
 ## Critical Interaction Contract
 

@@ -4,12 +4,11 @@ import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.model.UserMessage
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
-import java.util.*
 import kotlin.test.*
 
 class FileSessionStorageFailFastTest {
     @Test
-    fun schemaMismatchResetsPersistedStorage() {
+    fun unsupportedSchemaMismatchDoesNotResetByDefault() {
         runBlocking {
             val tempDir = Files.createTempDirectory("file-session-storage-schema-reset-test")
             try {
@@ -31,11 +30,57 @@ class FileSessionStorageFailFastTest {
                 val sessionsDir = tempDir.resolve("sessions")
                 assertTrue(sessionsDir.toFile().isDirectory)
                 assertTrue(sessionsDir.toFile().listFiles().orEmpty().isNotEmpty())
+                val metadataFile = tempDir.resolve("session-index.csv").toFile()
+                val metadataBefore = metadataFile.readText()
 
                 val schemaFile = tempDir.resolve("session-schema.version").toFile()
-                schemaFile.writeText("5")
+                schemaFile.writeText("999")
 
-                val reloaded = FileSessionStorage(dataDir = tempDir.toFile())
+                val error = assertFailsWith<IllegalStateException> {
+                    FileSessionStorage(dataDir = tempDir.toFile())
+                }
+                assertTrue(error.message.orEmpty().contains("Unsupported session storage schema version"))
+                assertEquals("999", schemaFile.readText().trim())
+                assertEquals(metadataBefore, metadataFile.readText())
+                assertTrue(sessionsDir.toFile().isDirectory)
+                assertTrue(sessionsDir.toFile().listFiles().orEmpty().isNotEmpty())
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+    }
+
+    @Test
+    fun schemaMismatchResetsPersistedStorageOnlyWhenExplicitlyAllowed() {
+        runBlocking {
+            val tempDir = Files.createTempDirectory("file-session-storage-schema-reset-allowed-test")
+            try {
+                val storage = FileSessionStorage(dataDir = tempDir.toFile())
+                val manager = SessionManager(repository = storage)
+                val session = manager.createConversationSession(
+                    title = "schema reset allowed",
+                    systemPrompt = "test",
+                    preferredModel = null,
+                    preferredModelId = "test-model",
+                    workDir = null,
+                )
+                manager.prepareConversationContinuation(
+                    sessionId = session.id,
+                    input = "hello",
+                    agentId = null,
+                )
+
+                val sessionsDir = tempDir.resolve("sessions")
+                assertTrue(sessionsDir.toFile().isDirectory)
+                assertTrue(sessionsDir.toFile().listFiles().orEmpty().isNotEmpty())
+
+                val schemaFile = tempDir.resolve("session-schema.version").toFile()
+                schemaFile.writeText("999")
+
+                val reloaded = FileSessionStorage(
+                    dataDir = tempDir.toFile(),
+                    allowDestructiveResetOnSchemaMismatch = true,
+                )
                 assertTrue(reloaded.listSessions().isEmpty())
                 assertTrue(sessionsDir.toFile().isDirectory)
                 assertTrue(sessionsDir.toFile().listFiles().orEmpty().isEmpty())
@@ -61,7 +106,7 @@ class FileSessionStorageFailFastTest {
                     workDir = null,
                 )
 
-                val metadataFile = tempDir.resolve("session-meta.csv").toFile()
+                val metadataFile = tempDir.resolve("session-index.csv").toFile()
                 metadataFile.writeText("\"")
 
                 val error = assertFailsWith<IllegalStateException> {
@@ -94,15 +139,12 @@ class FileSessionStorageFailFastTest {
                     agentId = null,
                 )
 
-                val mainAgentId = "main-${session.id}"
-                val encodedAgentId = Base64.getUrlEncoder().withoutPadding()
-                    .encodeToString(mainAgentId.toByteArray(Charsets.UTF_8))
                 val messageFile = tempDir.resolve("sessions")
                     .resolve(session.id)
                     .resolve("agents")
-                    .resolve(encodedAgentId)
+                    .resolve(MAIN_AGENT_DIRECTORY_NAME)
                     .resolve("messages")
-                    .resolve("0.json")
+                    .resolve("message_0.json")
                     .toFile()
                 assertTrue(messageFile.isFile)
                 messageFile.writeText("{")

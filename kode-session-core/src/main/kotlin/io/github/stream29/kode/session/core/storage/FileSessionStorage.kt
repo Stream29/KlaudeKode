@@ -27,11 +27,14 @@ public class FileSessionStorage(
         prettyPrint = true
         encodeDefaults = true
     },
+    private val allowDestructiveResetOnSchemaMismatch: Boolean = false,
 ) : SessionStorage, SessionRepository {
 
-    private val sessionDirRoot: File = File(dataDir, "sessions")
-    private val metadataCsvFile: File = File(dataDir, "session-meta.csv")
-    private val schemaVersionFile: File = File(dataDir, SESSION_SCHEMA_VERSION_FILE_NAME)
+    private val rootStorageRepository: RootSessionFileRepository = RootSessionFileRepository(dataDir = dataDir)
+    private val sessionDirRoot: File = rootStorageRepository.sessionsDirectory
+    private val sessionIndexFile: File = rootStorageRepository.sessionIndexFile
+    private val legacySessionIndexFile: File = rootStorageRepository.legacySessionIndexFile
+    private val schemaVersionFile: File = rootStorageRepository.schemaVersionFile
     private val rwMutex: Mutex = Mutex()
 
     init {
@@ -41,15 +44,140 @@ public class FileSessionStorage(
     }
 
     private fun ensureStorageSchemaVersion() {
-        val currentVersion = schemaVersionFile.takeIf { it.isFile }?.readText()?.trim()
-        if (currentVersion == SESSION_SCHEMA_VERSION) {
+        val detectedVersion = detectStoredSchemaVersion()
+        if (detectedVersion == null || detectedVersion == SESSION_SCHEMA_VERSION) {
+            writeSchemaVersion(SESSION_SCHEMA_VERSION)
             return
         }
-        metadataCsvFile.delete()
+
+        val migrated = try {
+            migrateSchema(fromVersion = detectedVersion)
+        } catch (error: Exception) {
+            if (allowDestructiveResetOnSchemaMismatch) {
+                resetStorageForSchemaMismatch()
+                return
+            }
+            throw IllegalStateException(
+                "Failed to migrate session storage schema: fromVersion=$detectedVersion, targetVersion=$SESSION_SCHEMA_VERSION",
+                error,
+            )
+        }
+
+        if (migrated) {
+            writeSchemaVersion(SESSION_SCHEMA_VERSION)
+            return
+        }
+
+        if (allowDestructiveResetOnSchemaMismatch) {
+            resetStorageForSchemaMismatch()
+            return
+        }
+
+        throw IllegalStateException(
+            "Unsupported session storage schema version: $detectedVersion. Set allowDestructiveResetOnSchemaMismatch=true to allow destructive reset."
+        )
+    }
+
+    private fun detectStoredSchemaVersion(): String? {
+        val stored = schemaVersionFile.takeIf { it.isFile }?.readText()?.trim()?.ifBlank { null }
+        if (stored != null) {
+            return stored
+        }
+        if (hasLegacyStorageDataWithoutSchemaVersion()) {
+            return LEGACY_SCHEMA_VERSION_4
+        }
+        return null
+    }
+
+    private fun hasLegacyStorageDataWithoutSchemaVersion(): Boolean {
+        if (rootStorageRepository.allSessionIndexFiles().any { file -> file.isFile }) {
+            return true
+        }
+        if (!sessionDirRoot.isDirectory) {
+            return false
+        }
+        return sessionDirRoot.listFiles()?.isNotEmpty() == true
+    }
+
+    private fun migrateSchema(fromVersion: String): Boolean {
+        var currentVersion = fromVersion
+        while (currentVersion != SESSION_SCHEMA_VERSION) {
+            currentVersion = when (currentVersion) {
+                LEGACY_SCHEMA_VERSION_4 -> migrateSchemaFromV4ToV5()
+                SCHEMA_VERSION_5 -> migrateSchemaFromV5ToV6()
+                else -> return false
+            }
+        }
+        return true
+    }
+
+    private fun migrateSchemaFromV4ToV5(): String {
+        val sourceIndexFile = rootStorageRepository.resolveSessionIndexFileForRead()
+        if (sourceIndexFile != null) {
+            val content = sourceIndexFile.readText().trim()
+            if (content.isNotBlank()) {
+                val migratedRows = runCatching {
+                    decodeCurrentMetadataRows(content = content, sourceFile = sourceIndexFile)
+                }.getOrElse {
+                    decodeLegacyMetadataRowsForV4(
+                        content = content,
+                        sourceFile = sourceIndexFile,
+                    )
+                }
+                writeMetadataRows(migratedRows)
+            }
+        }
+        writeSchemaVersion(SCHEMA_VERSION_5)
+        return SCHEMA_VERSION_5
+    }
+
+    private fun decodeLegacyMetadataRowsForV4(
+        content: String,
+        sourceFile: File,
+    ): List<SessionMetadataCsvRow> {
+        return try {
+            CSVFormat.decodeFromString(
+                deserializer = ListSerializer(LegacySessionMetadataCsvRow.serializer()),
+                string = content,
+            ).map { legacy ->
+                SessionMetadataCsvRow(
+                    id = legacy.id,
+                    title = legacy.title,
+                    createdAtIso = legacy.createdAtIso,
+                    updatedAtIso = legacy.updatedAtIso,
+                    messageCount = 0,
+                    state = legacy.state,
+                    status = legacy.status,
+                    parentSessionId = legacy.parentSessionId,
+                    forkedFromMessageId = legacy.forkedFromMessageId,
+                    version = legacy.version,
+                    tags = legacy.tags,
+                    childSessionIds = legacy.childSessionIds,
+                )
+            }
+        } catch (error: Exception) {
+            throw IllegalStateException(
+                "Failed to decode legacy session metadata csv during schema migration: ${sourceFile.absolutePath}",
+                error,
+            )
+        }
+    }
+
+    private fun migrateSchemaFromV5ToV6(): String {
+        return SESSION_SCHEMA_VERSION
+    }
+
+    private fun resetStorageForSchemaMismatch() {
+        sessionIndexFile.delete()
+        legacySessionIndexFile.delete()
         sessionDirRoot.deleteRecursively()
         sessionDirRoot.mkdirs()
+        writeSchemaVersion(SESSION_SCHEMA_VERSION)
+    }
+
+    private fun writeSchemaVersion(version: String) {
         schemaVersionFile.parentFile?.mkdirs()
-        schemaVersionFile.writeText(SESSION_SCHEMA_VERSION)
+        schemaVersionFile.writeText(version)
     }
 
     override suspend fun listSessions(): List<SessionMetadata> {
@@ -315,9 +443,12 @@ public class FileSessionStorage(
             runtimeMessages = messages,
         )
 
-        writeAgentMeta(sessionId = sessionId, meta = reconciledMeta)
-        writeAgentTodoSync(sessionId = sessionId, agentId = agentId, todos = todos)
-        return reconciledMeta
+        val reconciledWithTodo = reconciledMeta.copy(
+            todo = todos,
+            todoStoredInMetadata = true,
+        )
+        writeAgentMeta(sessionId = sessionId, meta = reconciledWithTodo)
+        return reconciledWithTodo
     }
 
     private fun reconcileAgentWindow(
@@ -444,16 +575,13 @@ public class FileSessionStorage(
         val messages = mutableListOf<SessionMessage>()
         var seq = start
         while (seq < end) {
-            val messageFile = getAgentMessageFile(
+            val messageFile = getAgentMessageFileForRead(
                 sessionId = sessionId,
                 agentId = agentId,
                 seq = seq,
+            ) ?: throw IllegalStateException(
+                "Session message file missing: sessionId=$sessionId, agentId=$agentId, seq=$seq"
             )
-            if (!messageFile.isFile) {
-                throw IllegalStateException(
-                    "Session message file missing: sessionId=$sessionId, agentId=$agentId, seq=$seq"
-                )
-            }
             val decoded = try {
                 json.decodeFromString(AgentMessage.serializer(), messageFile.readText())
             } catch (error: Exception) {
@@ -505,24 +633,34 @@ public class FileSessionStorage(
                 agentId = agentId,
                 seq = seq,
             ).delete()
+            getLegacyAgentMessageFile(
+                sessionId = sessionId,
+                agentId = agentId,
+                seq = seq,
+            ).delete()
             seq += 1
         }
     }
 
     private fun cleanupStaleAgentDirectories(sessionId: String, validAgentIds: Set<String>) {
-        val agentsDir = getAgentsDirectory(sessionId = sessionId)
-        if (!agentsDir.isDirectory) {
+        val sessionRepository = getSessionFileRepository(sessionId = sessionId)
+        val subAgentsDir = sessionRepository.subAgentsDirectory
+        if (!subAgentsDir.isDirectory) {
             return
         }
-        val validNames = validAgentIds.map { agentId -> encodeAgentId(agentId) }.toSet()
-        agentsDir.listFiles()
+        val mainAgentId = mainAgentId(sessionId = sessionId)
+        val validNames = validAgentIds
+            .filter { agentId -> agentId != mainAgentId }
+            .map { agentId -> encodeAgentId(agentId) }
+            .toSet()
+        subAgentsDir.listFiles()
             ?.filter { file -> file.isDirectory && file.name !in validNames }
             ?.forEach { directory -> directory.deleteRecursively() }
     }
 
     private fun readSessionMeta(sessionId: String): SessionFileMeta? {
-        val file = getSessionMetaFile(sessionId = sessionId)
-        if (!file.isFile) {
+        val file = getSessionMetaFileForRead(sessionId = sessionId)
+        if (file == null) {
             return null
         }
         return try {
@@ -541,8 +679,11 @@ public class FileSessionStorage(
     }
 
     private fun readAgentMeta(sessionId: String, agentId: String): AgentFileMeta? {
-        val file = getAgentMetaFile(sessionId = sessionId, agentId = agentId)
-        if (!file.isFile) {
+        val file = getAgentMetaFileForRead(
+            sessionId = sessionId,
+            agentId = agentId,
+        )
+        if (file == null) {
             return null
         }
         return try {
@@ -557,11 +698,20 @@ public class FileSessionStorage(
 
     override suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoNode>? =
         withContext(Dispatchers.IO) {
-            val file = getAgentTodoFile(sessionId = sessionId, agentId = agentId)
-            if (!file.isFile) {
-                return@withContext null
+            val metadataFile = getAgentMetaFileForRead(sessionId = sessionId, agentId = agentId)
+            val metadataTodo = readAgentMeta(sessionId = sessionId, agentId = agentId)
+                ?.takeIf { meta -> meta.todoStoredInMetadata }
+                ?.todo
+            val metadataFromCanonicalFile = metadataFile?.name == AGENT_METADATA_FILE_NAME
+            if (metadataTodo != null && (metadataTodo.isNotEmpty() || metadataFromCanonicalFile)) {
+                return@withContext metadataTodo
             }
-            return@withContext try {
+
+            val file = getLegacyAgentTodoFileForRead(sessionId = sessionId, agentId = agentId)
+            if (file == null) {
+                return@withContext metadataTodo
+            }
+            val legacyTodo = try {
                 json.decodeFromString(
                     deserializer = ListSerializer(TodoNode.serializer()),
                     string = file.readText(),
@@ -572,6 +722,10 @@ public class FileSessionStorage(
                     error,
                 )
             }
+            if (legacyTodo.isNotEmpty()) {
+                return@withContext legacyTodo
+            }
+            return@withContext metadataTodo ?: legacyTodo
         }
 
     private fun writeAgentMeta(sessionId: String, meta: AgentFileMeta) {
@@ -588,67 +742,77 @@ public class FileSessionStorage(
         }
 
     private fun writeAgentTodoSync(sessionId: String, agentId: String, todos: List<TodoNode>) {
-        println("[DEBUG_LOG] writeAgentTodoSync for agentId=$agentId, todos size=${todos.size}")
-        val file = getAgentTodoFile(sessionId = sessionId, agentId = agentId)
-        file.parentFile?.mkdirs()
-        file.writeText(
-            text = json.encodeToString(
-                serializer = ListSerializer(TodoNode.serializer()),
-                value = todos,
+        val inferredKind = inferAgentKind(sessionId = sessionId, agentId = agentId)
+        val fallbackMeta = defaultAgentMeta(
+            agentId = agentId,
+            kind = inferredKind,
+            config = defaultAgentConfig(),
+        )
+        val currentMeta = readAgentMeta(sessionId = sessionId, agentId = agentId) ?: fallbackMeta
+        writeAgentMeta(
+            sessionId = sessionId,
+            meta = currentMeta.copy(
+                todo = todos,
+                todoStoredInMetadata = true,
             ),
         )
     }
 
     private fun readAllAgentMetas(sessionId: String): List<AgentFileMeta> {
-        val agentsDir = getAgentsDirectory(sessionId = sessionId)
-        if (!agentsDir.isDirectory) {
-            return emptyList()
-        }
-        val directories = agentsDir.listFiles()
-            ?.filter { file -> file.isDirectory }
-            ?: emptyList()
-        return directories.map { directory ->
-            val metaFile = File(directory, AGENT_META_FILE_NAME)
-            if (!metaFile.isFile) {
-                throw IllegalStateException(
-                    "Agent meta file missing: sessionId=$sessionId, directory=${directory.absolutePath}"
-                )
+        val directories = getSessionFileRepository(sessionId = sessionId).listAgentDirectoriesForRead()
+        val distinctByAgentId = linkedMapOf<String, AgentFileMeta>()
+        directories.forEach { directory ->
+            val metadataFile = resolveMetadataFileForRead(
+                currentFile = File(directory, AGENT_METADATA_FILE_NAME),
+                legacyFile = File(directory, LEGACY_AGENT_METADATA_FILE_NAME),
+            )
+            if (metadataFile == null) {
+                return@forEach
             }
-            try {
-                json.decodeFromString(AgentFileMeta.serializer(), metaFile.readText())
+            val decoded = try {
+                json.decodeFromString(AgentFileMeta.serializer(), metadataFile.readText())
             } catch (error: Exception) {
                 throw IllegalStateException(
-                    "Failed to decode agent meta file: sessionId=$sessionId, path=${metaFile.absolutePath}",
+                    "Failed to decode agent meta file: sessionId=$sessionId, path=${metadataFile.absolutePath}",
                     error,
                 )
             }
+            distinctByAgentId.putIfAbsent(decoded.agentId, decoded)
         }
+        return distinctByAgentId.values.toList()
     }
 
     private fun readMetadataRows(): List<SessionMetadataCsvRow> {
-        if (!metadataCsvFile.exists()) {
+        val sourceFile = rootStorageRepository.resolveSessionIndexFileForRead()
+        if (sourceFile == null) {
             return emptyList()
         }
-        val content = metadataCsvFile.readText().trim()
+        val content = sourceFile.readText().trim()
         if (content.isBlank()) {
             return emptyList()
         }
-        return decodeCurrentMetadataRows(content)
+        return decodeCurrentMetadataRows(
+            content = content,
+            sourceFile = sourceFile,
+        )
     }
 
-    private fun decodeCurrentMetadataRows(content: String): List<SessionMetadataCsvRow> {
+    private fun decodeCurrentMetadataRows(
+        content: String,
+        sourceFile: File,
+    ): List<SessionMetadataCsvRow> {
         return try {
             CSVFormat.decodeFromString(
                 deserializer = ListSerializer(SessionMetadataCsvRow.serializer()),
                 string = content,
             )
         } catch (error: Exception) {
-            throw IllegalStateException("Failed to decode session metadata csv: ${metadataCsvFile.absolutePath}", error)
+            throw IllegalStateException("Failed to decode session metadata csv: ${sourceFile.absolutePath}", error)
         }
     }
 
     private fun writeMetadataRows(rows: List<SessionMetadataCsvRow>) {
-        metadataCsvFile.parentFile?.mkdirs()
+        sessionIndexFile.parentFile?.mkdirs()
         val serialized = if (rows.isEmpty()) {
             ""
         } else {
@@ -657,7 +821,7 @@ public class FileSessionStorage(
                 value = rows,
             )
         }
-        metadataCsvFile.writeText(serialized)
+        sessionIndexFile.writeText(serialized)
     }
 
     private fun upsertMetadata(metadata: SessionMetadata) {
@@ -684,6 +848,23 @@ public class FileSessionStorage(
         return "main-$sessionId"
     }
 
+    private fun inferAgentKind(sessionId: String, agentId: String): AgentKind {
+        return if (agentId == mainAgentId(sessionId = sessionId)) {
+            AgentKind.MAIN
+        } else {
+            AgentKind.SUBAGENT
+        }
+    }
+
+    private fun defaultAgentConfig(): AgentConfig {
+        return AgentConfig(
+            systemPrompt = null,
+            taskDescription = null,
+            expectedResult = null,
+            canInteractWithUser = true,
+        )
+    }
+
     private fun defaultAgentMeta(
         agentId: String,
         kind: AgentKind,
@@ -698,6 +879,8 @@ public class FileSessionStorage(
             nextSeq = 0,
             result = null,
             completed = false,
+            todo = emptyList(),
+            todoStoredInMetadata = false,
         )
     }
 
@@ -705,36 +888,89 @@ public class FileSessionStorage(
         return value.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
     }
 
+    private fun getSessionFileRepository(sessionId: String): SessionFileRepository {
+        return rootStorageRepository.session(sessionId = sessionId)
+    }
+
+    private fun getAgentFileRepository(sessionId: String, agentId: String): AgentFileRepository {
+        val sessionRepository = getSessionFileRepository(sessionId = sessionId)
+        val encodedAgentId = encodeAgentId(agentId)
+        return if (agentId == mainAgentId(sessionId = sessionId)) {
+            sessionRepository.mainAgent(legacyEncodedMainAgentId = encodedAgentId)
+        } else {
+            sessionRepository.subAgent(encodedSubAgentId = encodedAgentId)
+        }
+    }
+
     private fun getSessionDirectory(sessionId: String): File {
-        return File(sessionDirRoot, sessionId)
+        return getSessionFileRepository(sessionId = sessionId).sessionDirectory
     }
 
     private fun getSessionMetaFile(sessionId: String): File {
-        return File(getSessionDirectory(sessionId), SESSION_META_FILE_NAME)
+        return getSessionFileRepository(sessionId = sessionId).metadataFile
     }
 
-    private fun getAgentsDirectory(sessionId: String): File {
-        return File(getSessionDirectory(sessionId), AGENTS_DIR_NAME)
-    }
-
-    private fun getAgentDirectory(sessionId: String, agentId: String): File {
-        return File(getAgentsDirectory(sessionId), encodeAgentId(agentId))
+    private fun getSessionMetaFileForRead(sessionId: String): File? {
+        return getSessionFileRepository(sessionId = sessionId).resolveMetadataFileForRead()
     }
 
     private fun getAgentMetaFile(sessionId: String, agentId: String): File {
-        return File(getAgentDirectory(sessionId, agentId), AGENT_META_FILE_NAME)
+        return getAgentFileRepository(
+            sessionId = sessionId,
+            agentId = agentId,
+        ).metadataFile
     }
 
-    private fun getAgentTodoFile(sessionId: String, agentId: String): File {
-        return File(getAgentDirectory(sessionId, agentId), AGENT_TODO_FILE_NAME)
+    private fun getAgentMetaFileForRead(sessionId: String, agentId: String): File? {
+        return getAgentFileRepository(
+            sessionId = sessionId,
+            agentId = agentId,
+        ).resolveMetadataFileForRead()
+    }
+
+    private fun getLegacyAgentTodoFileForRead(sessionId: String, agentId: String): File? {
+        return getAgentFileRepository(
+            sessionId = sessionId,
+            agentId = agentId,
+        ).resolveTodoFileForRead()
     }
 
     private fun getAgentMessagesDirectory(sessionId: String, agentId: String): File {
-        return File(getAgentDirectory(sessionId, agentId), MESSAGES_DIR_NAME)
+        return getAgentFileRepository(
+            sessionId = sessionId,
+            agentId = agentId,
+        ).messagesDirectory
     }
 
     private fun getAgentMessageFile(sessionId: String, agentId: String, seq: Long): File {
-        return File(getAgentMessagesDirectory(sessionId, agentId), "$seq.json")
+        return getAgentFileRepository(
+            sessionId = sessionId,
+            agentId = agentId,
+        ).messageFileForWrite(seq = seq)
+    }
+
+    private fun getLegacyAgentMessageFile(sessionId: String, agentId: String, seq: Long): File {
+        return getAgentFileRepository(
+            sessionId = sessionId,
+            agentId = agentId,
+        ).legacyMessageFile(seq = seq)
+    }
+
+    private fun getAgentMessageFileForRead(sessionId: String, agentId: String, seq: Long): File? {
+        return getAgentFileRepository(
+            sessionId = sessionId,
+            agentId = agentId,
+        ).messageFileForRead(seq = seq)
+    }
+
+    private fun resolveMetadataFileForRead(currentFile: File, legacyFile: File): File? {
+        if (currentFile.isFile) {
+            return currentFile
+        }
+        if (legacyFile.isFile) {
+            return legacyFile
+        }
+        return null
     }
 
     private fun encodeAgentId(agentId: String): String {
@@ -744,6 +980,21 @@ public class FileSessionStorage(
     private fun <E> List<E>.toPersistentList(): PersistentList<E> {
         return persistentListOf<E>().addAll(this)
     }
+
+    @Serializable
+    private data class LegacySessionMetadataCsvRow(
+        val id: String,
+        val title: String,
+        val createdAtIso: String,
+        val updatedAtIso: String,
+        val state: SessionRunState,
+        val status: SessionStatus,
+        val parentSessionId: String,
+        val forkedFromMessageId: String,
+        val version: Long,
+        val tags: String,
+        val childSessionIds: String,
+    )
 
     @Serializable
     private data class SessionFileMeta(
@@ -760,6 +1011,8 @@ public class FileSessionStorage(
         val nextSeq: Long,
         val result: String?,
         val completed: Boolean,
+        val todo: List<TodoNode> = emptyList(),
+        val todoStoredInMetadata: Boolean = false,
     )
 
     @Serializable
@@ -773,12 +1026,8 @@ public class FileSessionStorage(
     )
 
     private companion object {
-        private const val SESSION_SCHEMA_VERSION_FILE_NAME: String = "session-schema.version"
         private const val SESSION_SCHEMA_VERSION: String = "6"
-        private const val SESSION_META_FILE_NAME: String = "meta.json"
-        private const val AGENTS_DIR_NAME: String = "agents"
-        private const val AGENT_META_FILE_NAME: String = "meta.json"
-        private const val AGENT_TODO_FILE_NAME: String = "todo.json"
-        private const val MESSAGES_DIR_NAME: String = "messages"
+        private const val SCHEMA_VERSION_5: String = "5"
+        private const val LEGACY_SCHEMA_VERSION_4: String = "4"
     }
 }

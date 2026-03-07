@@ -7,6 +7,7 @@ import io.github.stream29.kode.session.core.model.SessionRunState
 import io.github.stream29.kode.session.core.model.UserMessage
 import io.github.stream29.kode.session.core.testsupport.FakeSessionRepository
 import io.github.stream29.kode.session.core.tool.ToolNames
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 
@@ -34,6 +35,7 @@ class SessionManagerContinueLegalityTest {
             assertEquals(persistCallsBefore, repository.persistSessionCalls)
             val runtime = assertNotNull(sessionManager.getSessionState(session.id))
             assertEquals(SessionRunState.Suspended, runtime.metadata.value.state)
+            assertNull(runtime.runJob.value)
         }
     }
 
@@ -60,6 +62,68 @@ class SessionManagerContinueLegalityTest {
             assertEquals(persistCallsBefore + 1, repository.persistSessionCalls)
             val runtime = assertNotNull(sessionManager.getSessionState(session.id))
             assertEquals(SessionRunState.Suspended, runtime.metadata.value.state)
+            assertNull(runtime.runJob.value)
+        }
+    }
+
+    @Test
+    fun stopRollbackThenPrepareContinuationStagesInputButDoesNotResumeRunOwnership() {
+        runBlocking {
+            val sessionManager = createSessionManager()
+            val session = createConversationSession(
+                sessionManager = sessionManager,
+                title = "restore side-effects stay in orchestration",
+            )
+            appendPendingScript(sessionManager = sessionManager, sessionId = session.id)
+
+            val rolledBack = sessionManager.stopRun(session.id)
+            assertTrue(rolledBack)
+            assertNull(sessionManager.getTrailingPendingScript(sessionId = session.id, agentId = null))
+
+            val stagedInput = "resume from orchestrator"
+            sessionManager.prepareConversationContinuation(
+                sessionId = session.id,
+                input = stagedInput,
+                agentId = null,
+            )
+
+            val snapshot = assertNotNull(sessionManager.getSession(session.id))
+            val trailingUser = assertIs<UserMessage>(snapshot.messages.last())
+            assertEquals(stagedInput, trailingUser.content)
+
+            val afterPrepare = assertNotNull(sessionManager.getSessionState(session.id))
+            assertEquals(SessionRunState.Suspended, afterPrepare.metadata.value.state)
+            assertNull(afterPrepare.runJob.value)
+
+            val resumeOwner = Job()
+            sessionManager.resumeRun(session.id, resumeOwner)
+
+            val afterResume = assertNotNull(sessionManager.getSessionState(session.id))
+            assertEquals(SessionRunState.Running, afterResume.metadata.value.state)
+            assertSame(resumeOwner, afterResume.runJob.value)
+        }
+    }
+
+    @Test
+    fun prepareConversationContinuationRejectsRunningSession() {
+        runBlocking {
+            val sessionManager = createSessionManager()
+            val session = createConversationSession(sessionManager = sessionManager, title = "running continue")
+            sessionManager.beginRun(session.id, Job())
+
+            val throwable = runCatching {
+                sessionManager.prepareConversationContinuation(
+                    sessionId = session.id,
+                    input = "should fail while running",
+                    agentId = null,
+                )
+            }.exceptionOrNull()
+
+            val error = assertNotNull(throwable)
+            assertIs<IllegalStateException>(error)
+            assertTrue(error.message.orEmpty().contains("requires a suspended session"))
+            val runtime = assertNotNull(sessionManager.getSessionState(session.id))
+            assertEquals(SessionRunState.Running, runtime.metadata.value.state)
         }
     }
 

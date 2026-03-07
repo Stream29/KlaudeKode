@@ -8,23 +8,23 @@ import org.junit.jupiter.api.assertThrows
 class TodoListScriptContextTest {
 
     @Test
-    fun `updateTodoNode should update root level node`() {
+    fun `edit should update root level node`() {
         val initialTodos = listOf(
             TodoNode("Task 1", false),
             TodoNode("Task 2", false)
         )
         val context = TodoListScriptContextImpl(initialTodos)
 
-        context.updateTodoNode("Task 1") { it.copy(isCompleted = true) }
+        context.edit("Task 1") { it.copy(isCompleted = true) }
 
-        val todos = context.getTodoList()
+        val todos = context.list()
         assertEquals(2, todos.size)
         assertTrue(todos[0].isCompleted)
         assertFalse(todos[1].isCompleted)
     }
 
     @Test
-    fun `updateTodoNode should update nested node`() {
+    fun `edit should update nested node`() {
         val initialTodos = listOf(
             TodoNode(
                 name = "Task 1",
@@ -37,9 +37,9 @@ class TodoListScriptContextTest {
         )
         val context = TodoListScriptContextImpl(initialTodos)
 
-        context.updateTodoNode("Task 1", "Subtask 1.2") { it.copy(isCompleted = true) }
+        context.edit("Task 1", "Subtask 1.2") { it.copy(isCompleted = true) }
 
-        val todos = context.getTodoList()
+        val todos = context.list()
         assertEquals(1, todos.size)
         assertFalse(todos[0].isCompleted)
         val subtasks = todos[0].subtasks
@@ -49,18 +49,18 @@ class TodoListScriptContextTest {
     }
 
     @Test
-    fun `updateTodoNode should throw IllegalArgumentException for non-existent node`() {
+    fun `edit should throw IllegalArgumentException for non-existent node`() {
         val initialTodos = listOf(TodoNode("Task 1", false))
         val context = TodoListScriptContextImpl(initialTodos)
 
         val exception = assertThrows<IllegalArgumentException> {
-            context.updateTodoNode("Task 2") { it.copy(isCompleted = true) }
+            context.edit("Task 2") { it.copy(isCompleted = true) }
         }
         assertEquals("Todo node not found: Task 2", exception.message)
     }
 
     @Test
-    fun `updateTodoNode should throw IllegalArgumentException for non-existent nested node`() {
+    fun `edit should throw IllegalArgumentException for non-existent nested node`() {
         val initialTodos = listOf(
             TodoNode(
                 name = "Task 1",
@@ -71,18 +71,58 @@ class TodoListScriptContextTest {
         val context = TodoListScriptContextImpl(initialTodos)
 
         val exception = assertThrows<IllegalArgumentException> {
-            context.updateTodoNode("Task 1", "Subtask 1.2") { it.copy(isCompleted = true) }
+            context.edit("Task 1", "Subtask 1.2") { it.copy(isCompleted = true) }
         }
         assertEquals("Todo node not found: Subtask 1.2", exception.message)
     }
 
     @Test
-    fun `updateTodoNode should throw IllegalArgumentException for empty path`() {
+    fun `edit should throw IllegalArgumentException for empty path`() {
         val context = TodoListScriptContextImpl()
 
         val exception = assertThrows<IllegalArgumentException> {
-            context.updateTodoNode { it.copy(isCompleted = true) }
+            context.edit { it.copy(isCompleted = true) }
         }
         assertEquals("Path cannot be empty", exception.message)
+    }
+
+    @Test
+    fun `edit should throw IllegalArgumentException for blank path segment`() {
+        val context = TodoListScriptContextImpl()
+
+        val exception = assertThrows<IllegalArgumentException> {
+            context.edit(" ") { it.copy(isCompleted = true) }
+        }
+        assertEquals("Path cannot contain blank names", exception.message)
+    }
+
+    @Test
+    fun `clear should empty todo list`() {
+        val context = TodoListScriptContextImpl(
+            initialTodos = listOf(TodoNode(name = "Task", isCompleted = false)),
+        )
+
+        context.clear()
+
+        assertTrue(context.list().isEmpty())
+    }
+
+    @Test
+    fun `legacy aliases should remain compatible`() {
+        val context = TodoListScriptContextImpl()
+
+        context.resetTodoItems(
+            listOf(TodoNode(name = "Legacy Task", isCompleted = false))
+        )
+        context.updateTodoNode("Legacy Task") { it.copy(isCompleted = true) }
+
+        val todosFromLegacyGet = context.getTodoList()
+        val todosFromSpecAlias = context.listTodoItems()
+        assertEquals(1, todosFromLegacyGet.size)
+        assertTrue(todosFromLegacyGet.single().isCompleted)
+        assertEquals(todosFromLegacyGet, todosFromSpecAlias)
+
+        context.clearTodoItems()
+        assertTrue(context.list().isEmpty())
     }
 }

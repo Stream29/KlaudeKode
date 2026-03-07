@@ -34,6 +34,7 @@ public class KoogSessionBridge(
         isError: Boolean,
         errorMessage: String?,
         outputList: List<String>,
+        awaitForUserInput: Boolean,
         agentId: String?,
     ) {
         if (toolName != ToolNames.EXECUTE_KOTLIN_SCRIPT) {
@@ -50,7 +51,11 @@ public class KoogSessionBridge(
         sessionManager.addAgentScriptMessage(
             sessionId = sessionId,
             scriptId = toolCallId,
-            status = if (isError) AgentScriptStatus.FAILED else AgentScriptStatus.COMPLETED,
+            status = when {
+                awaitForUserInput -> AgentScriptStatus.PENDING_INPUT
+                isError -> AgentScriptStatus.FAILED
+                else -> AgentScriptStatus.COMPLETED
+            },
             scriptReturnValue = result.toMessageContent(),
             scriptStdout = arguments.toString(),
             error = errorMessage,

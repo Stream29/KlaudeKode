@@ -236,6 +236,7 @@ private fun ChatRoute(state: MainViewModel) {
     ChatPage(
         state = state,
         chatViewModel = chatViewModel,
+        stopMode = chatUi.stopMode,
         sessionUi = SessionUiState(
             messages = chatUi.messages,
             currentSessionId = currentSessionId,
@@ -424,6 +425,7 @@ private fun AppNavigationRail(
 private fun ChatPage(
     state: MainViewModel,
     chatViewModel: ChatViewModel,
+    stopMode: StopMode,
     sessionUi: SessionUiState,
     ui: ChatPageUiState
 ) {
@@ -510,6 +512,7 @@ private fun ChatPage(
                 InputSection(
                     state = state,
                     chatViewModel = chatViewModel,
+                    stopMode = stopMode,
                     sessionUi = sessionUi,
                     sendKeyMode = ui.sendKeyMode,
                 )
@@ -1149,6 +1152,7 @@ private fun CoreTodoUiState.toSidebarTodoUiState(): SidebarTodoUiState {
 private fun InputSection(
     state: MainViewModel,
     chatViewModel: ChatViewModel,
+    stopMode: StopMode,
     sessionUi: SessionUiState,
     sendKeyMode: String,
 ) {
@@ -1168,6 +1172,7 @@ private fun InputSection(
 
     val normalizedSendKeyMode = SendKeyModePreference.fromValue(sendKeyMode)
     val hasActiveSession = sessionUi.currentSessionId != null
+    val isForceStopAction = stopMode == StopMode.SafeRequested || stopMode == StopMode.ForceStop
 
     fun submitDraftInput() {
         chatViewModel.submitInput(localTaskInput)
@@ -1230,7 +1235,7 @@ private fun InputSection(
                         }
                         true
                     },
-                enabled = !sessionUi.isRunning || sessionUi.isWaitingForInput,
+                enabled = true,
                 singleLine = false,
                 minLines = 1,
                 maxLines = 8,
@@ -1257,8 +1262,10 @@ private fun InputSection(
 
             FilledIconButton(
                 onClick = {
-                    if (sessionUi.isRunning) {
-                        chatViewModel.stopRun()
+                    if (sessionUi.isWaitingForInput) {
+                        submitDraftInput()
+                    } else if (sessionUi.isRunning) {
+                        chatViewModel.stopRun(kill = isForceStopAction)
                     } else {
                         submitDraftInput()
                     }
@@ -1279,11 +1286,13 @@ private fun InputSection(
                 Icon(
                     imageVector = when {
                         sessionUi.isWaitingForInput -> Icons.Default.Check
+                        sessionUi.isRunning && isForceStopAction -> Icons.Default.Close
                         sessionUi.isRunning -> Icons.Default.Stop
                         else -> Icons.Default.PlayArrow
                     },
                     contentDescription = when {
                         sessionUi.isWaitingForInput -> "Send"
+                        sessionUi.isRunning && isForceStopAction -> "Force Stop"
                         sessionUi.isRunning -> "Stop"
                         else -> "Run"
                     },

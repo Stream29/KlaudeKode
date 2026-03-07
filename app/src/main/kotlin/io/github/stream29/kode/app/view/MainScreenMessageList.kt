@@ -231,6 +231,9 @@ private fun extractScriptBody(message: AgentScript): String {
 }
 
 private fun extractScriptResult(message: AgentScript): String {
+    if (message.status == AgentScriptStatus.PENDING_INPUT) {
+        return "(waiting for user input)"
+    }
     val resultBody = message.scriptReturnValue?.takeIf { it.isNotBlank() } ?: "(no result)"
     val errorLine = message.error?.takeIf { it.isNotBlank() }
     return if (errorLine == null) {

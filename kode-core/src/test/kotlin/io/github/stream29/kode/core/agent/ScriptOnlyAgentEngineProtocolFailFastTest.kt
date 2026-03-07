@@ -6,18 +6,29 @@ import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
+import ai.koog.prompt.message.Message
 import io.github.stream29.kode.core.hooks.HookManager
+import io.github.stream29.kode.core.port.RuntimeSideEffectPort
 import io.github.stream29.kode.core.port.SessionSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.core.testsupport.FakeMessageHandler
 import io.github.stream29.kode.core.testsupport.FakeSessionRepository
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.model.SessionRunState
+import io.github.stream29.kode.session.core.model.UserMessage
 import io.github.stream29.kode.session.core.tool.ToolNames
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.serializer
+import java.lang.reflect.Method
+import java.lang.reflect.Proxy
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 class ScriptOnlyAgentEngineProtocolFailFastTest {
@@ -54,6 +65,43 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
     }
 
     @Test
+    fun koogSessionBridgeFailsFastWhenPersistingNonScriptToolExchange() {
+        runBlocking {
+            val sessionManager = SessionManager(
+                repository = FakeSessionRepository(),
+            )
+            val session = sessionManager.createConversationSession(
+                title = "bridge fail-fast",
+                systemPrompt = "test system prompt",
+                preferredModel = null,
+                preferredModelId = "test-model",
+                workDir = null,
+            )
+            val bridge = KoogSessionBridge(sessionManager = sessionManager)
+
+            val error = assertFailsWith<IllegalStateException> {
+                bridge.saveToolExchange(
+                    sessionId = session.id,
+                    toolName = "executeShell",
+                    toolCallId = "call-id",
+                    arguments = JsonPrimitive("{\"command\":\"ls\"}"),
+                    result = JsonPrimitive("ok"),
+                    isError = false,
+                    errorMessage = null,
+                    outputList = emptyList(),
+                    awaitForUserInput = false,
+                    agentId = null,
+                )
+            }
+
+            assertContains(
+                charSequence = error.message.orEmpty(),
+                other = "Script-only violation: tool 'executeShell' is not allowed for persistence",
+            )
+        }
+    }
+
+    @Test
     fun scriptContextSideChannelConsumeMethodsAreDeterministicAndConsumeOnce() {
         val context = MainAgentScriptContext()
 
@@ -65,6 +113,65 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
         assertTrue(context.consumeAwaitForUserInputSignal())
 
         assertEquals(emptyList(), context.consumeOutputList())
+        assertFalse(context.consumeAwaitForUserInputSignal())
+
+        context.sayToUser("concurrent-output")
+        val outputConsumeStart = CountDownLatch(1)
+        val outputConsumeDone = CountDownLatch(2)
+        val outputConsumeFailed = AtomicBoolean(false)
+        val outputConsumeSizes: MutableList<Int> = mutableListOf()
+        val outputConsumeSizesLock: Any = Any()
+        repeat(2) {
+            val consumer = Thread(
+                {
+                    if (!outputConsumeStart.await(1, TimeUnit.SECONDS)) {
+                        outputConsumeFailed.set(true)
+                        outputConsumeDone.countDown()
+                        return@Thread
+                    }
+                    val consumed = context.consumeOutputList()
+                    synchronized(outputConsumeSizesLock) {
+                        outputConsumeSizes.add(consumed.size)
+                    }
+                    outputConsumeDone.countDown()
+                },
+                "context-output-consumer-$it",
+            )
+            consumer.isDaemon = true
+            consumer.start()
+        }
+        outputConsumeStart.countDown()
+        assertTrue(outputConsumeDone.await(2, TimeUnit.SECONDS))
+        assertFalse(outputConsumeFailed.get())
+        assertEquals(listOf(0, 1), outputConsumeSizes.sorted())
+
+        context.suspendForUserInput()
+        val signalConsumeStart = CountDownLatch(1)
+        val signalConsumeDone = CountDownLatch(8)
+        val signalConsumeFailed = AtomicBoolean(false)
+        val consumedSignalCount = AtomicInteger(0)
+        repeat(8) {
+            val consumer = Thread(
+                {
+                    if (!signalConsumeStart.await(1, TimeUnit.SECONDS)) {
+                        signalConsumeFailed.set(true)
+                        signalConsumeDone.countDown()
+                        return@Thread
+                    }
+                    if (context.consumeAwaitForUserInputSignal()) {
+                        consumedSignalCount.incrementAndGet()
+                    }
+                    signalConsumeDone.countDown()
+                },
+                "context-signal-consumer-$it",
+            )
+            consumer.isDaemon = true
+            consumer.start()
+        }
+        signalConsumeStart.countDown()
+        assertTrue(signalConsumeDone.await(2, TimeUnit.SECONDS))
+        assertFalse(signalConsumeFailed.get())
+        assertEquals(1, consumedSignalCount.get())
         assertFalse(context.consumeAwaitForUserInputSignal())
     }
 
@@ -81,7 +188,8 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 preferredModelId = "test-model",
                 workDir = null,
             )
-            val recordingMessageHandler = SafeStopAfterFirstInputMessageHandler()
+            val runtimeProbe = RuntimeOrchestrationProbe(input = "restored-by-orchestration")
+            val sessionProbe = SessionOrchestrationProbe()
             val engine = ScriptOnlyAgentEngine(
                 promptExecutor = getMockExecutor {
                     mockLLMToolCall(
@@ -92,11 +200,13 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 },
                 sessionManager = sessionManager,
                 sessionBridge = KoogSessionBridge(sessionManager = sessionManager),
-                messageHandler = recordingMessageHandler,
+                messageHandler = FailOnDirectInputMessageHandler(),
                 hookManager = HookManager.empty(),
                 eventListener = null,
                 logger = {},
                 runtimeContext = AgentRuntimeContext(),
+                runtimeSideEffectPort = runtimeProbe.port,
+                sessionSideEffectPort = sessionProbe.port,
             )
 
             val result = withTimeout(timeMillis = 2_000L) {
@@ -108,7 +218,18 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
             }
 
             assertNull(result)
-            assertEquals(1, recordingMessageHandler.requestInputCount)
+            assertEquals(1, runtimeProbe.requestInputCalls)
+            assertEquals(1, sessionProbe.suspendForUserInputCalls)
+            assertEquals(1, sessionProbe.resumeRunCalls)
+            assertEquals(1, sessionProbe.addUserMessageCalls)
+            assertEquals(1, sessionProbe.saveToolExchangeCalls)
+            assertEquals(listOf("restored-by-orchestration"), sessionProbe.appendedContents)
+
+            val sessionSnapshot = assertNotNull(sessionManager.getSession(session.id))
+            assertTrue(sessionSnapshot.messages.none { message -> message is UserMessage })
+
+            val runtime = assertNotNull(sessionManager.getSessionState(session.id))
+            assertEquals(SessionRunState.Suspended, runtime.metadata.value.state)
         }
     }
 
@@ -162,7 +283,7 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 eventListener = null,
                 logger = {},
                 runtimeContext = AgentRuntimeContext(),
-                scriptContextFactory = {
+                scriptContextFactory = { _, _ ->
                     MainAgentScriptContext(
                         userCommunicationScriptContext = object : UserCommunicationScriptContext by UserCommunicationScriptContextImpl() {
                             override val defaultImports: List<String> = emptyList()
@@ -199,6 +320,7 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                         isError: Boolean,
                         errorMessage: String?,
                         outputList: List<String>,
+                        awaitForUserInput: Boolean,
                         agentId: String?,
                     ) {
                         error("saveToolExchange should not be called in this test")
@@ -262,16 +384,148 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
         }
     }
 
-    private class SafeStopAfterFirstInputMessageHandler : FakeMessageHandler() {
+    private class FailOnDirectInputMessageHandler : FakeMessageHandler() {
+        override suspend fun requestInput(): String {
+            error("requestInput must be orchestrated outside ScriptOnlyAgentEngine")
+        }
+    }
+
+    private class RuntimeOrchestrationProbe(
+        private val input: String,
+    ) {
+        var requestInputCalls: Int = 0
+            private set
+
         private var safeStopRequested: Boolean = false
 
-        override suspend fun requestInput(): String {
-            safeStopRequested = true
-            return super.requestInput()
+        val port: RuntimeSideEffectPort = buildProxy()
+
+        private fun buildProxy(): RuntimeSideEffectPort {
+            val runtimeInputPort = loadEnginePrivateInterface(
+                simpleName = "RuntimeInputPort",
+            )
+            val proxy = Proxy.newProxyInstance(
+                ScriptOnlyAgentEngineProtocolFailFastTest::class.java.classLoader,
+                arrayOf(RuntimeSideEffectPort::class.java, runtimeInputPort),
+            ) { proxyInstance, method, args ->
+                when (method.name) {
+                    "requestInput" -> {
+                        requestInputCalls += 1
+                        safeStopRequested = true
+                        input
+                    }
+
+                    "isSafeStopRequested" -> safeStopRequested
+                    "onToolCallCompleted", "onToolCallFailed" -> {
+                        safeStopRequested = true
+                        Unit
+                    }
+
+                    "onSafeStopReached", "onToolCallStarting", "log" -> Unit
+                    "toString" -> "RuntimeOrchestrationProbePort"
+                    "hashCode" -> System.identityHashCode(proxyInstance)
+                    "equals" -> proxyInstance === args?.firstOrNull()
+                    else -> defaultPrimitiveProxyValue(method = method)
+                }
+            }
+            return proxy as RuntimeSideEffectPort
         }
 
-        override fun isSafeStopRequested(sessionId: String): Boolean {
-            return safeStopRequested
+        private fun loadEnginePrivateInterface(simpleName: String): Class<*> {
+            val qualifiedName = "${ScriptOnlyAgentEngine::class.java.name}\$$simpleName"
+            return Class.forName(qualifiedName)
+        }
+
+        private fun defaultPrimitiveProxyValue(method: Method): Any? {
+            return when (method.returnType) {
+                java.lang.Boolean.TYPE -> false
+                java.lang.Byte.TYPE -> 0.toByte()
+                java.lang.Short.TYPE -> 0.toShort()
+                java.lang.Integer.TYPE -> 0
+                java.lang.Long.TYPE -> 0L
+                java.lang.Float.TYPE -> 0f
+                java.lang.Double.TYPE -> 0.0
+                java.lang.Character.TYPE -> 0.toChar()
+                else -> null
+            }
+        }
+    }
+
+    private class SessionOrchestrationProbe {
+        var suspendForUserInputCalls: Int = 0
+            private set
+
+        var saveToolExchangeCalls: Int = 0
+            private set
+
+        var resumeRunCalls: Int = 0
+            private set
+
+        var addUserMessageCalls: Int = 0
+            private set
+
+        val appendedContents: MutableList<String> = mutableListOf()
+
+        val port: SessionSideEffectPort = buildProxy()
+
+        private fun buildProxy(): SessionSideEffectPort {
+            val runLifecyclePort = loadEnginePrivateInterface(
+                simpleName = "SessionRunLifecyclePort",
+            )
+            val proxy = Proxy.newProxyInstance(
+                ScriptOnlyAgentEngineProtocolFailFastTest::class.java.classLoader,
+                arrayOf(SessionSideEffectPort::class.java, runLifecyclePort),
+            ) { proxyInstance, method, args ->
+                when (method.name) {
+                    "prepareMessagesForAgent" -> emptyList<Message>()
+                    "resolveSystemPrompt" -> args?.get(2) as String
+                    "suspendForUserInput" -> {
+                        suspendForUserInputCalls += 1
+                        Unit
+                    }
+
+                    "saveToolExchange" -> {
+                        saveToolExchangeCalls += 1
+                        Unit
+                    }
+
+                    "resumeRun" -> {
+                        resumeRunCalls += 1
+                        Unit
+                    }
+
+                    "addUserMessage" -> {
+                        addUserMessageCalls += 1
+                        appendedContents += args?.get(1) as String
+                        Unit
+                    }
+
+                    "toString" -> "SessionOrchestrationProbePort"
+                    "hashCode" -> System.identityHashCode(proxyInstance)
+                    "equals" -> proxyInstance === args?.firstOrNull()
+                    else -> defaultPrimitiveProxyValue(method = method)
+                }
+            }
+            return proxy as SessionSideEffectPort
+        }
+
+        private fun loadEnginePrivateInterface(simpleName: String): Class<*> {
+            val qualifiedName = "${ScriptOnlyAgentEngine::class.java.name}\$$simpleName"
+            return Class.forName(qualifiedName)
+        }
+
+        private fun defaultPrimitiveProxyValue(method: Method): Any? {
+            return when (method.returnType) {
+                java.lang.Boolean.TYPE -> false
+                java.lang.Byte.TYPE -> 0.toByte()
+                java.lang.Short.TYPE -> 0.toShort()
+                java.lang.Integer.TYPE -> 0
+                java.lang.Long.TYPE -> 0L
+                java.lang.Float.TYPE -> 0f
+                java.lang.Double.TYPE -> 0.0
+                java.lang.Character.TYPE -> 0.toChar()
+                else -> null
+            }
         }
     }
 

@@ -8,6 +8,8 @@ import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
+import io.github.stream29.kode.session.core.model.TodoNode
+import kotlinx.coroutines.flow.MutableStateFlow
 
 public class SubAgent(
     promptExecutor: PromptExecutor,
@@ -18,7 +20,10 @@ public class SubAgent(
     eventListener: AgentEventListener?,
     logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
-    private val scriptContextFactory: () -> MainAgentScriptContext = { MainAgentScriptContext() },
+    private val scriptContextFactory: (List<TodoNode>, MutableStateFlow<List<TodoNode>>?) -> AgentScriptContext =
+        { initialTodos, activeTodoFlow ->
+            SubAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeTodoFlow)
+        },
 ) : Agent {
     private val engine = ScriptOnlyAgentEngine(
         promptExecutor = promptExecutor,
@@ -31,6 +36,15 @@ public class SubAgent(
         runtimeContext = runtimeContext,
         scriptContextFactory = scriptContextFactory,
     )
+
+    init {
+        check(!runtimeContext.canInteractWithUser) {
+            "Subagent runtime must disable direct user interaction"
+        }
+        check(!runtimeContext.canCreateSubagents) {
+            "Subagent runtime must disable subagent creation"
+        }
+    }
 
     override suspend fun run(
         sessionId: String,

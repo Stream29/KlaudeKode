@@ -3,6 +3,8 @@ package io.github.stream29.kode.providers.builtin
 import io.github.stream29.kode.providers.anthropic.AnthropicApiKeyProvider
 import io.github.stream29.kode.providers.api.LlmProvider
 import io.github.stream29.kode.providers.api.ProviderPreset
+import io.github.stream29.kode.providers.api.validateProviderPresetRegistryUniqueness
+import io.github.stream29.kode.providers.api.validateProviderRegistryUniqueness
 import io.github.stream29.kode.providers.deepseek.DeepSeekApiKeyProvider
 import io.github.stream29.kode.providers.gemini.GeminiApiKeyProvider
 import io.github.stream29.kode.providers.groq.GroqApiKeyProvider
@@ -33,8 +35,7 @@ public object BuiltinLlmProviderRegistry {
             add(TestDeterministicProvider)
         }
 
-        val duplicates = all.groupBy { it.id }.filterValues { list -> list.size > 1 }.keys
-        require(duplicates.isEmpty()) { "Duplicate LLM provider ids: ${duplicates.sorted().joinToString()}" }
+        validateProviderRegistryUniqueness(all)
 
         all.associateBy { it.id }
     }
@@ -70,8 +71,7 @@ public object BuiltinProviderPresetRegistry {
             add(TestDeterministicProvider.preset)
         }
 
-        val duplicates = all.groupBy { it.id }.filterValues { list -> list.size > 1 }.keys
-        require(duplicates.isEmpty()) { "Duplicate provider preset ids: ${duplicates.sorted().joinToString()}" }
+        validateProviderPresetRegistryUniqueness(all)
 
         all.associateBy { it.id }
     }

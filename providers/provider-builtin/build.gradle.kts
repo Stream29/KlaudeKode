@@ -16,4 +16,6 @@ dependencies {
     implementation(projects.providers.providerXai)
 
     implementation(libs.koogAgentsTest)
+
+    testImplementation(libs.bundles.testing)
 }

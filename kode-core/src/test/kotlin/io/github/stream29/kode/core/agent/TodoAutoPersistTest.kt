@@ -17,6 +17,9 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.serializer
 import java.io.File
 import java.nio.file.Files
@@ -26,7 +29,7 @@ import kotlin.test.*
 
 class TodoAutoPersistTest {
     @Test
-    fun todoAddScriptAutoPersistsTodoJson() {
+    fun todoAddScriptAutoPersistsTodoInMetadata() {
         runBlocking {
             val tempDir = Files.createTempDirectory("todo-auto-persist-add-test")
             try {
@@ -44,23 +47,31 @@ class TodoAutoPersistTest {
                     sessionManager = sessionManager,
                     sessionId = session.id,
                     script = """
-                        updateTodoList(listOf(
-                            io.github.stream29.kode.session.core.model.TodoNode(
+                        reset(listOf(
+                            TodoItem(
                                 name = "todo from add script",
-                                isCompleted = false,
-                                subtasks = emptyList()
+                                isCompleted = false
                             )
                         ))
                         suspendForUserInput()
                     """.trimIndent(),
                 )
 
-                val msgs = sessionManager.getAgentMessages(session.id, "main-${session.id}")
-                println("[DEBUG_LOG] messages: ${msgs.joinToString("\n")}")
-
                 val persistedTodos = readPersistedTodos(
                     dataDir = tempDir,
                     sessionId = session.id,
+                )
+                assertFalse(
+                    resolveCanonicalMainAgentTodoFile(
+                        dataDir = tempDir,
+                        sessionId = session.id,
+                    ).exists()
+                )
+                assertFalse(
+                    resolveLegacyMainAgentTodoFile(
+                        dataDir = tempDir,
+                        sessionId = session.id,
+                    ).exists()
                 )
 
                 assertEquals(1, persistedTodos.size)
@@ -68,6 +79,10 @@ class TodoAutoPersistTest {
                 assertEquals("todo from add script", todo.name)
                 assertEquals(0, todo.subtasks.size)
                 assertFalse(todo.isCompleted)
+
+                val reloadedSessionManager = reloadSessionManager(dataDir = tempDir)
+                val reloadedTodos = reloadedSessionManager.getAgentTodo(session.id, "main-${session.id}")
+                assertEquals(persistedTodos, reloadedTodos)
             } finally {
                 tempDir.toFile().deleteRecursively()
             }
@@ -75,7 +90,7 @@ class TodoAutoPersistTest {
     }
 
     @Test
-    fun todoUpdateScriptAutoPersistsTodoJson() {
+    fun todoUpdateScriptAutoPersistsTodoInMetadata() {
         runBlocking {
             val tempDir = Files.createTempDirectory("todo-auto-persist-update-test")
             try {
@@ -93,11 +108,10 @@ class TodoAutoPersistTest {
                     sessionManager = sessionManager,
                     sessionId = session.id,
                     script = """
-                        updateTodoList(listOf(
-                            io.github.stream29.kode.session.core.model.TodoNode(
+                        reset(listOf(
+                            TodoNode(
                                 name = "todo before update",
-                                isCompleted = false,
-                                subtasks = emptyList()
+                                isCompleted = false
                             )
                         ))
                         suspendForUserInput()
@@ -114,13 +128,12 @@ class TodoAutoPersistTest {
                     sessionManager = sessionManager,
                     sessionId = session.id,
                     script = """
-                        updateTodoList(listOf(
-                            io.github.stream29.kode.session.core.model.TodoNode(
+                        updateTodoNode("todo before update") {
+                            it.copy(
                                 name = "todo after update",
-                                isCompleted = true,
-                                subtasks = emptyList()
+                                isCompleted = true
                             )
-                        ))
+                        }
                         suspendForUserInput()
                     """.trimIndent(),
                 )
@@ -129,11 +142,92 @@ class TodoAutoPersistTest {
                     dataDir = tempDir,
                     sessionId = session.id,
                 )
+                assertFalse(
+                    resolveCanonicalMainAgentTodoFile(
+                        dataDir = tempDir,
+                        sessionId = session.id,
+                    ).exists()
+                )
+                assertFalse(
+                    resolveLegacyMainAgentTodoFile(
+                        dataDir = tempDir,
+                        sessionId = session.id,
+                    ).exists()
+                )
                 val updatedTodo = persistedTodos.single { node -> node.name == "todo after update" }
 
                 assertEquals(1, persistedTodos.size)
                 assertEquals("todo after update", updatedTodo.name)
                 assertTrue(updatedTodo.isCompleted)
+
+                val reloadedSessionManager = reloadSessionManager(dataDir = tempDir)
+                val reloadedTodos = reloadedSessionManager.getAgentTodo(session.id, "main-${session.id}")
+                assertEquals(persistedTodos, reloadedTodos)
+            } finally {
+                tempDir.toFile().deleteRecursively()
+            }
+        }
+    }
+
+    @Test
+    fun legacyTodoJsonIsReadableAfterModelAlignment() {
+        runBlocking {
+            val tempDir = Files.createTempDirectory("todo-auto-persist-legacy-read-test")
+            try {
+                val storage = FileSessionStorage(dataDir = tempDir.toFile())
+                val sessionManager = SessionManager(repository = storage)
+                val session = sessionManager.createConversationSession(
+                    title = "todo legacy read",
+                    systemPrompt = "test",
+                    preferredModel = null,
+                    preferredModelId = "test-model",
+                    workDir = null,
+                )
+
+                val canonicalMetadataFile = resolveCanonicalMainAgentMetadataFile(
+                    dataDir = tempDir,
+                    sessionId = session.id,
+                )
+                val legacyMetadataFile = resolveLegacyMainAgentMetadataFile(
+                    dataDir = tempDir,
+                    sessionId = session.id,
+                )
+                legacyMetadataFile.parentFile?.mkdirs()
+                legacyMetadataFile.writeText(canonicalMetadataFile.readText())
+                assertTrue(canonicalMetadataFile.delete())
+
+                val todoFile = resolveLegacyMainAgentTodoFile(
+                    dataDir = tempDir,
+                    sessionId = session.id,
+                )
+                todoFile.parentFile?.mkdirs()
+                todoFile.writeText(
+                    """
+                    [
+                      {
+                        "name": "legacy root",
+                        "isCompleted": true,
+                        "subtasks": [
+                          {
+                            "name": "legacy child",
+                            "isCompleted": false,
+                            "subtasks": []
+                          }
+                        ]
+                      }
+                    ]
+                    """.trimIndent(),
+                )
+
+                val reloadedSessionManager = reloadSessionManager(dataDir = tempDir)
+                val reloadedTodos = reloadedSessionManager.getAgentTodo(session.id, "main-${session.id}")
+
+                assertEquals(1, reloadedTodos.size)
+                assertEquals("legacy root", reloadedTodos[0].name)
+                assertTrue(reloadedTodos[0].isCompleted)
+                assertEquals(1, reloadedTodos[0].subtasks.size)
+                assertEquals("legacy child", reloadedTodos[0].subtasks[0].name)
+                assertFalse(reloadedTodos[0].subtasks[0].isCompleted)
             } finally {
                 tempDir.toFile().deleteRecursively()
             }
@@ -176,27 +270,70 @@ class TodoAutoPersistTest {
     }
 
     private fun readPersistedTodos(dataDir: Path, sessionId: String): List<TodoNode> {
-        val todoFile = resolveTodoFile(
+        val metadataFile = resolveCanonicalMainAgentMetadataFile(
             dataDir = dataDir,
             sessionId = sessionId,
         )
-        assertTrue(todoFile.isFile)
-        return TODO_JSON.decodeFromString(
+        assertTrue(metadataFile.isFile)
+        val metadata = TODO_JSON.parseToJsonElement(metadataFile.readText()).jsonObject
+        val todoStoredInMetadata = metadata["todoStoredInMetadata"]
+            ?.jsonPrimitive
+            ?.booleanOrNull
+        assertEquals(true, todoStoredInMetadata)
+        val todoElement = metadata["todo"] ?: fail("Missing todo in agent metadata")
+        return TODO_JSON.decodeFromJsonElement(
             deserializer = ListSerializer(TodoNode.serializer()),
-            string = todoFile.readText(),
+            element = todoElement,
         )
     }
 
-    private fun resolveTodoFile(dataDir: Path, sessionId: String): File {
-        val mainAgentId = "main-$sessionId"
-        val encodedAgentId = Base64.getUrlEncoder().withoutPadding()
-            .encodeToString(mainAgentId.toByteArray(Charsets.UTF_8))
+    private fun resolveCanonicalMainAgentMetadataFile(dataDir: Path, sessionId: String): File {
+        return dataDir.resolve("sessions")
+            .resolve(sessionId)
+            .resolve("agents")
+            .resolve("mainAgent")
+            .resolve("metadata.json")
+            .toFile()
+    }
+
+    private fun resolveCanonicalMainAgentTodoFile(dataDir: Path, sessionId: String): File {
+        return dataDir.resolve("sessions")
+            .resolve(sessionId)
+            .resolve("agents")
+            .resolve("mainAgent")
+            .resolve("todo.json")
+            .toFile()
+    }
+
+    private fun resolveLegacyMainAgentMetadataFile(dataDir: Path, sessionId: String): File {
+        val encodedAgentId = encodedMainAgentId(sessionId = sessionId)
+        return dataDir.resolve("sessions")
+            .resolve(sessionId)
+            .resolve("agents")
+            .resolve(encodedAgentId)
+            .resolve("meta.json")
+            .toFile()
+    }
+
+    private fun resolveLegacyMainAgentTodoFile(dataDir: Path, sessionId: String): File {
+        val encodedAgentId = encodedMainAgentId(sessionId = sessionId)
         return dataDir.resolve("sessions")
             .resolve(sessionId)
             .resolve("agents")
             .resolve(encodedAgentId)
             .resolve("todo.json")
             .toFile()
+    }
+
+    private fun encodedMainAgentId(sessionId: String): String {
+        val mainAgentId = "main-$sessionId"
+        return Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(mainAgentId.toByteArray(Charsets.UTF_8))
+    }
+
+    private fun reloadSessionManager(dataDir: Path): SessionManager {
+        val storage = FileSessionStorage(dataDir = dataDir.toFile())
+        return SessionManager(repository = storage)
     }
 
     private class SafeStopAfterFirstInputMessageHandler : FakeMessageHandler() {

@@ -1,34 +1,46 @@
 package io.github.stream29.kode.session.core
 
 import io.github.stream29.kode.session.core.model.SessionState
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CompletableDeferred
 import java.util.concurrent.ConcurrentHashMap
 
 public class SessionFactory(
     private val repository: SessionRepository,
 ) {
     private val cache: ConcurrentHashMap<String, SessionState> = ConcurrentHashMap()
-    private val loadMutex: Mutex = Mutex()
+    private val inFlightLoads: ConcurrentHashMap<String, CompletableDeferred<SessionState>> = ConcurrentHashMap()
 
     public suspend fun loadSession(id: String): SessionState {
-        val existing = cache[id]
-        if (existing != null) {
+        cache[id]?.let { existing ->
             return existing
         }
-        return loadMutex.withLock {
-            val doubleChecked = cache[id]
-            if (doubleChecked != null) {
-                return@withLock doubleChecked
+
+        val deferred = CompletableDeferred<SessionState>()
+        val existingLoad = inFlightLoads.putIfAbsent(id, deferred)
+        if (existingLoad != null) {
+            return existingLoad.await()
+        }
+
+        try {
+            cache[id]?.let { cached ->
+                deferred.complete(cached)
+                return cached
             }
+
             val loaded = repository.loadSession(id)
-            cache[id] = loaded
-            loaded
+            val canonical = cache.putIfAbsent(id, loaded) ?: loaded
+            deferred.complete(canonical)
+            return canonical
+        } catch (throwable: Throwable) {
+            deferred.completeExceptionally(throwable)
+            throw throwable
+        } finally {
+            inFlightLoads.remove(id, deferred)
         }
     }
 
     public fun put(session: SessionState) {
-        cache[session.metadata.value.id] = session
+        cache.putIfAbsent(session.metadata.value.id, session)
     }
 
     public fun evict(id: String) {

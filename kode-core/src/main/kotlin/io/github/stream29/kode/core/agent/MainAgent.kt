@@ -9,10 +9,12 @@ import io.github.stream29.kode.core.port.SessionSideEffectPort
 import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.model.TodoNode
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.MutableStateFlow
 
 public class MainAgent(
     promptExecutor: PromptExecutor,
@@ -23,7 +25,10 @@ public class MainAgent(
     eventListener: AgentEventListener?,
     logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
-    private val scriptContextFactory: () -> MainAgentScriptContext = { MainAgentScriptContext() },
+    private val scriptContextFactory: (List<TodoNode>, MutableStateFlow<List<TodoNode>>?) -> AgentScriptContext =
+        { initialTodos, activeTodoFlow ->
+            MainAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeTodoFlow)
+        },
     private val runtimeSideEffectPort: RuntimeSideEffectPort? = null,
     private val toolSideEffectPort: ToolSideEffectPort? = null,
     private val sessionSideEffectPort: SessionSideEffectPort? = null,

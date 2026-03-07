@@ -19,7 +19,8 @@ import java.io.File
  * Handles all file I/O side effects.
  */
 public class FileSystemConfigProvider(
-    private val configFile: File
+    private val configFile: File,
+    private val legacyReadFiles: List<File>,
 ) : ConfigProvider {
 
     private val ioDispatcher = Dispatchers.IO
@@ -32,13 +33,19 @@ public class FileSystemConfigProvider(
         )
     )
 
+    private val readCandidates: List<File> = buildList {
+        add(configFile)
+        addAll(legacyReadFiles)
+    }.distinctBy { file -> file.absolutePath }
+
     override suspend fun load(): AppConfig? {
         return withContext(ioDispatcher) {
-            if (!configFile.exists()) {
+            val sourceFile = resolveConfigFileForRead()
+            if (sourceFile == null) {
                 return@withContext null
             }
 
-            val content = configFile.readText()
+            val content = sourceFile.readText()
             if (content.isBlank()) {
                 return@withContext AppConfig(auths = emptyList(), models = emptyList())
             }
@@ -68,7 +75,7 @@ public class FileSystemConfigProvider(
 
     override suspend fun exists(): Boolean {
         return withContext(ioDispatcher) {
-            configFile.exists() && configFile.length() > 0
+            readCandidates.any { file -> file.exists() && file.length() > 0 }
         }
     }
 
@@ -79,23 +86,34 @@ public class FileSystemConfigProvider(
             configFile.writeText(template)
         }
     }
+
+    private fun resolveConfigFileForRead(): File? {
+        return readCandidates.firstOrNull { file -> file.isFile }
+    }
 }
 
 /**
  * File system based configuration source for raw content access.
  */
 public class FileSystemConfigSource(
-    private val configFile: File
+    private val configFile: File,
+    private val legacyReadFiles: List<File>,
 ) : ConfigSource {
 
     private val ioDispatcher = Dispatchers.IO
 
+    private val readCandidates: List<File> = buildList {
+        add(configFile)
+        addAll(legacyReadFiles)
+    }.distinctBy { file -> file.absolutePath }
+
     override suspend fun read(): String? {
         return withContext(ioDispatcher) {
-            if (!configFile.exists()) {
+            val sourceFile = resolveConfigFileForRead()
+            if (sourceFile == null) {
                 return@withContext null
             }
-            return@withContext configFile.readText()
+            return@withContext sourceFile.readText()
         }
     }
 
@@ -104,5 +122,9 @@ public class FileSystemConfigSource(
             configFile.parentFile?.mkdirs()
             configFile.writeText(content)
         }
+    }
+
+    private fun resolveConfigFileForRead(): File? {
+        return readCandidates.firstOrNull { file -> file.isFile }
     }
 }

@@ -8,9 +8,34 @@ import kotlinx.coroutines.flow.asStateFlow
 
 public interface TodoListScriptContext : ScriptContext {
     public val todoStateFlow: StateFlow<List<TodoNode>>
-    public fun getTodoList(): List<TodoNode>
-    public fun updateTodoList(todos: List<TodoNode>)
-    public fun updateTodoNode(vararg path: String, update: (TodoNode) -> TodoNode)
+
+    public fun list(): List<TodoNode>
+    public fun clear()
+    public fun reset(todos: List<TodoNode>)
+    public fun edit(vararg path: String, update: (TodoNode) -> TodoNode)
+
+    public fun listTodoItems(): List<TodoNode> = list()
+    public fun clearTodoItems() {
+        clear()
+    }
+
+    public fun resetTodoItems(items: List<TodoNode>) {
+        reset(items)
+    }
+
+    public fun editTodoItem(vararg path: String, update: (TodoNode) -> TodoNode) {
+        edit(*path, update = update)
+    }
+
+    public fun getTodoList(): List<TodoNode> = list()
+
+    public fun updateTodoList(todos: List<TodoNode>) {
+        reset(todos)
+    }
+
+    public fun updateTodoNode(vararg path: String, update: (TodoNode) -> TodoNode) {
+        edit(*path, update = update)
+    }
 }
 
 public class TodoListScriptContextImpl(
@@ -20,27 +45,37 @@ public class TodoListScriptContextImpl(
     private val _todoStateFlow: MutableStateFlow<List<TodoNode>> = activeFlow ?: MutableStateFlow(initialTodos)
     override val todoStateFlow: StateFlow<List<TodoNode>> = _todoStateFlow.asStateFlow()
 
-    override val defaultImports: List<String> = listOf(TodoNode::class.qualifiedName!!)
+    override val defaultImports: List<String> = listOf(
+        TodoNode::class.qualifiedName!!,
+        TODO_ITEM_QUALIFIED_NAME,
+    )
 
     override val systemPromptInjection: String = """
         ### Todo List API
         - **Policy**: Use todo list for any complex task that can be further decomposed. Small, atomic tasks do not require todo entries.
-        - **Data structure**: `data class TodoNode(val name: String, val isCompleted: Boolean, val subtasks: List<TodoNode> = emptyList())` This is predefined. You can use it without import.
-        - `getTodoList(): List<TodoNode>`: Get current state of the todo tree.
-        - `updateTodoList(todos: List<TodoNode>)`: Replace the entire todo list state.
-        - `updateTodoNode(vararg path: String, update: (TodoNode) -> TodoNode)`: Update a specific node by its path (node names). For example: `updateTodoNode("Task", "Subtask") { it.copy(isCompleted = true) }`.
+        - **Data structure**: `TodoNode` (alias `TodoItem`) is predefined and auto-imported.
+        - `list(): List<TodoNode>`: Get current todo tree.
+        - `clear()`: Remove all todo items.
+        - `reset(todos: List<TodoNode>)`: Replace entire todo tree.
+        - `edit(vararg path: String, update: (TodoNode) -> TodoNode)`: Update one node by name path. For example: `edit("Task", "Subtask") { it.copy(isCompleted = true) }`.
+        - Compatibility aliases are available: `listTodoItems/clearTodoItems/resetTodoItems/editTodoItem`, `getTodoList/updateTodoList/updateTodoNode`.
     """.trimIndent()
 
-    override fun getTodoList(): List<TodoNode> {
-        return _todoStateFlow.value
+    override fun list(): List<TodoNode> {
+        return _todoStateFlow.value.toList()
     }
 
-    override fun updateTodoList(todos: List<TodoNode>) {
+    override fun clear() {
+        reset(emptyList())
+    }
+
+    override fun reset(todos: List<TodoNode>) {
         _todoStateFlow.value = todos
     }
 
-    override fun updateTodoNode(vararg path: String, update: (TodoNode) -> TodoNode) {
+    override fun edit(vararg path: String, update: (TodoNode) -> TodoNode) {
         if (path.isEmpty()) throw IllegalArgumentException("Path cannot be empty")
+        if (path.any { name -> name.isBlank() }) throw IllegalArgumentException("Path cannot contain blank names")
 
         fun updateNodeRecursively(
             nodes: List<TodoNode>,
@@ -69,6 +104,11 @@ public class TodoListScriptContextImpl(
         }
 
         val newTodos = updateNodeRecursively(_todoStateFlow.value, path.toList())
-        updateTodoList(newTodos)
+        reset(newTodos)
+    }
+
+    private companion object {
+        private const val TODO_ITEM_QUALIFIED_NAME: String =
+            "io.github.stream29.kode.session.core.model.TodoItem"
     }
 }

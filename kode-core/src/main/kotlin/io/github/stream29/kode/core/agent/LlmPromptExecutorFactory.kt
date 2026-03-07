@@ -16,7 +16,7 @@ import io.github.stream29.kode.providers.api.LlmAuth as RuntimeLlmAuth
 internal object LlmPromptExecutorFactory {
     fun create(auths: List<LlmAuthConfig>): MultiLLMPromptExecutor {
         val clients = mutableMapOf<LLMProvider, LLMClient>()
-        val ownerByProvider = mutableMapOf<LLMProvider, LlmAuthConfig>()
+        val initializedProviderTypes = mutableSetOf<String>()
 
         auths.forEach { auth ->
             val providerId = auth.providerId.trim()
@@ -24,23 +24,23 @@ internal object LlmPromptExecutorFactory {
 
             val provider = BuiltinLlmProviderRegistry.findProvider(providerId)
                 ?: throw IllegalArgumentException("Provider not found: $providerId (authId=${auth.id})")
-            val existingOwner = ownerByProvider[provider.llmProvider]
-            if (existingOwner != null && existingOwner.id != auth.id) {
+            val runtimeProviderType = provider.llmProvider.id.trim()
+            require(runtimeProviderType.isNotBlank()) {
+                "runtime providerType is blank for provider '$providerId' (authId=${auth.id})"
+            }
+
+            val runtimeAuth = resolveRuntimeAuth(auth)
+            if (!provider.supportsAuth(runtimeAuth)) {
                 throw IllegalArgumentException(
-                    "Auth '${auth.id}' conflicts with '${existingOwner.id}': " +
-                            "$providerId and ${existingOwner.providerId} share runtime provider '${provider.llmProvider.id}'."
+                    "Provider auth mismatch: " +
+                        "providerId='$providerId', authId='${auth.id}', " +
+                        "actual='${runtimeAuth::class.simpleName}'."
                 )
             }
-            if (existingOwner == null) {
-                val runtimeAuth = resolveRuntimeAuth(auth)
-                if (!provider.supportsAuth(runtimeAuth)) {
-                    throw IllegalArgumentException(
-                        "Provider '$providerId' does not support auth for config '${auth.id}': ${runtimeAuth::class.simpleName}."
-                    )
-                }
+
+            if (initializedProviderTypes.add(runtimeProviderType)) {
                 val client = provider.createClient(runtimeAuth)
                 clients[provider.llmProvider] = client
-                ownerByProvider[provider.llmProvider] = auth
             }
         }
 
@@ -55,6 +55,7 @@ internal object LlmPromptExecutorFactory {
                     apiKey = apiKey,
                     baseUrl = auth.baseUrl,
                     customHeaders = auth.customHeaders,
+                    authId = authConfig.id,
                 )
             }
 
@@ -68,6 +69,7 @@ internal object LlmPromptExecutorFactory {
                         configured = auth.customHeaders,
                         tokenRecord = tokenRecord,
                     ),
+                    authId = authConfig.id,
                 )
             }
         }

@@ -19,8 +19,12 @@ import io.github.stream29.kode.tools.scripting.KotlinScriptTool
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.toDeprecatedClock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -37,7 +41,10 @@ internal class ScriptOnlyAgentEngine(
     private val eventListener: AgentEventListener?,
     private val logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
-    private val scriptContextFactory: () -> MainAgentScriptContext = { MainAgentScriptContext() },
+    private val scriptContextFactory: (List<TodoNode>, MutableStateFlow<List<TodoNode>>?) -> AgentScriptContext =
+        { initialTodos, activeTodoFlow ->
+            MainAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeTodoFlow)
+        },
     private val runtimeSideEffectPort: RuntimeSideEffectPort = RuntimeSideEffectAdapter(
         messageHandler = messageHandler,
         eventListener = eventListener,
@@ -52,8 +59,8 @@ internal class ScriptOnlyAgentEngine(
     ),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val defaultScriptContext: MainAgentScriptContext = scriptContextFactory()
-    private val scriptToolDescriptor = KotlinScriptTool(defaultScriptContext).descriptor
+    private val defaultScriptContext: AgentScriptContext = scriptContextFactory(emptyList(), null)
+    private val scriptToolDescriptor = buildScriptTool(defaultScriptContext).descriptor
     private val defaultSystemPrompt: String = buildDefaultSystemPrompt(BASE_SYSTEM_PROMPT, defaultScriptContext.systemPromptInjection)
 
     private data class ResolvedToolCall(
@@ -300,7 +307,19 @@ internal class ScriptOnlyAgentEngine(
             arguments = finalArgs,
         )
 
-        val execution = executeScriptTool(sessionId = sessionId, toolArgs = finalArgs, initialTodos = initialTodos)
+        val execution = try {
+            executeScriptTool(sessionId = sessionId, toolArgs = finalArgs, initialTodos = initialTodos)
+        } catch (error: CancellationException) {
+            val isContextActive = currentCoroutineContext()[Job]?.isActive == true
+            if (!isContextActive) {
+                persistInterruptedToolExchange(
+                    sessionId = sessionId,
+                    resolvedCall = resolvedCall,
+                    finalArgs = finalArgs,
+                )
+            }
+            throw error
+        }
 
         val processedResult = toolSideEffectPort.applyToolCallAfterHooks(
             sessionId = sessionId,
@@ -325,6 +344,7 @@ internal class ScriptOnlyAgentEngine(
             isError = isError,
             errorMessage = errorMessage,
             outputList = execution.outputList,
+            awaitForUserInput = execution.awaitForUserInput,
         )
 
         if (!isError) {
@@ -359,6 +379,36 @@ internal class ScriptOnlyAgentEngine(
             rawToolName = resolvedCall.rawToolName,
             content = processedResult,
         )
+    }
+
+    private suspend fun persistInterruptedToolExchange(
+        sessionId: String,
+        resolvedCall: ResolvedToolCall,
+        finalArgs: String,
+    ) {
+        runCatching {
+            withContext(NonCancellable) {
+                saveToolExchange(
+                    sessionId = sessionId,
+                    toolName = resolvedCall.toolName,
+                    toolCallId = resolvedCall.toolCallId,
+                    arguments = parseToolArgs(finalArgs),
+                    result = JsonPrimitive(INTERRUPTED_OPERATION_MESSAGE),
+                    isError = true,
+                    errorMessage = INTERRUPTED_OPERATION_MESSAGE,
+                    outputList = emptyList(),
+                    awaitForUserInput = false,
+                )
+                runtimeSideEffectPort.onToolCallFailed(
+                    sessionId = sessionId,
+                    message = INTERRUPTED_OPERATION_MESSAGE,
+                )
+            }
+        }.onFailure { persistError ->
+            runtimeSideEffectPort.log(
+                "Failed to persist interrupted script tool exchange: ${persistError.message}",
+            )
+        }
     }
 
     private suspend fun awaitForUserInput(sessionId: String) {
@@ -434,6 +484,7 @@ internal class ScriptOnlyAgentEngine(
             isError = true,
             errorMessage = reason,
             outputList = emptyList(),
+            awaitForUserInput = false,
         )
         return buildToolResult(
             toolCall = resolvedCall.call,
@@ -451,6 +502,7 @@ internal class ScriptOnlyAgentEngine(
         isError: Boolean,
         errorMessage: String?,
         outputList: List<String>,
+        awaitForUserInput: Boolean,
     ) {
         sessionSideEffectPort.saveToolExchange(
             sessionId = sessionId,
@@ -461,6 +513,7 @@ internal class ScriptOnlyAgentEngine(
             isError = isError,
             errorMessage = errorMessage,
             outputList = outputList,
+            awaitForUserInput = awaitForUserInput,
             agentId = runtimeContext.agentId,
         )
     }
@@ -485,14 +538,8 @@ internal class ScriptOnlyAgentEngine(
     ): ToolExecutionOutcome {
         val agentId = runtimeContext.agentId
         val activeFlow = if (agentId != null) sessionManager.getAgentTodoStateFlow(sessionId, agentId) else null
-        val scriptContext = if (activeFlow != null) {
-            MainAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeFlow)
-        } else if (initialTodos.isEmpty()) {
-            scriptContextFactory()
-        } else {
-            MainAgentScriptContext(initialTodos = initialTodos)
-        }
-        val tool = KotlinScriptTool(scriptContext)
+        val scriptContext = scriptContextFactory(initialTodos, activeFlow)
+        val tool = buildScriptTool(scriptContext)
         val todoStateFlow = scriptContext.todoStateFlow
         val todoSnapshot = todoStateFlow.value.toList()
 
@@ -527,15 +574,30 @@ internal class ScriptOnlyAgentEngine(
             val currentTodos = todoStateFlow.value
             val todoChanged = todoSnapshot != todoStateFlow.value
 
-            println("[DEBUG_LOG] todoSnapshot: $todoSnapshot")
-            println("[DEBUG_LOG] currentTodos: $currentTodos")
-            println("[DEBUG_LOG] todoChanged: $todoChanged")
-
             ToolExecutionOutcome(
                 content = tool.encodeResultToString(result),
                 isError = false,
                 errorMessage = null,
                 awaitForUserInput = scriptContext.consumeAwaitForUserInputSignal(),
+                todoChanged = todoChanged,
+                latestTodos = currentTodos,
+                outputList = scriptContext.consumeOutputList(),
+            )
+        } catch (error: CancellationException) {
+            val isContextActive = currentCoroutineContext()[Job]?.isActive == true
+            if (!isContextActive) {
+                throw error
+            }
+
+            val message = "Error executing tool ${ToolNames.EXECUTE_KOTLIN_SCRIPT}: ${error.message}"
+            val currentTodos = todoStateFlow.value
+            val todoChanged = todoSnapshot != todoStateFlow.value
+
+            ToolExecutionOutcome(
+                content = message,
+                isError = true,
+                errorMessage = message,
+                awaitForUserInput = false,
                 todoChanged = todoChanged,
                 latestTodos = currentTodos,
                 outputList = scriptContext.consumeOutputList(),
@@ -568,6 +630,14 @@ internal class ScriptOnlyAgentEngine(
     private suspend fun currentJob(): Job {
         val job = currentCoroutineContext()[Job]
         return requireNotNull(job) { "ScriptOnlyAgentEngine requires coroutine Job context" }
+    }
+
+    private fun buildScriptTool(scriptContext: AgentScriptContext): KotlinScriptTool {
+        return when (scriptContext) {
+            is MainAgentScriptContext -> KotlinScriptTool(scriptContext)
+            is SubAgentScriptContext -> KotlinScriptTool(scriptContext)
+            else -> error("Unsupported AgentScriptContext type: ${scriptContext::class.qualifiedName}")
+        }
     }
 
     private class SafeStopSignal : RuntimeException()
@@ -684,6 +754,7 @@ internal class ScriptOnlyAgentEngine(
             isError: Boolean,
             errorMessage: String?,
             outputList: List<String>,
+            awaitForUserInput: Boolean,
             agentId: String?,
         ) {
             sessionBridge.saveToolExchange(
@@ -695,6 +766,7 @@ internal class ScriptOnlyAgentEngine(
                 isError = isError,
                 errorMessage = errorMessage,
                 outputList = outputList,
+                awaitForUserInput = awaitForUserInput,
                 agentId = agentId,
             )
         }
@@ -723,6 +795,8 @@ internal class ScriptOnlyAgentEngine(
     }
 
     companion object {
+        private const val INTERRUPTED_OPERATION_MESSAGE: String = "This operation was interrupted by user."
+
         private val BASE_SYSTEM_PROMPT: String = """
             You are a coding agent named `Kode`.
 

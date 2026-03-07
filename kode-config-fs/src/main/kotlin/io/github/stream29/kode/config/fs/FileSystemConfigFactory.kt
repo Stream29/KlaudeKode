@@ -12,6 +12,9 @@ public object FileSystemLocations {
         get() = resolveDataDir(path = null)
 
     public val configFile: File
+        get() = File(dataDir, "config.yml")
+
+    public val legacyConfigFile: File
         get() = File(dataDir, "config.yaml")
 
     public fun resolveDataDir(path: String?): File {
@@ -39,14 +42,27 @@ public object FileSystemConfigFactory {
     /**
      * Create a ConfigManager with default file system locations.
      */
-    public fun createDefault(): ConfigManager = create(configFile = FileSystemLocations.configFile)
+    public fun createDefault(): ConfigManager = createWithLegacyRead(
+        configFile = FileSystemLocations.configFile,
+        legacyReadFiles = listOf(FileSystemLocations.legacyConfigFile),
+    )
 
     /**
      * Create a ConfigManager with custom config file.
      */
     public fun create(configFile: File): ConfigManager {
-        val provider = FileSystemConfigProvider(configFile)
-        val source = FileSystemConfigSource(configFile)
+        return createWithLegacyRead(configFile = configFile, legacyReadFiles = emptyList())
+    }
+
+    private fun createWithLegacyRead(configFile: File, legacyReadFiles: List<File>): ConfigManager {
+        val provider = FileSystemConfigProvider(
+            configFile = configFile,
+            legacyReadFiles = legacyReadFiles,
+        )
+        val source = FileSystemConfigSource(
+            configFile = configFile,
+            legacyReadFiles = legacyReadFiles,
+        )
         return ConfigManager(provider = provider, source = source)
     }
 

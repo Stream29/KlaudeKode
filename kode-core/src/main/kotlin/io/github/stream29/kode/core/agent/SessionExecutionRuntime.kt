@@ -17,8 +17,10 @@ import io.github.stream29.kode.core.port.SessionSideEffectPort
 import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.model.TodoNode
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.datetime.toDeprecatedClock
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -32,13 +34,25 @@ public class SessionExecutionRuntime(
     private val hookManager: HookManager,
     private val logger: (String) -> Unit,
     public val sessionManager: SessionManager,
-    private val scriptContextFactory: () -> MainAgentScriptContext = { MainAgentScriptContext() },
+    private val scriptContextFactory: (List<TodoNode>, MutableStateFlow<List<TodoNode>>?) -> AgentScriptContext =
+        { initialTodos, activeTodoFlow ->
+            MainAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeTodoFlow)
+        },
     private val runtimeSideEffectPortFactory:
     ((MessageHandler, AgentEventListener?, (String) -> Unit) -> RuntimeSideEffectPort)? = null,
     private val toolSideEffectPortFactory: ((HookManager) -> ToolSideEffectPort)? = null,
     private val sessionSideEffectPortFactory:
     ((SessionManager, KoogSessionBridge) -> SessionSideEffectPort)? = null,
 ) {
+    private val mainAgentScriptContextFactory: (List<TodoNode>, MutableStateFlow<List<TodoNode>>?) -> AgentScriptContext =
+        { initialTodos, activeTodoFlow ->
+            val context = scriptContextFactory(initialTodos, activeTodoFlow)
+            check(context is MainAgentScriptContext) {
+                "Main execution runtime requires MainAgentScriptContext"
+            }
+            context
+        }
+
     init {
         val hasRuntimeFactory = runtimeSideEffectPortFactory != null
         val hasToolFactory = toolSideEffectPortFactory != null
@@ -139,7 +153,7 @@ public class SessionExecutionRuntime(
             eventListener = eventListener,
             logger = logger,
             runtimeContext = runtimeContext,
-            scriptContextFactory = scriptContextFactory,
+            scriptContextFactory = mainAgentScriptContextFactory,
             runtimeSideEffectPort = runtimeSideEffectPortFactory?.invoke(
                 scopedHandler,
                 eventListener,

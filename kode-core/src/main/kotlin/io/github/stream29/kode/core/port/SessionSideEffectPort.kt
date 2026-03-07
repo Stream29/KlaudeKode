@@ -19,6 +19,7 @@ public interface SessionSideEffectPort {
         isError: Boolean,
         errorMessage: String?,
         outputList: List<String>,
+        awaitForUserInput: Boolean,
         agentId: String?,
     )
 }

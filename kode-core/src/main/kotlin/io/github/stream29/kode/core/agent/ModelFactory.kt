@@ -6,6 +6,7 @@ import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
+import io.github.stream29.kode.providers.api.LlmProvider
 import io.github.stream29.kode.providers.builtin.BuiltinLlmProviderRegistry
 
 internal data class ResolvedModelRuntime(
@@ -33,15 +34,12 @@ internal object ModelFactory {
         val authConfig = auths.find { it.id == modelConfig.authId }
             ?: throw IllegalArgumentException("Auth not found: ${modelConfig.authId}")
 
-        val providerId = authConfig.providerId.trim()
-        require(providerId.isNotBlank()) { "providerId is blank for auth '${authConfig.id}'" }
-        val provider = BuiltinLlmProviderRegistry.findProvider(providerId)
-            ?: throw IllegalArgumentException("Provider not found: $providerId")
-        val baseModel = provider.models().firstOrNull { it.id == modelConfig.model }
-            ?: createDynamicModel(
-                provider = provider.llmProvider,
-                providerTemplate = provider.models().firstOrNull(),
-                modelConfig = modelConfig
+        val provider = resolveProviderForAuth(authConfig)
+        val providerModels = provider.models()
+        val baseModel = providerModels.firstOrNull { it.id == modelConfig.model }
+            ?: throw IllegalArgumentException(
+                "Unknown model '${modelConfig.model}' for provider '${provider.llmProvider.id}' " +
+                    "(modelId='${modelConfig.id}', authId='${modelConfig.authId}')"
             )
 
         val resolvedModel = applyOverrides(
@@ -58,6 +56,19 @@ internal object ModelFactory {
             model = resolvedModel,
             params = resolvedParams,
         )
+    }
+
+    private fun resolveProviderForAuth(authConfig: LlmAuthConfig): LlmProvider {
+        val providerId = authConfig.providerId.trim()
+        require(providerId.isNotBlank()) { "providerId is blank for auth '${authConfig.id}'" }
+        val provider = BuiltinLlmProviderRegistry.findProvider(providerId)
+            ?: throw IllegalArgumentException("Provider not found: $providerId (authId=${authConfig.id})")
+
+        val runtimeProviderType = provider.llmProvider.id.trim()
+        require(runtimeProviderType.isNotBlank()) {
+            "runtime providerType is blank for provider '$providerId' (authId=${authConfig.id})"
+        }
+        return provider
     }
 
     private fun applyOverrides(baseModel: LLModel, modelConfig: LlmModelConfig, provider: LLMProvider): LLModel {
@@ -79,31 +90,6 @@ internal object ModelFactory {
         )
     }
 
-    private fun createDynamicModel(
-        provider: LLMProvider,
-        providerTemplate: LLModel?,
-        modelConfig: LlmModelConfig,
-    ): LLModel {
-        val defaultCapabilities = providerTemplate?.capabilities ?: OPEN_AI_DEFAULT_CAPABILITIES
-        val defaultContextSize = providerTemplate?.contextLength ?: 128_000
-        val configuredCapabilities = modelConfig.capabilities
-            ?.mapNotNull { capability -> parseCapability(capability) }
-            ?.distinct()
-            ?.takeIf { list -> list.isNotEmpty() }
-
-        val capabilities = if (configuredCapabilities == null) {
-            defaultCapabilities
-        } else {
-            (defaultCapabilities + configuredCapabilities).distinct()
-        }
-        return LLModel(
-            provider = provider,
-            id = modelConfig.model,
-            capabilities = capabilities,
-            contextLength = modelConfig.maxContextSize?.toLong() ?: defaultContextSize,
-        )
-    }
-
     private fun parseCapability(input: String): LLMCapability? {
         return when (input.lowercase()) {
             "temperature" -> LLMCapability.Temperature
@@ -121,18 +107,4 @@ internal object ModelFactory {
             else -> null
         }
     }
-
-    private val OPEN_AI_DEFAULT_CAPABILITIES: List<LLMCapability> = listOf(
-        LLMCapability.Temperature,
-        LLMCapability.ToolChoice,
-        LLMCapability.Tools,
-        LLMCapability.Completion,
-        LLMCapability.MultipleChoices,
-        LLMCapability.Schema.JSON.Basic,
-        LLMCapability.Schema.JSON.Standard,
-        LLMCapability.Vision.Image,
-        LLMCapability.Document,
-        LLMCapability.OpenAIEndpoint.Completions,
-        LLMCapability.OpenAIEndpoint.Responses,
-    )
 }

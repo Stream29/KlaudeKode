@@ -102,11 +102,18 @@ public class ChatViewModel(
                     if (currentSessionIdFlow.value != sessionId) return@withContext
 
                     updateUiState { current ->
+                        val isRunning = metadata.state == SessionRunState.Running
                         current.copy(
                             messages = mainMessages,
                             currentSessionWorkDir = config.workDir.orEmpty(),
-                            isRunning = metadata.state == SessionRunState.Running,
-                            isWaitingForInput = metadata.state == SessionRunState.Suspended // 假设 Suspended 代表等待输入或停止
+                            isRunning = isRunning,
+                            isWaitingForInput = deriveWaitingForInput(
+                                messages = mainMessages,
+                            ),
+                            stopMode = deriveStopMode(
+                                isRunning = isRunning,
+                                currentStopMode = current.stopMode,
+                            ),
                         )
                     }
                 }
@@ -206,6 +213,17 @@ public class ChatViewModel(
 
     public fun stopRun(kill: Boolean = false) {
         val sessionId = currentSessionIdFlow.value ?: return
+        updateUiState { current ->
+            if (!current.isRunning) {
+                return@updateUiState current
+            }
+            current.copy(
+                stopMode = nextStopModeAfterClick(
+                    currentStopMode = current.stopMode,
+                    forceStop = kill,
+                ),
+            )
+        }
         if (kill) {
             sessionJobs[sessionId]?.cancel("User requested kill")
             sessionJobs.remove(sessionId)
@@ -284,7 +302,6 @@ public class ChatViewModel(
     ) {
         val job = CoroutineScope(Dispatchers.IO).launch {
             try {
-                sessionManager.beginRun(sessionId, coroutineContext[Job]!!)
                 execution()
                 onSuccess()
             } catch (e: CancellationException) {
@@ -292,7 +309,6 @@ public class ChatViewModel(
             } catch (e: Exception) {
                 onError(e)
             } finally {
-                sessionManager.completeRun(sessionId)
                 sessionJobs.remove(sessionId)
             }
         }
@@ -406,11 +422,52 @@ public class ChatViewModel(
     }
 }
 
+internal fun deriveWaitingForInput(
+    messages: List<SessionMessage>,
+): Boolean {
+    return messages.trailingPendingInputScriptOrNull() != null
+}
+
+internal fun deriveStopMode(
+    isRunning: Boolean,
+    currentStopMode: StopMode,
+): StopMode {
+    if (!isRunning) {
+        return StopMode.None
+    }
+    return when (currentStopMode) {
+        StopMode.None -> StopMode.Stop
+        StopMode.Stop,
+        StopMode.ForceStop,
+        StopMode.SafeRequested,
+        -> currentStopMode
+    }
+}
+
+internal fun nextStopModeAfterClick(
+    currentStopMode: StopMode,
+    forceStop: Boolean,
+): StopMode {
+    if (forceStop) {
+        return StopMode.ForceStop
+    }
+    return when (currentStopMode) {
+        StopMode.SafeRequested,
+        StopMode.ForceStop,
+        -> StopMode.ForceStop
+
+        StopMode.None,
+        StopMode.Stop,
+        -> StopMode.SafeRequested
+    }
+}
+
 public data class ChatUiState(
     val messages: List<SessionMessage> = emptyList(),
     val currentSessionWorkDir: String = "",
     val isRunning: Boolean = false,
     val isWaitingForInput: Boolean = false,
+    val stopMode: StopMode = StopMode.None,
     val currentTask: String = "",
     val todoState: TodoUiState = TodoUiState(rootNodes = emptyList(), allExpanded = false),
     val isGeneratingSessionTitle: Boolean = false,
