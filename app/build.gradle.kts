@@ -33,7 +33,7 @@ dependencies {
     implementation(projects.ui.core)
     implementation(projects.ui.components)
     implementation(projects.ui.bridge)
-    implementation(projects.kodeSessionCore)
+    implementation(projects.session)
     implementation(projects.providers.providerApi)
     implementation(projects.providers.providerBuiltin)
     implementation(projects.providers.providerAnthropic)

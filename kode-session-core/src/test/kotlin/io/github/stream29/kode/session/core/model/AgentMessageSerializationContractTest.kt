@@ -2,21 +2,26 @@ package io.github.stream29.kode.session.core.model
 
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.ResponseMetaInfo
-import io.github.stream29.kode.session.core.tool.ToolNames
+import io.github.stream29.kode.agent.model.AgentMessage
+import io.github.stream29.kode.agent.model.AgentScript
+import io.github.stream29.kode.agent.model.AgentScriptStatus
+import io.github.stream29.kode.agent.tool.ToolNames
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 
-class AgentMessageSerializationCompatibilityTest {
+class AgentMessageSerializationContractTest {
     private val json: Json = Json {
         ignoreUnknownKeys = true
     }
 
     @Test
-    fun decodesLegacyToolExchangeAsCompletedAgentScript() {
+    fun rejectsLegacyToolExchangeType() {
         val payload = """
             {
               "type": "tool_exchange",
@@ -27,31 +32,18 @@ class AgentMessageSerializationCompatibilityTest {
               "result": "done",
               "isError": false,
               "errorMessage": null,
-              "displayName": null,
-              "timestamp": "2026-03-06T12:00:00Z",
-              "metadata": {"legacy": "true"}
+              "timestamp": "2026-03-06T12:00:00Z"
             }
         """.trimIndent()
 
-        val decoded = json.decodeFromString(AgentMessage.serializer(), payload)
-        val script = assertIs<AgentScript>(decoded)
-
-        assertEquals(AgentScriptStatus.COMPLETED, script.status)
-        assertEquals("call-1", script.scriptId)
-        assertEquals("done", script.scriptReturnValue)
-        assertEquals("{\"script\":\"sayToUser(\\\"hello\\\")\"}", script.scriptStdout)
-        assertTrue(script.awaitForUserInput.not())
-        assertEquals("executeKotlinScript", script.metadata?.get(SCRIPT_TOOL_NAME_METADATA_KEY))
-        assertEquals(
-            SCRIPT_RESULT_MODE_CALL_RESULT,
-            script.metadata?.get(SCRIPT_RESULT_MODE_METADATA_KEY),
-        )
-        assertEquals(2, script.toKoogMessages().size)
-        assertTrue(script.toKoogMessages().all { it is Message.Tool })
+        val error = assertFailsWith<SerializationException> {
+            json.decodeFromString(AgentMessage.serializer(), payload)
+        }
+        assertTrue(error.message.orEmpty().contains("Unsupported AgentMessage type"))
     }
 
     @Test
-    fun decodesLegacySuspendAsPendingAgentScript() {
+    fun rejectsLegacySuspendType() {
         val payload = """
             {
               "type": "suspend",
@@ -59,23 +51,18 @@ class AgentMessageSerializationCompatibilityTest {
               "toolName": "executeKotlinScript",
               "toolCallId": "call-2",
               "arguments": {"script": "suspendForUserInput()"},
-              "displayName": null,
-              "timestamp": "2026-03-06T12:01:00Z",
-              "metadata": null
+              "timestamp": "2026-03-06T12:01:00Z"
             }
         """.trimIndent()
 
-        val decoded = json.decodeFromString(AgentMessage.serializer(), payload)
-        val script = assertIs<AgentScript>(decoded)
-
-        assertEquals(AgentScriptStatus.PENDING_INPUT, script.status)
-        assertTrue(script.awaitForUserInput)
-        assertEquals(1, script.toKoogMessages().size)
-        assertIs<Message.Tool.Call>(script.toKoogMessages().single())
+        val error = assertFailsWith<SerializationException> {
+            json.decodeFromString(AgentMessage.serializer(), payload)
+        }
+        assertTrue(error.message.orEmpty().contains("Unsupported AgentMessage type"))
     }
 
     @Test
-    fun decodesLegacyResumeAsResultOnlyAgentScript() {
+    fun rejectsLegacyResumeType() {
         val payload = """
             {
               "type": "resume",
@@ -85,27 +72,40 @@ class AgentMessageSerializationCompatibilityTest {
               "result": "ok",
               "isError": false,
               "errorMessage": null,
-              "timestamp": "2026-03-06T12:02:00Z",
-              "metadata": {"legacy": "true"}
+              "timestamp": "2026-03-06T12:02:00Z"
             }
         """.trimIndent()
 
-        val decoded = json.decodeFromString(AgentMessage.serializer(), payload)
-        val script = assertIs<AgentScript>(decoded)
-
-        assertEquals(AgentScriptStatus.COMPLETED, script.status)
-        assertEquals(DEFAULT_SCRIPT_TOOL_ARGS, script.scriptStdout)
-        assertEquals("ok", script.scriptReturnValue)
-        assertEquals(
-            SCRIPT_RESULT_MODE_RESULT_ONLY,
-            script.metadata?.get(SCRIPT_RESULT_MODE_METADATA_KEY),
-        )
-        assertEquals(1, script.toKoogMessages().size)
-        assertIs<Message.Tool.Result>(script.toKoogMessages().single())
+        val error = assertFailsWith<SerializationException> {
+            json.decodeFromString(AgentMessage.serializer(), payload)
+        }
+        assertTrue(error.message.orEmpty().contains("Unsupported AgentMessage type"))
     }
 
     @Test
-    fun pendingScriptRoundTripKeepsAwaitForUserInputSemantic() {
+    fun rejectsPayloadWithoutTypeDiscriminator() {
+        val payload = """
+            {
+              "id": "script-1",
+              "scriptId": "call-9",
+              "status": "PENDING_INPUT",
+              "scriptReturnValue": null,
+              "scriptStdout": "{\"script\":\"suspendForUserInput()\"}",
+              "error": null,
+              "outputList": [],
+              "timestamp": "2026-03-06T12:03:00Z",
+              "koogMessages": []
+            }
+        """.trimIndent()
+
+        val error = assertFailsWith<SerializationException> {
+            json.decodeFromString(AgentMessage.serializer(), payload)
+        }
+        assertTrue(error.message.orEmpty().contains("<missing>"))
+    }
+
+    @Test
+    fun pendingScriptRoundTripIncludesTypeAndKeepsAwaitForUserInputSemantic() {
         val script = AgentScript(
             id = "script-1",
             scriptId = "call-9",
@@ -127,6 +127,7 @@ class AgentMessageSerializationCompatibilityTest {
         )
 
         val encoded = json.encodeToString(AgentMessage.serializer(), script)
+        assertTrue(encoded.contains("\"type\":\"script\""))
         val decoded = assertIs<AgentScript>(json.decodeFromString(AgentMessage.serializer(), encoded))
 
         assertEquals(AgentScriptStatus.PENDING_INPUT, decoded.status)

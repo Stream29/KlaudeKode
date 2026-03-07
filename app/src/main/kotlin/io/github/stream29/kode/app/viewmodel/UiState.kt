@@ -4,21 +4,13 @@ import io.github.stream29.kode.app.view.AppPage
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
 import io.github.stream29.kode.config.api.McpServerConfig
-import io.github.stream29.kode.session.core.model.SessionMessage
+import io.github.stream29.kode.agent.model.SessionMessage
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.storage.SessionStatusFilter
 import io.github.stream29.kode.ui.bridge.auth.OAuthStatusUi
 import io.github.stream29.kode.ui.bridge.mcp.McpHealthResult
 import io.github.stream29.kode.ui.bridge.mcp.McpTestResult
 import io.github.stream29.kode.ui.core.todo.TodoUiState
-import kotlinx.serialization.Serializable
-
-@Serializable
-public data class AgentPreset(
-    val name: String,
-    val description: String,
-    val disabledTools: Set<String>,
-)
 
 public data class SessionUiState(
     val taskInput: String = "",
@@ -48,8 +40,6 @@ public data class ChatPageUiState(
     val messageAlignment: String = "left",
     val messageMaxWidthRatio: Float = 0.9f,
     val sendKeyMode: String = "ctrl_or_cmd_enter_send",
-    val agentPresets: List<AgentPreset> = emptyList(),
-    val activePresetName: String = "build",
     val models: List<LlmModelConfig> = emptyList(),
     val auths: List<LlmAuthConfig> = emptyList(),
     val activeModelId: String? = null,
@@ -97,8 +87,6 @@ public data class WebPageUiState(
 )
 
 public data class InfoPageUiState(
-    val presetSpecPath: String = "",
-    val presetSpecPreview: String = "",
     val skillsPreview: List<String> = emptyList(),
     val modelsCount: Int = 0,
     val authCount: Int = 0,
@@ -178,8 +166,6 @@ public data class AppUiState(
     val maxRalphIterations: Int = 0,
     val reservedContextSize: Int = 50000,
     val skillsDir: String = "",
-    val presetBuiltin: String = "",
-    val presetFile: String = "",
     val logLevel: String = "info",
     val logFile: String = "",
     val uiTheme: String = "dark",
@@ -202,11 +188,7 @@ public data class AppUiState(
     val webFetchBaseUrl: String = "",
     val webFetchHeaders: String = "",
     val webFetchEnv: String = "",
-    val presetSpecPath: String = "",
-    val presetSpecPreview: String = "",
     val skillsPreview: List<String> = emptyList(),
-    val activePresetName: String = "build",
-    val agentPresets: List<AgentPreset> = emptyList(),
     val acpHost: String = "127.0.0.1",
     val acpPort: Int = 5494,
     val acpRunning: Boolean = false,
@@ -274,8 +256,6 @@ public data class PreferencesSnapshot(
     val appDataDir: String,
     val defaultSessionDir: String,
     val skillsDir: String,
-    val presetBuiltin: String,
-    val presetFile: String,
     val logLevel: String,
     val logFile: String,
     val uiTheme: String,

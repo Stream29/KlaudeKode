@@ -5,7 +5,7 @@ import io.github.stream29.kode.session.core.model.SessionRunState
 import io.github.stream29.kode.session.core.model.SessionSnapshot
 import io.github.stream29.kode.session.core.model.SessionState
 import io.github.stream29.kode.session.core.model.SessionStatus
-import io.github.stream29.kode.session.core.model.TodoNode
+import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.session.core.model.toSessionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -108,11 +108,11 @@ class SessionFactoryConcurrencyTest {
             throw UnsupportedOperationException("removeSession is not used in this test")
         }
 
-        override suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoNode>? {
-            return null
+        override suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoItem> {
+            return emptyList()
         }
 
-        override suspend fun writeAgentTodo(sessionId: String, agentId: String, todos: List<TodoNode>) {
+        override suspend fun writeAgentTodo(sessionId: String, agentId: String, todos: List<TodoItem>) {
             throw UnsupportedOperationException("writeAgentTodo is not used in this test")
         }
 

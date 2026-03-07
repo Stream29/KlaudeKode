@@ -18,16 +18,6 @@ public object OpenRouterApiKeyProvider : LlmProvider {
 
     override fun models(): List<LLModel> = OPENROUTER_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = "OpenRouter",
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = listOf("OPENROUTER_API_KEY"),
-        defaultBaseUrl = "https://openrouter.ai",
-        description = "OpenRouter unified endpoint",
-        models = models(),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
     override fun createClient(auth: LlmAuth): LLMClient {

@@ -3,36 +3,32 @@ package io.github.stream29.kode.core.agent
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
-import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.port.RuntimeSideEffectPort
 import io.github.stream29.kode.core.port.SessionSideEffectPort
-import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.session.core.model.TodoNode
+import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 
-public class MainAgent(
+public class MainAgentImpl(
     promptExecutor: PromptExecutor,
     private val sessionManager: SessionManager,
     sessionBridge: KoogSessionBridge,
     private val messageHandler: MessageHandler,
-    private val hookManager: HookManager,
     eventListener: AgentEventListener?,
     logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
-    private val scriptContextFactory: (List<TodoNode>, MutableStateFlow<List<TodoNode>>?) -> AgentScriptContext =
+    private val scriptContextFactory: (List<TodoItem>, MutableStateFlow<List<TodoItem>>?) -> AgentScriptContext =
         { initialTodos, activeTodoFlow ->
             MainAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeTodoFlow)
         },
     private val runtimeSideEffectPort: RuntimeSideEffectPort? = null,
-    private val toolSideEffectPort: ToolSideEffectPort? = null,
     private val sessionSideEffectPort: SessionSideEffectPort? = null,
-) : Agent {
+) : MainAgent {
     private val engine = buildEngine(
         promptExecutor = promptExecutor,
         sessionBridge = sessionBridge,
@@ -42,16 +38,15 @@ public class MainAgent(
 
     init {
         val hasCustomRuntimePort = runtimeSideEffectPort != null
-        val hasCustomToolPort = toolSideEffectPort != null
         val hasCustomSessionPort = sessionSideEffectPort != null
-        if (hasCustomRuntimePort || hasCustomToolPort || hasCustomSessionPort) {
-            check(hasCustomRuntimePort && hasCustomToolPort && hasCustomSessionPort) {
-                "Custom side-effect wiring requires runtime/tool/session ports to be provided together"
+        if (hasCustomRuntimePort || hasCustomSessionPort) {
+            check(hasCustomRuntimePort && hasCustomSessionPort) {
+                "Custom side-effect wiring requires runtime/session ports to be provided together"
             }
         }
     }
 
-    public suspend fun chat(
+    override suspend fun chat(
         sessionId: String,
         userInput: String,
         model: LLModel,
@@ -59,8 +54,7 @@ public class MainAgent(
     ): String {
         requireInteractiveContext("Subagent cannot accept direct user chat")
         return withManagedSessionRun(sessionId) {
-            val processedInput = hookManager.applyUserPromptHooks(sessionId, userInput)
-            sessionManager.addUserMessage(sessionId, processedInput, runtimeContext.agentId)
+            sessionManager.addUserMessage(sessionId, userInput, runtimeContext.agentId)
             engine.run(
                 sessionId = sessionId,
                 model = model,
@@ -105,13 +99,12 @@ public class MainAgent(
         eventListener: AgentEventListener?,
         logger: (String) -> Unit,
     ): ScriptOnlyAgentEngine {
-        if (runtimeSideEffectPort == null || toolSideEffectPort == null || sessionSideEffectPort == null) {
+        if (runtimeSideEffectPort == null || sessionSideEffectPort == null) {
             return ScriptOnlyAgentEngine(
                 promptExecutor = promptExecutor,
                 sessionManager = sessionManager,
                 sessionBridge = sessionBridge,
                 messageHandler = messageHandler,
-                hookManager = hookManager,
                 eventListener = eventListener,
                 logger = logger,
                 runtimeContext = runtimeContext,
@@ -124,13 +117,11 @@ public class MainAgent(
             sessionManager = sessionManager,
             sessionBridge = sessionBridge,
             messageHandler = messageHandler,
-            hookManager = hookManager,
             eventListener = eventListener,
             logger = logger,
             runtimeContext = runtimeContext,
             scriptContextFactory = scriptContextFactory,
             runtimeSideEffectPort = runtimeSideEffectPort,
-            toolSideEffectPort = toolSideEffectPort,
             sessionSideEffectPort = sessionSideEffectPort,
         )
     }
@@ -140,7 +131,4 @@ public class MainAgent(
         return requireNotNull(job) { "MainAgent requires coroutine Job context" }
     }
 
-    public companion object {
-        public val DEFAULT_SYSTEM_PROMPT: String = ScriptOnlyAgentEngine.DEFAULT_SYSTEM_PROMPT
-    }
 }

@@ -8,7 +8,7 @@ dependencies {
     implementation(projects.config.api)
     implementation(projects.kodeOauthCore)
     implementation(projects.ui.core)
-    implementation(projects.kodeSessionCore)
+    implementation(projects.session)
     implementation(projects.providers.providerApi)
     implementation(projects.providers.providerBuiltin)
 

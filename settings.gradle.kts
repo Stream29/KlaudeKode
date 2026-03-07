@@ -25,7 +25,10 @@ include(":app")
 // New modules for kimi-cli inspired architecture
 include(":kode-core")
 include(":kode-oauth-core")
-include(":kode-session-core")
+include(":session")
+project(":session").projectDir = file("kode-session-core")
+include(":agent")
+project(":agent").projectDir = file("kode-agent")
 
 // UI modules
 include(":ui:core")
@@ -47,7 +50,7 @@ project(":config:core").projectDir = file("kode-config-core")
 include(":config:fs")
 project(":config:fs").projectDir = file("kode-config-fs")
 
-// Provider preset modules
+// Provider modules
 include(":providers:provider-api")
 include(":providers:provider-builtin")
 include(":providers:provider-anthropic")

@@ -21,10 +21,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.github.stream29.kode.session.core.model.AgentScript
-import io.github.stream29.kode.session.core.model.AgentScriptStatus
-import io.github.stream29.kode.session.core.model.SessionMessage
-import io.github.stream29.kode.session.core.model.UserMessage
+import io.github.stream29.kode.agent.model.AgentScript
+import io.github.stream29.kode.agent.model.AgentScriptStatus
+import io.github.stream29.kode.agent.model.SessionMessage
+import io.github.stream29.kode.agent.model.UserMessage
 import io.github.stream29.kode.ui.core.components.message.MessageBubble
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull

@@ -15,8 +15,8 @@ class TodoSidebarTest {
             rootNodes = listOf(
                 TodoUiNode(
                     name = "root",
-                    isCompleted = false,
-                    subtasks = emptyList(),
+                    completed = false,
+                    subItems = emptyList(),
                     path = "root",
                     expanded = false,
                     level = 0,
@@ -42,7 +42,7 @@ class TodoSidebarTest {
 
         assertEquals(listOf("root"), collapsedVisibleNodes.map { node -> node.path })
         assertEquals(listOf("root", "root:child"), expandedVisibleNodes.map { node -> node.path })
-        assertTrue(expandedVisibleNodes.first().subtasks.isNotEmpty())
+        assertTrue(expandedVisibleNodes.first().subItems.isNotEmpty())
     }
 
     @Test
@@ -54,8 +54,8 @@ class TodoSidebarTest {
             buildVisibleNodes(todoState = incompleteState).single { node -> node.path == "root:child" }
         val completedChild = buildVisibleNodes(todoState = completedState).single { node -> node.path == "root:child" }
 
-        assertFalse(incompleteChild.isCompleted)
-        assertTrue(completedChild.isCompleted)
+        assertFalse(incompleteChild.completed)
+        assertTrue(completedChild.completed)
     }
 
     @Test
@@ -80,12 +80,12 @@ class TodoSidebarTest {
             rootNodes = listOf(
                 TodoUiNode(
                     name = "root",
-                    isCompleted = false,
-                    subtasks = listOf(
+                    completed = false,
+                    subItems = listOf(
                         TodoUiNode(
                             name = "child",
-                            isCompleted = childCompleted,
-                            subtasks = emptyList(),
+                            completed = childCompleted,
+                            subItems = emptyList(),
                             path = "root:child",
                             expanded = false,
                             level = 1,

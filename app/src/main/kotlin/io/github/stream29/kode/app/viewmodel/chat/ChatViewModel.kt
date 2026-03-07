@@ -2,12 +2,12 @@ package io.github.stream29.kode.app.viewmodel.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.github.stream29.kode.app.viewmodel.AgentPreset
 import io.github.stream29.kode.app.viewmodel.StopMode
 import io.github.stream29.kode.config.api.*
 import io.github.stream29.kode.config.core.ConfigManager
-import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.agent.SessionExecutionRuntime
+import io.github.stream29.kode.agent.model.TodoItem
+import io.github.stream29.kode.agent.model.*
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.model.*
 import io.github.stream29.kode.ui.core.AgentEvent
@@ -22,11 +22,8 @@ import java.util.concurrent.ConcurrentHashMap
 public class ChatViewModel(
     public val currentSessionIdFlow: StateFlow<String?>,
     public val activeModelIdFlow: StateFlow<String?>,
-    public val activePresetNameFlow: StateFlow<String?>,
-    public val agentPresetsFlow: StateFlow<List<AgentPreset>>,
     private val sessionManager: SessionManager,
     private val configManager: ConfigManager,
-    private val hookManager: HookManager,
     private val onEventCallback: (AgentEvent, String?) -> Unit,
     private val onNotifyConfigChanged: () -> Unit,
 ) : ViewModel(), AgentEventListener {
@@ -128,13 +125,13 @@ public class ChatViewModel(
         updateUiState { ChatUiState() }
     }
 
-    private fun toTodoUiState(todoNodes: List<TodoNode>, oldUiState: TodoUiState? = null): TodoUiState {
+    private fun toTodoUiState(todoNodes: List<TodoItem>, oldUiState: TodoUiState? = null): TodoUiState {
         val expandedPaths = mutableSetOf<String>()
         
         fun collectExpanded(nodes: List<TodoUiNode>) {
             nodes.forEach {
                 if (it.expanded) expandedPaths.add(it.path)
-                collectExpanded(it.subtasks)
+                collectExpanded(it.subItems)
             }
         }
         
@@ -142,12 +139,12 @@ public class ChatViewModel(
             collectExpanded(oldUiState.rootNodes)
         }
 
-        fun mapNode(node: TodoNode, pathPrefix: String, level: Int): TodoUiNode {
+        fun mapNode(node: TodoItem, pathPrefix: String, level: Int): TodoUiNode {
             val currentPath = if (pathPrefix.isEmpty()) node.name else "$pathPrefix:${node.name}"
             return TodoUiNode(
                 name = node.name,
-                isCompleted = node.isCompleted,
-                subtasks = node.subtasks.map { mapNode(it, currentPath, level + 1) },
+                completed = node.completed,
+                subItems = node.subItems.map { mapNode(it, currentPath, level + 1) },
                 path = currentPath,
                 expanded = expandedPaths.contains(currentPath),
                 level = level
@@ -267,7 +264,6 @@ public class ChatViewModel(
             models = config.models,
             messageHandler = createMessageHandler(),
             eventListener = this,
-            hookManager = hookManager,
             logger = { msg -> onEvent(AgentEvent.MessageToUser(msg), boundSessionId ?: "") },
             sessionManager = sessionManager,
         )
@@ -379,7 +375,7 @@ public class ChatViewModel(
                     if (node.path == path) {
                         node.copy(expanded = !node.expanded)
                     } else if (path.startsWith("${node.path}:")) {
-                        node.copy(subtasks = toggleInNodes(node.subtasks))
+                        node.copy(subItems = toggleInNodes(node.subItems))
                     } else {
                         node
                     }

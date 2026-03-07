@@ -18,16 +18,6 @@ public object MistralApiKeyProvider : LlmProvider {
 
     override fun models(): List<LLModel> = MISTRAL_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = "Mistral",
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = listOf("MISTRAL_API_KEY"),
-        defaultBaseUrl = "https://api.mistral.ai/v1",
-        description = "Mistral API",
-        models = models(),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
     override fun createClient(auth: LlmAuth): LLMClient {

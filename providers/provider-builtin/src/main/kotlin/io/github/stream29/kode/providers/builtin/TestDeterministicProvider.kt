@@ -33,17 +33,6 @@ public object TestDeterministicProvider : LlmProvider {
 
     override fun models(): List<LLModel> = TEST_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = displayName,
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = emptyList(),
-        defaultBaseUrl = null,
-        supportsCustomBaseUrl = false,
-        description = "Deterministic test provider backed by Koog mock prompt executor.",
-        models = models(),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
     override fun createClient(auth: LlmAuth): LLMClient {

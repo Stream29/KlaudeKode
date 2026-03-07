@@ -7,7 +7,6 @@ import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
-import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.port.RuntimeSideEffectPort
 import io.github.stream29.kode.core.port.SessionSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
@@ -15,8 +14,8 @@ import io.github.stream29.kode.core.testsupport.FakeMessageHandler
 import io.github.stream29.kode.core.testsupport.FakeSessionRepository
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.model.SessionRunState
-import io.github.stream29.kode.session.core.model.UserMessage
-import io.github.stream29.kode.session.core.tool.ToolNames
+import io.github.stream29.kode.agent.model.UserMessage
+import io.github.stream29.kode.agent.tool.ToolNames
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
@@ -201,7 +200,6 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 sessionManager = sessionManager,
                 sessionBridge = KoogSessionBridge(sessionManager = sessionManager),
                 messageHandler = FailOnDirectInputMessageHandler(),
-                hookManager = HookManager.empty(),
                 eventListener = null,
                 logger = {},
                 runtimeContext = AgentRuntimeContext(),
@@ -279,7 +277,6 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 sessionManager = sessionManager,
                 sessionBridge = KoogSessionBridge(sessionManager = sessionManager),
                 messageHandler = FakeMessageHandler(),
-                hookManager = HookManager.empty(),
                 eventListener = null,
                 logger = {},
                 runtimeContext = AgentRuntimeContext(),
@@ -366,7 +363,6 @@ class ScriptOnlyAgentEngineProtocolFailFastTest {
                 sessionManager = sessionManager,
                 sessionBridge = KoogSessionBridge(sessionManager = sessionManager),
                 messageHandler = FakeMessageHandler(),
-                hookManager = HookManager.empty(),
                 eventListener = null,
                 logger = {},
                 runtimeContext = AgentRuntimeContext(),

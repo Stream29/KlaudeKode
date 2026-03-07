@@ -96,7 +96,7 @@ plugin-name = { id = "plugin.id", version.ref = "kotlin" }
 ### Test Harness Module
 
 - `:agent-api-test` has been removed.
-- Manual/behavior verification should use existing tests in `:kode-core` and `:kode-session-core`.
+- Manual/behavior verification should use existing tests in `:kode-core` and `:session`.
 
 ### Adding a New Module
 
@@ -118,10 +118,16 @@ plugin-name = { id = "plugin.id", version.ref = "kotlin" }
 - 2026-02-19：移除 `:tools:file-search-tool` 模块与 `kode-core` 对该模块依赖；文件检索能力收敛到 script-only 路线（由 `executeKotlinScript` + `ScriptContext` 统一承载）。
 - 2026-02-25：Legacy pruning 硬切：移除已弃用工具模块，模块图以 `settings.gradle.kts` 为准；保留受保护表面 `:tools:web-tool`，并维持现行运行时兼容表面（strict script-only、`ToolNames` 单一事实源、legacy alias 仅历史语义不得回流）。
 - 2026-03-06：会话契约收敛为“运行态单一 owner + pending-input 单一真值源 + 两段 stop 语义”：`isWaitingForInput` 仅由 pending-input 派生，不得再以 `SessionRunState.Suspended` 直接等价。
-- 2026-03-06：持久化采用“迁移优先、默认非破坏”策略：schema 不匹配默认 fail-fast/迁移，不得无显式开关执行 destructive reset；新旧布局保持“新写入、旧可读”兼容。
+- 2026-03-06（历史记录，已废弃）：曾采用“迁移优先、默认非破坏”策略；该策略不再生效，统一以 2026-03-07 决策为准。
+- 2026-03-07：会话模型移除 checkpoint 与 schema 迁移语义；持久化层改为对运行态 `StateFlow` 变更进行监听并自动落盘，`SessionManager` 继续提供显式持久化路径作为编排边界。
+- 2026-03-07：持久化契约收敛到 canonical-only：移除 `session-meta.csv`/`meta.json`/legacy `todo.json` 与 legacy message type 的兼容读取，旧布局数据不再作为当前运行时输入面。
+- 2026-03-08：模块边界收敛为 `:session + :agent`：原 `:kode-session-core` 的模块名切换为 `:session`（目录保持 `kode-session-core`），新增 `:agent` 承载 agent 域模型；`TodoItem` 成为唯一 canonical 类型并迁入 `:agent`，`TodoNode`/`TodoItem` alias 不再保留。
+- 2026-03-08：agent 域模型进一步从 `:session` 抽离到 `:agent`：`SessionMessage/AgentMessage/AgentScript/UserMessage`、`AgentState/AgentConfig/Agent/SubAgent` 与 `ToolNames` 迁入 `:agent`，`:session` 保留会话元数据、运行编排与持久化契约。
+- 2026-03-08：`kode-core` 中 `MainAgent/SubAgent` 收敛为“接口 + 实现”分离：`MainAgent`/`SubAgent` 为契约，`MainAgentImpl`/`SubAgentImpl` 为默认实现，避免接口缺位导致的实现泄漏。
+- 2026-03-08：彻底移除未实装的 `Preset`/`Hooks` 特性：删除 `AppConfig.preset` 与模板 preset 段、移除 app 层 preset UI/状态流、删去 provider preset 模型与注册表，以及 `HookManager`/tool hook 注入链路，运行时保持 script-only 主路径。
 
 ## Critical Interaction Contract
 
 - 这种很重要的全局设计，你都要加到根目录的 `@AGENTS.md` 里面，用简短凝练的语言记录。如果发生了变更就要更新。这句话本身也要记录进去。
-- **IMPORTANT**: 你需要优先阅读具体模块目录下的 `AGENTS.md`（如 `kode-core/AGENTS.md`, `kode-session-core/AGENTS.md`, `app/AGENTS.md` 等），那里包含了各个模块具体的架构设计和契约。只有全局性的设计才放在根目录的 `AGENTS.md` 中。
+- **IMPORTANT**: 你需要优先阅读具体模块目录下的 `AGENTS.md`（如 `kode-core/AGENTS.md`, `session(目录: kode-session-core)/AGENTS.md`, `app/AGENTS.md` 等），那里包含了各个模块具体的架构设计和契约。只有全局性的设计才放在根目录的 `AGENTS.md` 中。
 - Legacy surface contract: `await_user_input`/`wait_for_user_input`/`spawn_subagent` 等旧别名与多工具模式叙事仅可作为历史背景，不得作为当前实现或迁移目标。

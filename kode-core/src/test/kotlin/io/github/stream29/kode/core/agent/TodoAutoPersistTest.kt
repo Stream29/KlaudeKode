@@ -5,19 +5,17 @@ import ai.koog.agents.testing.tools.getMockExecutor
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
-import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.core.testsupport.FakeMessageHandler
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.session.core.model.TodoNode
+import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.session.core.storage.FileSessionStorage
-import io.github.stream29.kode.session.core.tool.ToolNames
+import io.github.stream29.kode.agent.tool.ToolNames
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.serializer
@@ -47,10 +45,10 @@ class TodoAutoPersistTest {
                     sessionManager = sessionManager,
                     sessionId = session.id,
                     script = """
-                        reset(listOf(
+                        resetTodoItems(listOf(
                             TodoItem(
                                 name = "todo from add script",
-                                isCompleted = false
+                                completed = false
                             )
                         ))
                         suspendForUserInput()
@@ -77,8 +75,8 @@ class TodoAutoPersistTest {
                 assertEquals(1, persistedTodos.size)
                 val todo = persistedTodos.single()
                 assertEquals("todo from add script", todo.name)
-                assertEquals(0, todo.subtasks.size)
-                assertFalse(todo.isCompleted)
+                assertEquals(0, todo.subItems.size)
+                assertFalse(todo.completed)
 
                 val reloadedSessionManager = reloadSessionManager(dataDir = tempDir)
                 val reloadedTodos = reloadedSessionManager.getAgentTodo(session.id, "main-${session.id}")
@@ -108,10 +106,10 @@ class TodoAutoPersistTest {
                     sessionManager = sessionManager,
                     sessionId = session.id,
                     script = """
-                        reset(listOf(
-                            TodoNode(
+                        resetTodoItems(listOf(
+                            TodoItem(
                                 name = "todo before update",
-                                isCompleted = false
+                                completed = false
                             )
                         ))
                         suspendForUserInput()
@@ -128,10 +126,10 @@ class TodoAutoPersistTest {
                     sessionManager = sessionManager,
                     sessionId = session.id,
                     script = """
-                        updateTodoNode("todo before update") {
+                        editTodoItem("todo before update") {
                             it.copy(
                                 name = "todo after update",
-                                isCompleted = true
+                                completed = true
                             )
                         }
                         suspendForUserInput()
@@ -158,7 +156,7 @@ class TodoAutoPersistTest {
 
                 assertEquals(1, persistedTodos.size)
                 assertEquals("todo after update", updatedTodo.name)
-                assertTrue(updatedTodo.isCompleted)
+                assertTrue(updatedTodo.completed)
 
                 val reloadedSessionManager = reloadSessionManager(dataDir = tempDir)
                 val reloadedTodos = reloadedSessionManager.getAgentTodo(session.id, "main-${session.id}")
@@ -170,64 +168,47 @@ class TodoAutoPersistTest {
     }
 
     @Test
-    fun legacyTodoJsonIsReadableAfterModelAlignment() {
+    fun todoAddScriptAutoPersistsWhenAgentRuntimeContextHasNoAgentId() {
         runBlocking {
-            val tempDir = Files.createTempDirectory("todo-auto-persist-legacy-read-test")
+            val tempDir = Files.createTempDirectory("todo-auto-persist-main-fallback-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
                 val sessionManager = SessionManager(repository = storage)
                 val session = sessionManager.createConversationSession(
-                    title = "todo legacy read",
+                    title = "todo add fallback",
                     systemPrompt = "test",
                     preferredModel = null,
                     preferredModelId = "test-model",
                     workDir = null,
                 )
 
-                val canonicalMetadataFile = resolveCanonicalMainAgentMetadataFile(
-                    dataDir = tempDir,
+                runSingleScript(
+                    sessionManager = sessionManager,
                     sessionId = session.id,
-                )
-                val legacyMetadataFile = resolveLegacyMainAgentMetadataFile(
-                    dataDir = tempDir,
-                    sessionId = session.id,
-                )
-                legacyMetadataFile.parentFile?.mkdirs()
-                legacyMetadataFile.writeText(canonicalMetadataFile.readText())
-                assertTrue(canonicalMetadataFile.delete())
-
-                val todoFile = resolveLegacyMainAgentTodoFile(
-                    dataDir = tempDir,
-                    sessionId = session.id,
-                )
-                todoFile.parentFile?.mkdirs()
-                todoFile.writeText(
-                    """
-                    [
-                      {
-                        "name": "legacy root",
-                        "isCompleted": true,
-                        "subtasks": [
-                          {
-                            "name": "legacy child",
-                            "isCompleted": false,
-                            "subtasks": []
-                          }
-                        ]
-                      }
-                    ]
+                    script = """
+                        resetTodoItems(listOf(
+                            TodoItem(
+                                name = "todo from fallback runtime context",
+                                completed = false
+                            )
+                        ))
+                        suspendForUserInput()
                     """.trimIndent(),
+                    runtimeContext = AgentRuntimeContext(),
                 )
+
+                val persistedTodos = readPersistedTodos(
+                    dataDir = tempDir,
+                    sessionId = session.id,
+                )
+
+                assertEquals(1, persistedTodos.size)
+                assertEquals("todo from fallback runtime context", persistedTodos.single().name)
+                assertFalse(persistedTodos.single().completed)
 
                 val reloadedSessionManager = reloadSessionManager(dataDir = tempDir)
                 val reloadedTodos = reloadedSessionManager.getAgentTodo(session.id, "main-${session.id}")
-
-                assertEquals(1, reloadedTodos.size)
-                assertEquals("legacy root", reloadedTodos[0].name)
-                assertTrue(reloadedTodos[0].isCompleted)
-                assertEquals(1, reloadedTodos[0].subtasks.size)
-                assertEquals("legacy child", reloadedTodos[0].subtasks[0].name)
-                assertFalse(reloadedTodos[0].subtasks[0].isCompleted)
+                assertEquals(persistedTodos, reloadedTodos)
             } finally {
                 tempDir.toFile().deleteRecursively()
             }
@@ -238,23 +219,24 @@ class TodoAutoPersistTest {
         sessionManager: SessionManager,
         sessionId: String,
         script: String,
+        runtimeContext: AgentRuntimeContext = AgentRuntimeContext(),
     ) {
         val messageHandler = SafeStopAfterFirstInputMessageHandler()
+        val uniqueScript = "// cache-bust:${UUID.randomUUID()}\n$script"
         val engine = ScriptOnlyAgentEngine(
             promptExecutor = getMockExecutor {
                 mockLLMToolCall(
                     tool = ExecuteKotlinScriptTool,
-                    args = ExecuteKotlinScriptArgs(script = script),
+                    args = ExecuteKotlinScriptArgs(script = uniqueScript),
                     toolCallId = "call-id",
                 ) onCondition { true }
             },
             sessionManager = sessionManager,
             sessionBridge = KoogSessionBridge(sessionManager = sessionManager),
             messageHandler = messageHandler,
-            hookManager = HookManager.empty(),
             eventListener = null,
             logger = {},
-            runtimeContext = AgentRuntimeContext(agentId = "main-$sessionId"),
+            runtimeContext = runtimeContext,
         )
 
         val result = withTimeout(timeMillis = 2_000L) {
@@ -269,20 +251,16 @@ class TodoAutoPersistTest {
         assertEquals(1, messageHandler.requestInputCount)
     }
 
-    private fun readPersistedTodos(dataDir: Path, sessionId: String): List<TodoNode> {
+    private fun readPersistedTodos(dataDir: Path, sessionId: String): List<TodoItem> {
         val metadataFile = resolveCanonicalMainAgentMetadataFile(
             dataDir = dataDir,
             sessionId = sessionId,
         )
         assertTrue(metadataFile.isFile)
         val metadata = TODO_JSON.parseToJsonElement(metadataFile.readText()).jsonObject
-        val todoStoredInMetadata = metadata["todoStoredInMetadata"]
-            ?.jsonPrimitive
-            ?.booleanOrNull
-        assertEquals(true, todoStoredInMetadata)
         val todoElement = metadata["todo"] ?: fail("Missing todo in agent metadata")
         return TODO_JSON.decodeFromJsonElement(
-            deserializer = ListSerializer(TodoNode.serializer()),
+            deserializer = ListSerializer(TodoItem.serializer()),
             element = todoElement,
         )
     }
@@ -302,16 +280,6 @@ class TodoAutoPersistTest {
             .resolve("agents")
             .resolve("mainAgent")
             .resolve("todo.json")
-            .toFile()
-    }
-
-    private fun resolveLegacyMainAgentMetadataFile(dataDir: Path, sessionId: String): File {
-        val encodedAgentId = encodedMainAgentId(sessionId = sessionId)
-        return dataDir.resolve("sessions")
-            .resolve(sessionId)
-            .resolve("agents")
-            .resolve(encodedAgentId)
-            .resolve("meta.json")
             .toFile()
     }
 

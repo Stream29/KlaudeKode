@@ -12,6 +12,7 @@ dependencies {
         }
     }
 
+    api(projects.agent)
     implementation(projects.config.fs)
     implementation(libs.koogAgents)
 

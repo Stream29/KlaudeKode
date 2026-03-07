@@ -69,7 +69,7 @@ public inline fun <reified T : ScriptContext> T.eval(script: String): KotlinScri
                 evaluation = {
                     constructorArgs(emptyArray<String>())
                     implicitReceivers(this@eval)
-                    scriptsInstancesSharing(true)
+                    scriptsInstancesSharing(false)
                 },
             )
         }.toEvalResult()

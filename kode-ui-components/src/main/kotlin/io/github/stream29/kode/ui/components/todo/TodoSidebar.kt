@@ -17,8 +17,8 @@ import androidx.compose.ui.unit.dp
 
 public data class TodoUiNode(
     val name: String,
-    val isCompleted: Boolean,
-    val subtasks: List<TodoUiNode>,
+    val completed: Boolean,
+    val subItems: List<TodoUiNode>,
     val path: String,
     val expanded: Boolean,
     val level: Int,
@@ -84,7 +84,7 @@ private fun TodoSidebarNodeRow(
     ) {
         Spacer(modifier = Modifier.width((node.level * 16).dp))
 
-        if (node.subtasks.isNotEmpty()) {
+        if (node.subItems.isNotEmpty()) {
             IconButton(
                 onClick = { onToggleExpand(node.path) },
             ) {
@@ -103,19 +103,19 @@ private fun TodoSidebarNodeRow(
         }
 
         Checkbox(
-            checked = node.isCompleted,
+            checked = node.completed,
             onCheckedChange = { onToggleComplete(node.path) },
         )
 
         Text(
             text = node.name.ifBlank { node.path.ifBlank { "Todo" } },
             style = MaterialTheme.typography.bodyMedium,
-            color = if (node.isCompleted) {
+            color = if (node.completed) {
                 MaterialTheme.colorScheme.onSurfaceVariant
             } else {
                 MaterialTheme.colorScheme.onSurface
             },
-            textDecoration = if (node.isCompleted) TextDecoration.LineThrough else null,
+            textDecoration = if (node.completed) TextDecoration.LineThrough else null,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(start = 4.dp, end = 8.dp),
@@ -130,7 +130,7 @@ public fun buildVisibleNodes(rootNodes: List<TodoUiNode>): List<TodoUiNode> {
     fun appendNode(node: TodoUiNode) {
         visibleNodes += node
         if (node.expanded) {
-            node.subtasks.forEach { child ->
+            node.subItems.forEach { child ->
                 appendNode(child)
             }
         }

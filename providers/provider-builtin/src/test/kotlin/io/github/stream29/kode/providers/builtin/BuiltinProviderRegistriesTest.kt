@@ -5,9 +5,6 @@ import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import io.github.stream29.kode.providers.api.LlmAuth
 import io.github.stream29.kode.providers.api.LlmProvider
-import io.github.stream29.kode.providers.api.ProviderAuthMode
-import io.github.stream29.kode.providers.api.ProviderPreset
-import io.github.stream29.kode.providers.api.validateProviderPresetRegistryUniqueness
 import io.github.stream29.kode.providers.api.validateProviderRegistryUniqueness
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
@@ -17,7 +14,6 @@ class BuiltinProviderRegistriesTest {
     @Test
     fun builtinRegistriesInitializeSuccessfully() {
         assertTrue(BuiltinLlmProviderRegistry.listProviders().isNotEmpty())
-        assertTrue(BuiltinProviderPresetRegistry.listPresets().isNotEmpty())
     }
 
     @Test
@@ -105,27 +101,6 @@ class BuiltinProviderRegistriesTest {
         }
         assertTrue(error.message.orEmpty().contains("Duplicate model ids/names"))
         assertTrue(error.message.orEmpty().contains("providerId='provider-a'"))
-    }
-
-    @Test
-    fun presetUniquenessRejectsDuplicatePresetIds() {
-        val presets = listOf(
-            ProviderPreset(
-                id = "preset-a",
-                displayName = "Preset A",
-                authModes = setOf(ProviderAuthMode.ApiKey),
-            ),
-            ProviderPreset(
-                id = "preset-a",
-                displayName = "Preset B",
-                authModes = setOf(ProviderAuthMode.ApiKey),
-            ),
-        )
-
-        val error = assertFailsWith<IllegalArgumentException> {
-            validateProviderPresetRegistryUniqueness(presets)
-        }
-        assertTrue(error.message.orEmpty().contains("Duplicate provider preset ids"))
     }
 
     private fun fakeProvider(

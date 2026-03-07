@@ -22,7 +22,7 @@ plugins {
 }
 
 dependencies {
-    api(projects.kodeSessionCore)
+    api(projects.session)
 
     constraints {
         implementation("io.netty:netty-codec:${libs.versions.netty.get()}") {

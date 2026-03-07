@@ -18,16 +18,6 @@ public object XaiApiKeyProvider : LlmProvider {
 
     override fun models(): List<LLModel> = XAI_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = "xAI",
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = listOf("XAI_API_KEY"),
-        defaultBaseUrl = "https://api.x.ai/v1",
-        description = "xAI Grok models",
-        models = models(),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
     override fun createClient(auth: LlmAuth): LLMClient {

@@ -1,11 +1,12 @@
 package io.github.stream29.kode.session.core.testsupport
 
+import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.session.core.SessionRepository
 import io.github.stream29.kode.session.core.model.*
 
 internal class FakeSessionRepository : SessionRepository {
     private val sessions: LinkedHashMap<String, SessionState> = linkedMapOf()
-    private val agentTodos: LinkedHashMap<String, List<TodoNode>> = linkedMapOf()
+    private val agentTodos: LinkedHashMap<String, List<TodoItem>> = linkedMapOf()
     internal var listSessionsCalls: Int = 0
         private set
     internal var loadSessionCalls: Int = 0
@@ -40,11 +41,11 @@ internal class FakeSessionRepository : SessionRepository {
         sessions.remove(id)
     }
 
-    override suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoNode>? {
-        return agentTodos["$sessionId:$agentId"]
+    override suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoItem> {
+        return agentTodos["$sessionId:$agentId"] ?: emptyList()
     }
 
-    override suspend fun writeAgentTodo(sessionId: String, agentId: String, todos: List<TodoNode>) {
+    override suspend fun writeAgentTodo(sessionId: String, agentId: String, todos: List<TodoItem>) {
         agentTodos["$sessionId:$agentId"] = todos
     }
 }

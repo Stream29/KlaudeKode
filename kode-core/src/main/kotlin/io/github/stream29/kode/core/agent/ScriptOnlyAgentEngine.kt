@@ -6,15 +6,12 @@ import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.params.LLMParams
-import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.port.RuntimeSideEffectPort
 import io.github.stream29.kode.core.port.SessionSideEffectPort
-import io.github.stream29.kode.core.port.ToolCallPreHookResult
-import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.session.core.model.TodoNode
-import io.github.stream29.kode.session.core.tool.ToolNames
+import io.github.stream29.kode.agent.model.TodoItem
+import io.github.stream29.kode.agent.tool.ToolNames
 import io.github.stream29.kode.tools.scripting.KotlinScriptTool
 import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
@@ -37,11 +34,10 @@ internal class ScriptOnlyAgentEngine(
     private val sessionManager: SessionManager,
     private val sessionBridge: KoogSessionBridge,
     private val messageHandler: MessageHandler,
-    private val hookManager: HookManager,
     private val eventListener: AgentEventListener?,
     private val logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
-    private val scriptContextFactory: (List<TodoNode>, MutableStateFlow<List<TodoNode>>?) -> AgentScriptContext =
+    private val scriptContextFactory: (List<TodoItem>, MutableStateFlow<List<TodoItem>>?) -> AgentScriptContext =
         { initialTodos, activeTodoFlow ->
             MainAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeTodoFlow)
         },
@@ -49,9 +45,6 @@ internal class ScriptOnlyAgentEngine(
         messageHandler = messageHandler,
         eventListener = eventListener,
         logger = logger,
-    ),
-    private val toolSideEffectPort: ToolSideEffectPort = ToolSideEffectAdapter(
-        hookManager = hookManager,
     ),
     private val sessionSideEffectPort: SessionSideEffectPort = SessionSideEffectAdapter(
         sessionManager = sessionManager,
@@ -78,7 +71,7 @@ internal class ScriptOnlyAgentEngine(
         val errorMessage: String?,
         val awaitForUserInput: Boolean,
         val todoChanged: Boolean,
-        val latestTodos: List<TodoNode>,
+        val latestTodos: List<TodoItem>,
         val outputList: List<String>,
     )
 
@@ -154,9 +147,13 @@ internal class ScriptOnlyAgentEngine(
         return params.copy(additionalProperties = mergedAdditionalProperties)
     }
 
-    private suspend fun resolveCurrentTodos(sessionId: String): List<TodoNode> {
-        val agentId = runtimeContext.agentId ?: return emptyList()
+    private suspend fun resolveCurrentTodos(sessionId: String): List<TodoItem> {
+        val agentId = resolveTodoAgentId(sessionId = sessionId)
         return sessionManager.getAgentTodo(sessionId, agentId)
+    }
+
+    private fun resolveTodoAgentId(sessionId: String): String {
+        return runtimeContext.agentId ?: "main-$sessionId"
     }
 
     private suspend fun executeWithTools(
@@ -273,7 +270,7 @@ internal class ScriptOnlyAgentEngine(
     private suspend fun executeToolCall(
         sessionId: String,
         toolCall: Message.Tool.Call,
-        initialTodos: List<TodoNode>,
+        initialTodos: List<TodoItem>,
     ): Message.Tool.Result {
         val resolvedCall = resolveToolCall(toolCall)
 
@@ -284,20 +281,7 @@ internal class ScriptOnlyAgentEngine(
             )
         }
 
-        val preHook =
-            toolSideEffectPort.applyToolCallBeforeHooks(sessionId, resolvedCall.toolName, resolvedCall.toolArgs)
-        if (!preHook.allowed) {
-            val reason = preHook.reason ?: "Tool call blocked by hook"
-            return rejectToolCall(
-                sessionId = sessionId,
-                resolvedCall = resolvedCall,
-                reason = reason,
-                resultToolName = resolvedCall.toolName,
-                arguments = parseToolArgs(preHook.toolArgs),
-            )
-        }
-
-        val finalArgs = preHook.toolArgs
+        val finalArgs = resolvedCall.toolArgs
 
         runtimeSideEffectPort.log("🔧 Calling tool: ${resolvedCall.toolName}")
         runtimeSideEffectPort.log("   Args: ${finalArgs.take(100)}")
@@ -321,12 +305,7 @@ internal class ScriptOnlyAgentEngine(
             throw error
         }
 
-        val processedResult = toolSideEffectPort.applyToolCallAfterHooks(
-            sessionId = sessionId,
-            toolName = resolvedCall.toolName,
-            toolArgs = finalArgs,
-            result = execution.content
-        )
+        val processedResult = execution.content
 
         val isError = execution.isError
         val errorMessage = if (isError) {
@@ -360,14 +339,12 @@ internal class ScriptOnlyAgentEngine(
             )
         }
         if (execution.todoChanged) {
-            val agentId = runtimeContext.agentId
-            if (agentId != null) {
-                sessionManager.updateAgentTodo(
-                    sessionId = sessionId,
-                    agentId = agentId,
-                    todos = execution.latestTodos
-                )
-            }
+            val agentId = resolveTodoAgentId(sessionId = sessionId)
+            sessionManager.updateAgentTodo(
+                sessionId = sessionId,
+                agentId = agentId,
+                todos = execution.latestTodos
+            )
         }
 
         if (execution.awaitForUserInput) {
@@ -468,31 +445,6 @@ internal class ScriptOnlyAgentEngine(
         )
     }
 
-    private suspend fun rejectToolCall(
-        sessionId: String,
-        resolvedCall: ResolvedToolCall,
-        reason: String,
-        resultToolName: String,
-        arguments: JsonElement,
-    ): Message.Tool.Result {
-        saveToolExchange(
-            sessionId = sessionId,
-            toolName = resolvedCall.toolName,
-            toolCallId = resolvedCall.toolCallId,
-            arguments = arguments,
-            result = JsonPrimitive(reason),
-            isError = true,
-            errorMessage = reason,
-            outputList = emptyList(),
-            awaitForUserInput = false,
-        )
-        return buildToolResult(
-            toolCall = resolvedCall.call,
-            rawToolName = resultToolName,
-            content = reason,
-        )
-    }
-
     private suspend fun saveToolExchange(
         sessionId: String,
         toolName: String,
@@ -534,10 +486,10 @@ internal class ScriptOnlyAgentEngine(
     private suspend fun executeScriptTool(
         sessionId: String,
         toolArgs: String,
-        initialTodos: List<TodoNode>,
+        initialTodos: List<TodoItem>,
     ): ToolExecutionOutcome {
-        val agentId = runtimeContext.agentId
-        val activeFlow = if (agentId != null) sessionManager.getAgentTodoStateFlow(sessionId, agentId) else null
+        val agentId = resolveTodoAgentId(sessionId = sessionId)
+        val activeFlow = sessionManager.getAgentTodoStateFlow(sessionId, agentId)
         val scriptContext = scriptContextFactory(initialTodos, activeFlow)
         val tool = buildScriptTool(scriptContext)
         val todoStateFlow = scriptContext.todoStateFlow
@@ -691,41 +643,6 @@ internal class ScriptOnlyAgentEngine(
 
         override suspend fun requestInput(sessionId: String): String {
             return messageHandler.requestInput(sessionId)
-        }
-    }
-
-    private class ToolSideEffectAdapter(
-        private val hookManager: HookManager,
-    ) : ToolSideEffectPort {
-        override fun applyToolCallBeforeHooks(
-            sessionId: String,
-            toolName: String,
-            toolArgs: String
-        ): ToolCallPreHookResult {
-            val result = hookManager.applyToolCallBeforeHooks(
-                sessionId = sessionId,
-                toolName = toolName,
-                toolArgs = toolArgs,
-            )
-            return ToolCallPreHookResult(
-                allowed = result.allowed,
-                reason = result.reason,
-                toolArgs = result.toolArgs,
-            )
-        }
-
-        override fun applyToolCallAfterHooks(
-            sessionId: String,
-            toolName: String,
-            toolArgs: String,
-            result: String
-        ): String {
-            return hookManager.applyToolCallAfterHooks(
-                sessionId = sessionId,
-                toolName = toolName,
-                toolArgs = toolArgs,
-                result = result,
-            )
         }
     }
 

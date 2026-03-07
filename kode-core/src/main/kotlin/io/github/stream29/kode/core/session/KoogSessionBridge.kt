@@ -4,9 +4,9 @@ import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.message.ResponseMetaInfo
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.session.core.model.AgentScriptStatus
-import io.github.stream29.kode.session.core.model.toKoogMessages
-import io.github.stream29.kode.session.core.tool.ToolNames
+import io.github.stream29.kode.agent.model.AgentScriptStatus
+import io.github.stream29.kode.agent.model.toKoogMessages
+import io.github.stream29.kode.agent.tool.ToolNames
 import kotlinx.datetime.toDeprecatedClock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive

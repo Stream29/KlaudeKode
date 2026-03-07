@@ -82,28 +82,6 @@ public fun validateProviderRegistryUniqueness(providers: List<LlmProvider>) {
     }
 }
 
-public fun validateProviderPresetRegistryUniqueness(presets: List<ProviderPreset>) {
-    val duplicatePresetIds = duplicatesBy(presets) { preset -> preset.id.trim() }
-    require(duplicatePresetIds.isEmpty()) {
-        "Duplicate provider preset ids: ${duplicatePresetIds.joinToString()}"
-    }
-
-    val duplicatePresetNames = duplicatesBy(presets) { preset -> preset.displayName.trim() }
-    require(duplicatePresetNames.isEmpty()) {
-        "Duplicate provider preset names: ${duplicatePresetNames.joinToString()}"
-    }
-
-    presets.forEach { preset ->
-        val presetId = preset.id.trim()
-        require(presetId.isNotBlank()) { "providerPresetId is blank" }
-        require(preset.displayName.trim().isNotBlank()) { "providerPresetName is blank for id='$presetId'" }
-        val duplicateModelIds = duplicatesBy(preset.models) { model -> model.id.trim() }
-        require(duplicateModelIds.isEmpty()) {
-            "Duplicate model ids/names for providerPresetId='$presetId': ${duplicateModelIds.joinToString()}"
-        }
-    }
-}
-
 private fun LlmAuth.authIdOrUnknown(): String {
     val normalized = authId?.trim().orEmpty()
     return if (normalized.isBlank()) "<unknown>" else normalized

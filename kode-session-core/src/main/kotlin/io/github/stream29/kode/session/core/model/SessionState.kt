@@ -1,10 +1,13 @@
 package io.github.stream29.kode.session.core.model
 
+import io.github.stream29.kode.agent.model.Agent
+import io.github.stream29.kode.agent.model.AgentConfig
+import io.github.stream29.kode.agent.model.AgentState
+import io.github.stream29.kode.agent.model.SessionMessage
+import io.github.stream29.kode.agent.model.SubAgent
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.PersistentMap
-import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -57,9 +60,6 @@ public data class SessionSnapshot(
      */
     val forkedFromMessageId: String?,
 
-    /**
-     * Version number for checkpoint tracking.
-     */
     val version: Long,
 
     /**
@@ -114,35 +114,6 @@ public enum class SessionStatus {
 }
 
 /**
- * Agent state in a session runtime.
- */
-@Serializable
-public enum class AgentState {
-    Running,
-    Suspended,
-}
-
-@Serializable
-public data class AgentConfig(
-    val systemPrompt: String?,
-    val taskDescription: String?,
-    val expectedResult: String?,
-    val canInteractWithUser: Boolean,
-)
-
-public data class Agent(
-    val state: MutableStateFlow<AgentState>,
-    val config: MutableStateFlow<AgentConfig>,
-    val messages: MutableStateFlow<PersistentList<SessionMessage>>,
-    val todoState: MutableStateFlow<List<TodoNode>> = MutableStateFlow(emptyList()),
-)
-
-public data class SubAgent(
-    val delegate: Agent,
-    val result: CompletableDeferred<String>,
-)
-
-/**
  * Runtime session object. One instance per SessionId in one process lifecycle.
  */
 public data class SessionState(
@@ -150,7 +121,6 @@ public data class SessionState(
     val config: MutableStateFlow<SessionConfig>,
     val agent: MutableStateFlow<Agent>,
     val subagents: MutableStateFlow<PersistentMap<String, SubAgent>>,
-    val checkpoints: MutableStateFlow<PersistentList<SessionCheckpoint>>,
     val runJob: MutableStateFlow<Job?>,
     val mutex: Mutex,
 )
@@ -239,52 +209,6 @@ public data class SessionSummary(
     val state: SessionRunState = SessionRunState.Suspended,
     val hasForks: Boolean,
     val tags: List<String>
-)
-
-/**
- * Checkpoint data for saving/restoring session state.
- */
-@Serializable
-public data class SessionCheckpoint(
-    /**
-     * Unique identifier for the checkpoint.
-     */
-    val checkpointId: String,
-
-    /**
-     * Session ID this checkpoint belongs to.
-     */
-    val sessionId: String,
-
-    /**
-     * When the checkpoint was created.
-     */
-    val createdAt: Instant,
-
-    /**
-     * Number of messages at the time of checkpoint.
-     */
-    val messageCount: Int,
-
-    /**
-     * Messages up to this checkpoint.
-     */
-    val messages: List<SessionMessage>,
-
-    /**
-     * Version number.
-     */
-    val version: Long,
-
-    /**
-     * Optional description/label for the checkpoint.
-     */
-    val label: String?,
-
-    /**
-     * Whether this is a tombstone (session end marker).
-     */
-    val isTombstone: Boolean
 )
 
 public fun SessionMetadata.toCsvRow(): SessionMetadataCsvRow {
@@ -379,7 +303,6 @@ public fun SessionSnapshot.toSessionState(): SessionState {
         config = configFlow,
         agent = agentFlow,
         subagents = MutableStateFlow(persistentMapOf()),
-        checkpoints = MutableStateFlow(persistentListOf()),
         runJob = MutableStateFlow(null),
         mutex = Mutex(),
     )

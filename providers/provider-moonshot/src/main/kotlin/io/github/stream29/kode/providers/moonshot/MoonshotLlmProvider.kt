@@ -18,16 +18,6 @@ public object MoonshotApiKeyProvider : LlmProvider {
 
     override fun models(): List<LLModel> = MOONSHOT_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = "Moonshot",
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = listOf("MOONSHOT_API_KEY"),
-        defaultBaseUrl = "https://api.moonshot.cn/v1",
-        description = "Moonshot Kimi models",
-        models = models(),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
     override fun createClient(auth: LlmAuth): LLMClient {

@@ -2,9 +2,9 @@ package io.github.stream29.kode.session.core
 
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.ResponseMetaInfo
-import io.github.stream29.kode.session.core.model.AgentScriptStatus
+import io.github.stream29.kode.agent.model.AgentScriptStatus
 import io.github.stream29.kode.session.core.testsupport.FakeSessionRepository
-import io.github.stream29.kode.session.core.tool.ToolNames
+import io.github.stream29.kode.agent.tool.ToolNames
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import java.nio.file.Path

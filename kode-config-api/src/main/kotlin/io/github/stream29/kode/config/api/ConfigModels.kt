@@ -64,7 +64,6 @@ public data class AppConfig(
     val services: ServicesConfig = ServicesConfig(),
     val mcp: McpConfig = McpConfig(),
     val skills: SkillsConfig = SkillsConfig(),
-    val preset: PresetConfig = PresetConfig(),
     val ui: UiConfig = UiConfig(),
     val logging: LoggingConfig = LoggingConfig(),
     val tools: ToolsConfig = ToolsConfig(),
@@ -260,12 +259,6 @@ public fun McpServerConfig.supportsBrowserOAuth(): Boolean {
 @Serializable
 public data class SkillsConfig(
     val dir: String? = null,
-)
-
-@Serializable
-public data class PresetConfig(
-    val builtin: String? = null,
-    val file: String? = null,
 )
 
 @Serializable

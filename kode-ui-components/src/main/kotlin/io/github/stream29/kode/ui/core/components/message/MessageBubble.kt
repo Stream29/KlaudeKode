@@ -25,7 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import io.github.stream29.kode.session.core.model.SessionMessage
+import io.github.stream29.kode.agent.model.SessionMessage
 import io.github.stream29.kode.ui.core.message.*
 import io.github.stream29.kode.ui.core.preferences.MessageAlignmentPreference
 import kotlinx.datetime.TimeZone

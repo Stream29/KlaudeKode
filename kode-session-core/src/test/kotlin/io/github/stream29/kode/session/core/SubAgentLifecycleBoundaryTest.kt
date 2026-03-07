@@ -1,10 +1,10 @@
 package io.github.stream29.kode.session.core
 
-import io.github.stream29.kode.session.core.model.Agent
-import io.github.stream29.kode.session.core.model.AgentConfig
-import io.github.stream29.kode.session.core.model.AgentState
+import io.github.stream29.kode.agent.model.Agent
+import io.github.stream29.kode.agent.model.AgentConfig
+import io.github.stream29.kode.agent.model.AgentState
 import io.github.stream29.kode.session.core.model.SessionState
-import io.github.stream29.kode.session.core.model.SubAgent
+import io.github.stream29.kode.agent.model.SubAgent
 import io.github.stream29.kode.session.core.testsupport.FakeSessionRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job

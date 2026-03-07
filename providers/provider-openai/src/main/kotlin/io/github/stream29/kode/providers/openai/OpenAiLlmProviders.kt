@@ -18,16 +18,6 @@ public object OpenAiApiKeyProvider : LlmProvider {
 
     override fun models(): List<LLModel> = OPENAI_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = displayName,
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = listOf("OPENAI_API_KEY"),
-        defaultBaseUrl = OPENAI_BASE_URL,
-        description = "OpenAI platform with direct API key auth",
-        models = models(),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
     override fun createClient(auth: LlmAuth): LLMClient {
@@ -47,30 +37,6 @@ public object OpenAiSubscriptionBrowserProvider : LlmProvider {
     override val llmProvider: LLMProvider = OpenAiSubscriptionBrowserProviderKey
 
     override fun models(): List<LLModel> = OPENAI_MODELS
-
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = displayName,
-        authModes = setOf(ProviderAuthMode.OAuthSubscription),
-        envKeys = listOf("OPENAI_API_KEY"),
-        defaultBaseUrl = OPENAI_CODEX_BASE_URL,
-        description = "OpenAI ChatGPT Plus/Pro OAuth via browser callback",
-        models = models(),
-        oauthAuthCodePkceByMode = mapOf(
-            ProviderAuthMode.OAuthSubscription to ProviderOAuthAuthCodePkcePreset(
-                authorizationEndpoint = "https://auth.openai.com/oauth/authorize",
-                tokenEndpoint = "https://auth.openai.com/oauth/token",
-                clientId = OPENAI_CLIENT_ID,
-                scopes = listOf("openid", "profile", "email", "offline_access"),
-                callbackUri = "http://localhost:1455/auth/callback",
-                authorizationAdditionalParams = mapOf(
-                    "id_token_add_organizations" to "true",
-                    "codex_cli_simplified_flow" to "true",
-                    "originator" to "opencode",
-                ),
-            ),
-        ),
-    )
 
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.OAuthAccessToken
 
@@ -92,28 +58,6 @@ public object OpenAiSubscriptionDeviceProvider : LlmProvider {
 
     override fun models(): List<LLModel> = OPENAI_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = displayName,
-        authModes = setOf(ProviderAuthMode.OAuthDevice),
-        envKeys = listOf("OPENAI_API_KEY"),
-        defaultBaseUrl = OPENAI_CODEX_BASE_URL,
-        description = "OpenAI ChatGPT Plus/Pro OAuth device flow for headless environments",
-        models = models(),
-        oauthDeviceFlowByMode = mapOf(
-            ProviderAuthMode.OAuthDevice to ProviderOAuthDeviceFlowPreset(
-                strategy = "openai_codex_bridge",
-                deviceAuthorizationEndpoint = "https://auth.openai.com/api/accounts/deviceauth/usercode",
-                tokenEndpoint = "https://auth.openai.com/oauth/token",
-                clientId = OPENAI_CLIENT_ID,
-                scopes = listOf("openid", "profile", "email", "offline_access"),
-                verificationUri = "https://auth.openai.com/codex/device",
-                deviceTokenEndpoint = "https://auth.openai.com/api/accounts/deviceauth/token",
-                redirectUri = "https://auth.openai.com/deviceauth/callback",
-            ),
-        ),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.OAuthAccessToken
 
     override fun createClient(auth: LlmAuth): LLMClient {
@@ -133,16 +77,6 @@ public object OpenAiCompatibleProvider : LlmProvider {
     override val llmProvider: LLMProvider = OpenAiCompatibleProviderKey
 
     override fun models(): List<LLModel> = OPENAI_MODELS
-
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = "OpenAI-Compatible",
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = emptyList(),
-        defaultBaseUrl = OPENAI_BASE_URL,
-        description = "OpenAI-compatible API with custom base URL",
-        models = models(),
-    )
 
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 

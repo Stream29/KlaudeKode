@@ -226,8 +226,6 @@ private fun ChatRoute(state: MainViewModel) {
     val modelsUi by modelsViewModel.uiState.collectAsStateWithLifecycle()
     val configUi by configViewModel.uiState.collectAsStateWithLifecycle()
     val currentSessionId by state.currentSessionIdFlow.collectAsStateWithLifecycle()
-    val activePresetName by state.activePresetNameFlow.collectAsStateWithLifecycle()
-    val agentPresets by state.agentPresetsFlow.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         sessionsViewModel.loadSessionList()
@@ -253,8 +251,6 @@ private fun ChatRoute(state: MainViewModel) {
             messageAlignment = configUi.messageAlignment,
             messageMaxWidthRatio = configUi.messageMaxWidthRatio,
             sendKeyMode = configUi.sendKeyMode,
-            agentPresets = agentPresets,
-            activePresetName = activePresetName,
             models = modelsUi.models,
             auths = modelsUi.auths,
             activeModelId = state.activeModelIdFlow.value,
@@ -964,7 +960,6 @@ private fun InfoPage(viewModel: InfoViewModel, ui: InfoPageUiState) {
                     label = "Config",
                     value = io.github.stream29.kode.config.fs.FileSystemLocations.configFile.absolutePath
                 )
-                InfoRow(label = "Preset spec", value = ui.presetSpecPath.ifBlank { "Not found" })
                 InfoRow(
                     label = "Skills",
                     value = if (ui.skillsPreview.isEmpty()) "None" else ui.skillsPreview.size.toString()
@@ -989,7 +984,7 @@ private fun InfoPage(viewModel: InfoViewModel, ui: InfoPageUiState) {
                 Text("Export Logs")
             }
 
-            FilledTonalButton(onClick = { viewModel.refreshPresetAndSkillsPreview() }) {
+            FilledTonalButton(onClick = { viewModel.refreshSkillsPreview() }) {
                 Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Refresh")
@@ -997,30 +992,6 @@ private fun InfoPage(viewModel: InfoViewModel, ui: InfoPageUiState) {
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "Preset File",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                if (ui.presetSpecPreview.isBlank()) {
-                    Text(
-                        text = "No preset file found",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    Text(
-                        text = ui.presetSpecPreview.take(800),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
 
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1133,8 +1104,8 @@ private fun CoreTodoUiState.toSidebarTodoUiState(): SidebarTodoUiState {
     fun mapNode(coreNode: CoreTodoUiNode): SidebarTodoUiNode {
         return SidebarTodoUiNode(
             name = coreNode.name,
-            isCompleted = coreNode.isCompleted,
-            subtasks = coreNode.subtasks.map { mapNode(it) },
+            completed = coreNode.completed,
+            subItems = coreNode.subItems.map { mapNode(it) },
             path = coreNode.path,
             expanded = coreNode.expanded,
             level = coreNode.level,
@@ -1329,8 +1300,6 @@ private fun SessionControls(
         )
 
         SessionQuickSwitch(state = state, chatViewModel = chatViewModel, sessionUi = sessionUi, ui = ui)
-
-        PresetQuickSwitch(state = state, ui = ui)
         ModelQuickSwitch(state = state, ui = ui)
     }
 }
@@ -1488,56 +1457,6 @@ private fun SessionQuickSwitch(
                 }
             },
         )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PresetQuickSwitch(state: MainViewModel, ui: ChatPageUiState) {
-    val presets = ui.agentPresets
-    var expanded by remember { mutableStateOf(false) }
-    val activeName = ui.activePresetName
-    val activePreset = presets.firstOrNull { it.name == activeName }
-    val displayName = activePreset?.name ?: activeName.ifBlank { "build" }
-
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = !expanded }
-    ) {
-        OutlinedTextField(
-            value = "Preset: $displayName",
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("Preset") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier
-                .widthIn(min = 180.dp)
-                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-        )
-
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            presets.forEach { preset ->
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text(preset.name)
-                            Text(
-                                preset.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    onClick = {
-                        state.selectPreset(preset.name, persist = true)
-                        expanded = false
-                    }
-                )
-            }
-        }
     }
 }
 

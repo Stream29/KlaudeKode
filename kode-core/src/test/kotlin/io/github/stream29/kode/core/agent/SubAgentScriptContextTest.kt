@@ -1,7 +1,6 @@
 package io.github.stream29.kode.core.agent
 
 import ai.koog.agents.testing.tools.getMockExecutor
-import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.core.testsupport.FakeMessageHandler
 import io.github.stream29.kode.core.testsupport.FakeSessionRepository
@@ -103,14 +102,13 @@ class SubAgentScriptContextTest {
         val sessionBridge = KoogSessionBridge(sessionManager = sessionManager)
 
         val interactionError = assertFailsWith<IllegalStateException> {
-            SubAgent(
+            SubAgentImpl(
                 promptExecutor = getMockExecutor {
                     mockLLMAnswer("noop").asDefaultResponse
                 },
                 sessionManager = sessionManager,
                 sessionBridge = sessionBridge,
                 messageHandler = FakeMessageHandler(),
-                hookManager = HookManager.empty(),
                 eventListener = null,
                 logger = {},
                 runtimeContext = AgentRuntimeContext(
@@ -123,14 +121,13 @@ class SubAgentScriptContextTest {
         assertContains(interactionError.message.orEmpty(), "disable direct user interaction")
 
         val subagentError = assertFailsWith<IllegalStateException> {
-            SubAgent(
+            SubAgentImpl(
                 promptExecutor = getMockExecutor {
                     mockLLMAnswer("noop").asDefaultResponse
                 },
                 sessionManager = sessionManager,
                 sessionBridge = sessionBridge,
                 messageHandler = FakeMessageHandler(),
-                hookManager = HookManager.empty(),
                 eventListener = null,
                 logger = {},
                 runtimeContext = AgentRuntimeContext(

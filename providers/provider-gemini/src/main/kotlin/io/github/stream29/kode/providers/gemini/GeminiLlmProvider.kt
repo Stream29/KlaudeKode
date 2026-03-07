@@ -18,16 +18,6 @@ public object GeminiApiKeyProvider : LlmProvider {
 
     override fun models(): List<LLModel> = GEMINI_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = "Google Gemini",
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = listOf("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-        defaultBaseUrl = "https://generativelanguage.googleapis.com/v1beta",
-        description = "Google Gemini models",
-        models = models(),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
     override fun createClient(auth: LlmAuth): LLMClient {

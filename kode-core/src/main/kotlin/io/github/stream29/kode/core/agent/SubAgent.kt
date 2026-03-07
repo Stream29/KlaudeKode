@@ -3,34 +3,31 @@ package io.github.stream29.kode.core.agent
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
-import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
-import io.github.stream29.kode.session.core.model.TodoNode
+import io.github.stream29.kode.agent.model.TodoItem
 import kotlinx.coroutines.flow.MutableStateFlow
 
-public class SubAgent(
+public class SubAgentImpl(
     promptExecutor: PromptExecutor,
     sessionManager: SessionManager,
     sessionBridge: KoogSessionBridge,
     messageHandler: MessageHandler,
-    hookManager: HookManager,
     eventListener: AgentEventListener?,
     logger: (String) -> Unit,
     private val runtimeContext: AgentRuntimeContext,
-    private val scriptContextFactory: (List<TodoNode>, MutableStateFlow<List<TodoNode>>?) -> AgentScriptContext =
+    private val scriptContextFactory: (List<TodoItem>, MutableStateFlow<List<TodoItem>>?) -> AgentScriptContext =
         { initialTodos, activeTodoFlow ->
             SubAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeTodoFlow)
         },
-) : Agent {
+) : SubAgent {
     private val engine = ScriptOnlyAgentEngine(
         promptExecutor = promptExecutor,
         sessionManager = sessionManager,
         sessionBridge = sessionBridge,
         messageHandler = messageHandler,
-        hookManager = hookManager,
         eventListener = eventListener,
         logger = logger,
         runtimeContext = runtimeContext,

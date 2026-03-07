@@ -19,28 +19,8 @@ public class MainViewModel(
     private val _appUiState = MutableStateFlow(AppUiState())
     public val appUiState: StateFlow<AppUiState> = _appUiState.asStateFlow()
 
-    private val defaultAgentPresets: List<AgentPreset> = listOf(
-        AgentPreset(
-            name = "build",
-            description = "Full access agent for development",
-            disabledTools = emptySet(),
-        ),
-        AgentPreset(
-            name = "plan",
-            description = "Read-only planning agent",
-            disabledTools = setOf("file-edit"),
-        ),
-        AgentPreset(
-            name = "explore",
-            description = "Exploration agent (search-heavy)",
-            disabledTools = setOf("file-edit"),
-        ),
-    )
-
     public val currentSessionIdFlow: StateFlow<String?> = _appUiState.map { it.lastOpenedSessionId }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     public val activeModelIdFlow: StateFlow<String?> = _appUiState.map { it.activeModelId }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
-    public val activePresetNameFlow: StateFlow<String> = _appUiState.map { it.activePresetName }.stateIn(viewModelScope, SharingStarted.Eagerly, "build")
-    public val agentPresetsFlow: StateFlow<List<AgentPreset>> = _appUiState.map { it.agentPresets }.stateIn(viewModelScope, SharingStarted.Eagerly, defaultAgentPresets)
     
     private val _toastFlow = MutableSharedFlow<UiToast>(extraBufferCapacity = 10)
     public val toastFlow: SharedFlow<UiToast> = _toastFlow.asSharedFlow()
@@ -55,13 +35,9 @@ public class MainViewModel(
     private fun loadInitialConfig() {
         viewModelScope.launch {
             val config = configManager.load()
-            val presets = resolveAgentPresets()
-            val activePresetName = resolveActivePresetName(configPresetName = config.preset.builtin, presets = presets)
             _appUiState.update { it.copy(
                 lastOpenedSessionId = config.ui.lastOpenedSessionId,
                 activeModelId = config.defaults.modelId,
-                activePresetName = activePresetName,
-                agentPresets = presets,
                 models = config.models,
                 auths = config.auths,
             ) }
@@ -144,30 +120,5 @@ public class MainViewModel(
 
     public fun switchModel(modelId: String) {
         updateActiveModelId(modelId)
-    }
-
-    public fun selectPreset(name: String, persist: Boolean) {
-        val presets = agentPresetsFlow.value
-        val nextPresetName = resolveActivePresetName(configPresetName = name, presets = presets)
-        _appUiState.update { it.copy(activePresetName = nextPresetName) }
-        if (!persist) {
-            return
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            val config = configManager.load()
-            configManager.save(config.copy(preset = config.preset.copy(builtin = nextPresetName)))
-        }
-    }
-
-    private fun resolveAgentPresets(): List<AgentPreset> {
-        return defaultAgentPresets
-    }
-
-    private fun resolveActivePresetName(configPresetName: String?, presets: List<AgentPreset>): String {
-        val requestedPreset = configPresetName?.trim().orEmpty()
-        if (requestedPreset.isNotBlank() && presets.any { it.name == requestedPreset }) {
-            return requestedPreset
-        }
-        return presets.firstOrNull()?.name ?: "build"
     }
 }

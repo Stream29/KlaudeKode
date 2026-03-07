@@ -4,7 +4,7 @@ plugins {
 
 dependencies {
     api(projects.config.api)
-    api(projects.kodeSessionCore)
+    api(projects.session)
 
     testImplementation(libs.bundles.testing)
 }

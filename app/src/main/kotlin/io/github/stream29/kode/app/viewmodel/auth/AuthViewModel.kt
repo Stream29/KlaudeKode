@@ -6,7 +6,6 @@ import io.github.stream29.kode.config.api.*
 import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.oauth.core.OAuthCredentialManager
 import io.github.stream29.kode.oauth.core.OAuthCredentialStatus
-import io.github.stream29.kode.providers.api.ProviderAuthMode
 import io.github.stream29.kode.providers.builtin.BuiltinLlmProviderRegistry
 import io.github.stream29.kode.ui.bridge.auth.OAuthStatusUi
 import kotlinx.coroutines.CancellationException

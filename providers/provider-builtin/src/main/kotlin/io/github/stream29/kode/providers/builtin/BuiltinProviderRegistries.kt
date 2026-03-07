@@ -2,8 +2,6 @@ package io.github.stream29.kode.providers.builtin
 
 import io.github.stream29.kode.providers.anthropic.AnthropicApiKeyProvider
 import io.github.stream29.kode.providers.api.LlmProvider
-import io.github.stream29.kode.providers.api.ProviderPreset
-import io.github.stream29.kode.providers.api.validateProviderPresetRegistryUniqueness
 import io.github.stream29.kode.providers.api.validateProviderRegistryUniqueness
 import io.github.stream29.kode.providers.deepseek.DeepSeekApiKeyProvider
 import io.github.stream29.kode.providers.gemini.GeminiApiKeyProvider
@@ -50,41 +48,5 @@ public object BuiltinLlmProviderRegistry {
             return null
         }
         return providersById[normalized]
-    }
-}
-
-public object BuiltinProviderPresetRegistry {
-    private val presetsById: Map<String, ProviderPreset> by lazy {
-        val all = buildList {
-            add(AnthropicApiKeyProvider.preset)
-            add(OpenAiApiKeyProvider.preset)
-            add(OpenAiSubscriptionBrowserProvider.preset)
-            add(OpenAiSubscriptionDeviceProvider.preset)
-            add(OpenAiCompatibleProvider.preset)
-            add(GeminiApiKeyProvider.preset)
-            add(DeepSeekApiKeyProvider.preset)
-            add(MoonshotApiKeyProvider.preset)
-            add(OpenRouterApiKeyProvider.preset)
-            add(GroqApiKeyProvider.preset)
-            add(MistralApiKeyProvider.preset)
-            add(XaiApiKeyProvider.preset)
-            add(TestDeterministicProvider.preset)
-        }
-
-        validateProviderPresetRegistryUniqueness(all)
-
-        all.associateBy { it.id }
-    }
-
-    public fun listPresets(): List<ProviderPreset> {
-        return presetsById.values.sortedBy { it.displayName.lowercase() }
-    }
-
-    public fun findPreset(id: String): ProviderPreset? {
-        val normalized = id.trim()
-        if (normalized.isBlank()) {
-            return null
-        }
-        return presetsById[normalized]
     }
 }

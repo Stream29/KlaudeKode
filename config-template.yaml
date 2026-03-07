@@ -75,10 +75,6 @@ mcp:
 skills:
     dir: "~/.kode/skills"
 
-preset:
-    builtin: default
-    file: null
-
 ui:
     theme: dark
     message_alignment: left

@@ -18,16 +18,6 @@ public object AnthropicApiKeyProvider : LlmProvider {
 
     override fun models(): List<LLModel> = ANTHROPIC_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = displayName,
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = listOf("ANTHROPIC_API_KEY"),
-        defaultBaseUrl = "https://api.anthropic.com/v1",
-        description = "Claude models",
-        models = models(),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
     override fun createClient(auth: LlmAuth): LLMClient {

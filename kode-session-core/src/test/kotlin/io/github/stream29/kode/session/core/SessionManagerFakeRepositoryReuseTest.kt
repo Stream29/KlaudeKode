@@ -1,6 +1,6 @@
 package io.github.stream29.kode.session.core
 
-import io.github.stream29.kode.session.core.model.UserMessage
+import io.github.stream29.kode.agent.model.UserMessage
 import io.github.stream29.kode.session.core.testsupport.FakeSessionRepository
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test

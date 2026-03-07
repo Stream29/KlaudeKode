@@ -2,11 +2,11 @@ package io.github.stream29.kode.session.core
 
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.message.ResponseMetaInfo
-import io.github.stream29.kode.session.core.model.AgentScript
-import io.github.stream29.kode.session.core.model.AgentScriptStatus
+import io.github.stream29.kode.agent.model.AgentScript
+import io.github.stream29.kode.agent.model.AgentScriptStatus
 import io.github.stream29.kode.session.core.model.SessionRunState
 import io.github.stream29.kode.session.core.storage.FileSessionStorage
-import io.github.stream29.kode.session.core.tool.ToolNames
+import io.github.stream29.kode.agent.tool.ToolNames
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import kotlin.test.Test

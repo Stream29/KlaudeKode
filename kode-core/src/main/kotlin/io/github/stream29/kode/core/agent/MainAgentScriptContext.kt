@@ -1,6 +1,6 @@
 package io.github.stream29.kode.core.agent
 
-import io.github.stream29.kode.session.core.model.TodoNode
+import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.tools.scripting.ScriptContext
 
 public interface AgentScriptContext : ScriptContext, TodoListScriptContext {
@@ -50,8 +50,8 @@ private class ScriptContextCompositionImpl(
 }
 
 public class MainAgentScriptContext(
-    initialTodos: List<TodoNode> = emptyList(),
-    activeTodoFlow: kotlinx.coroutines.flow.MutableStateFlow<List<TodoNode>>? = null,
+    initialTodos: List<TodoItem> = emptyList(),
+    activeTodoFlow: kotlinx.coroutines.flow.MutableStateFlow<List<TodoItem>>? = null,
     private val todoListScriptContext: TodoListScriptContext = TodoListScriptContextImpl(
         initialTodos = initialTodos,
         activeFlow = activeTodoFlow
@@ -88,8 +88,8 @@ public class MainAgentScriptContext(
 }
 
 public class SubAgentScriptContext(
-    initialTodos: List<TodoNode> = emptyList(),
-    activeTodoFlow: kotlinx.coroutines.flow.MutableStateFlow<List<TodoNode>>? = null,
+    initialTodos: List<TodoItem> = emptyList(),
+    activeTodoFlow: kotlinx.coroutines.flow.MutableStateFlow<List<TodoItem>>? = null,
     private val todoListScriptContext: TodoListScriptContext = TodoListScriptContextImpl(
         initialTodos = initialTodos,
         activeFlow = activeTodoFlow,

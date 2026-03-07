@@ -30,7 +30,6 @@ public class ConfigViewModel(
                 messageAlignment = config.ui.messageAlignment,
                 messageMaxWidthRatio = config.ui.messageMaxWidthRatio,
                 sendKeyMode = config.ui.sendKeyMode,
-                activePresetName = config.preset.builtin ?: "build",
                 loopControl = config.loopControl,
                 storage = config.storage
             ) }
@@ -59,11 +58,6 @@ public class ConfigViewModel(
         saveConfig()
     }
 
-    public fun updateActivePreset(name: String) {
-        _uiState.update { it.copy(activePresetName = name) }
-        saveConfig()
-    }
-
     private fun saveConfig() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -75,7 +69,6 @@ public class ConfigViewModel(
                         messageMaxWidthRatio = uiState.value.messageMaxWidthRatio,
                         sendKeyMode = uiState.value.sendKeyMode
                     ),
-                    preset = current.preset.copy(builtin = uiState.value.activePresetName),
                     loopControl = uiState.value.loopControl
                 )
                 configManager.save(updated)
@@ -105,7 +98,6 @@ public data class ConfigUiState(
     val messageAlignment: String = "left",
     val messageMaxWidthRatio: Float = 0.9f,
     val sendKeyMode: String = "ctrl_or_cmd_enter_send",
-    val activePresetName: String = "build",
     val loopControl: LoopControlConfig = LoopControlConfig(),
     val storage: StorageConfig = StorageConfig()
 )

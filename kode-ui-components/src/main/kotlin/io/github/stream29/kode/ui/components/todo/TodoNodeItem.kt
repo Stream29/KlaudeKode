@@ -20,8 +20,8 @@ public fun TodoNodeItem(
     onToggleExpand: () -> Unit,
     onToggleComplete: () -> Unit,
 ) {
-    val hasChildren = node.subtasks.isNotEmpty()
-    val completed = node.isCompleted
+    val hasChildren = node.subItems.isNotEmpty()
+    val completed = node.completed
     val displayText = node.name.ifBlank { "Todo" }
 
     Row(

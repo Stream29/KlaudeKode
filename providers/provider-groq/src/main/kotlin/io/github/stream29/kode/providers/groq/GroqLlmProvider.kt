@@ -18,16 +18,6 @@ public object GroqApiKeyProvider : LlmProvider {
 
     override fun models(): List<LLModel> = GROQ_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = "Groq",
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = listOf("GROQ_API_KEY"),
-        defaultBaseUrl = "https://api.groq.com/openai/v1",
-        description = "Groq OpenAI-compatible API",
-        models = models(),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
     override fun createClient(auth: LlmAuth): LLMClient {

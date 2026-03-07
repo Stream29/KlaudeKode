@@ -18,16 +18,6 @@ public object DeepSeekApiKeyProvider : LlmProvider {
 
     override fun models(): List<LLModel> = DEEPSEEK_MODELS
 
-    public val preset: ProviderPreset = ProviderPreset(
-        id = id,
-        displayName = displayName,
-        authModes = setOf(ProviderAuthMode.ApiKey),
-        envKeys = listOf("DEEPSEEK_API_KEY"),
-        defaultBaseUrl = "https://api.deepseek.com/v1",
-        description = "DeepSeek API",
-        models = models(),
-    )
-
     override fun supportsAuth(auth: LlmAuth): Boolean = auth is LlmAuth.ApiKey
 
     override fun createClient(auth: LlmAuth): LLMClient {

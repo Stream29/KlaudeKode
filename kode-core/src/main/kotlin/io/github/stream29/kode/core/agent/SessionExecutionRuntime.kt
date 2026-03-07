@@ -11,13 +11,11 @@ import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
-import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.core.port.RuntimeSideEffectPort
 import io.github.stream29.kode.core.port.SessionSideEffectPort
-import io.github.stream29.kode.core.port.ToolSideEffectPort
 import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
-import io.github.stream29.kode.session.core.model.TodoNode
+import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,20 +29,18 @@ public class SessionExecutionRuntime(
     private val models: List<LlmModelConfig>,
     private val messageHandler: MessageHandler,
     private val eventListener: AgentEventListener?,
-    private val hookManager: HookManager,
     private val logger: (String) -> Unit,
     public val sessionManager: SessionManager,
-    private val scriptContextFactory: (List<TodoNode>, MutableStateFlow<List<TodoNode>>?) -> AgentScriptContext =
+    private val scriptContextFactory: (List<TodoItem>, MutableStateFlow<List<TodoItem>>?) -> AgentScriptContext =
         { initialTodos, activeTodoFlow ->
             MainAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeTodoFlow)
         },
     private val runtimeSideEffectPortFactory:
     ((MessageHandler, AgentEventListener?, (String) -> Unit) -> RuntimeSideEffectPort)? = null,
-    private val toolSideEffectPortFactory: ((HookManager) -> ToolSideEffectPort)? = null,
     private val sessionSideEffectPortFactory:
     ((SessionManager, KoogSessionBridge) -> SessionSideEffectPort)? = null,
 ) {
-    private val mainAgentScriptContextFactory: (List<TodoNode>, MutableStateFlow<List<TodoNode>>?) -> AgentScriptContext =
+    private val mainAgentScriptContextFactory: (List<TodoItem>, MutableStateFlow<List<TodoItem>>?) -> AgentScriptContext =
         { initialTodos, activeTodoFlow ->
             val context = scriptContextFactory(initialTodos, activeTodoFlow)
             check(context is MainAgentScriptContext) {
@@ -55,11 +51,10 @@ public class SessionExecutionRuntime(
 
     init {
         val hasRuntimeFactory = runtimeSideEffectPortFactory != null
-        val hasToolFactory = toolSideEffectPortFactory != null
         val hasSessionFactory = sessionSideEffectPortFactory != null
-        if (hasRuntimeFactory || hasToolFactory || hasSessionFactory) {
-            check(hasRuntimeFactory && hasToolFactory && hasSessionFactory) {
-                "Custom side-effect wiring requires runtime/tool/session factories to be provided together"
+        if (hasRuntimeFactory || hasSessionFactory) {
+            check(hasRuntimeFactory && hasSessionFactory) {
+                "Custom side-effect wiring requires runtime/session factories to be provided together"
             }
         }
     }
@@ -144,12 +139,11 @@ public class SessionExecutionRuntime(
         runtimeContext: AgentRuntimeContext,
     ): MainAgent {
         val scopedHandler = scopedMessageHandler(sessionId)
-        return MainAgent(
+        return MainAgentImpl(
             promptExecutor = promptExecutor,
             sessionManager = sessionManager,
             sessionBridge = sessionBridge,
             messageHandler = scopedHandler,
-            hookManager = hookManager,
             eventListener = eventListener,
             logger = logger,
             runtimeContext = runtimeContext,
@@ -159,7 +153,6 @@ public class SessionExecutionRuntime(
                 eventListener,
                 logger,
             ),
-            toolSideEffectPort = toolSideEffectPortFactory?.invoke(hookManager),
             sessionSideEffectPort = sessionSideEffectPortFactory?.invoke(sessionManager, sessionBridge),
         )
     }

@@ -22,7 +22,7 @@ public class InfoViewModel(
     private val _uiState = MutableStateFlow(InfoPageUiState())
     public val uiState: StateFlow<InfoPageUiState> = _uiState.asStateFlow()
 
-    public fun refreshPresetAndSkillsPreview() {
+    public fun refreshSkillsPreview() {
         // Implement preview refresh if necessary
     }
 

@@ -4,7 +4,6 @@ import io.github.stream29.kode.app.viewmodel.MainViewModel
 import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemConfigFactory
 import io.github.stream29.kode.config.fs.FileSystemLocations
-import io.github.stream29.kode.core.hooks.HookManager
 import io.github.stream29.kode.oauth.core.*
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.SessionRepository
@@ -40,10 +39,6 @@ public val sessionModule: Module = module {
 }
 
 public val coreModule: Module = module {
-    single {
-        HookManager.empty()
-    }
-
     single<OAuthAuthCodePkceClient> {
         DefaultOAuthAuthCodePkceClient()
     }
@@ -83,11 +78,8 @@ public val viewModelModule: Module = module {
         io.github.stream29.kode.app.viewmodel.chat.ChatViewModel(
             currentSessionIdFlow = mainViewModel.currentSessionIdFlow,
             activeModelIdFlow = mainViewModel.activeModelIdFlow,
-            activePresetNameFlow = mainViewModel.activePresetNameFlow,
-            agentPresetsFlow = mainViewModel.agentPresetsFlow,
             sessionManager = get(),
             configManager = get(),
-            hookManager = get(),
             onEventCallback = { event, sessionId -> mainViewModel.onEvent(event, sessionId) },
             onNotifyConfigChanged = { mainViewModel.onNotifyConfigChanged() },
         )

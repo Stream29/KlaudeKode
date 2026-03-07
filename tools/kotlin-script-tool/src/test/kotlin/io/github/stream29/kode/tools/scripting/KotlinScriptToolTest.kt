@@ -37,12 +37,12 @@ class KotlinScriptToolTest {
             awaitInput.set(true)
         }
 
-        fun consumeAwaitForUserInputSignal(): Boolean {
-            return awaitInput.getAndSet(false)
-        }
-
         fun greet(name: String): String {
             return "hello, $name"
+        }
+
+        fun consumeAwaitForUserInputSignal(): Boolean {
+            return awaitInput.getAndSet(false)
         }
     }
 
@@ -309,63 +309,6 @@ class KotlinScriptToolTest {
         assertContains(failure.message, "thread-boom")
     }
 
-    @Test
-    fun requestThreadCancellation_interruptsInterruptibleThread() {
-        val started = CountDownLatch(1)
-        val interrupted = AtomicBoolean(false)
-        val worker = Thread(
-            {
-                started.countDown()
-                try {
-                    Thread.sleep(10_000L)
-                } catch (_: InterruptedException) {
-                    interrupted.set(true)
-                }
-            },
-            "interruptible-worker",
-        )
-        worker.isDaemon = true
-        worker.start()
-        assertTrue(started.await(1, TimeUnit.SECONDS))
-
-        requestThreadCancellation(targetThread = worker)
-        worker.join(2_000L)
-
-        assertTrue(interrupted.get())
-        assertFalse(worker.isAlive)
-    }
-
-    @Test
-    fun requestThreadCancellation_interruptsNonCooperativeThreadWithoutLeaking() {
-        val started = CountDownLatch(1)
-        val keepRunning = AtomicBoolean(true)
-        val interruptedCount = AtomicInteger(0)
-        val worker = Thread(
-            {
-                started.countDown()
-                while (keepRunning.get()) {
-                    try {
-                        Thread.sleep(10_000L)
-                    } catch (_: InterruptedException) {
-                        interruptedCount.incrementAndGet()
-                    }
-                }
-            },
-            "non-cooperative-worker",
-        )
-        worker.isDaemon = true
-        worker.start()
-        assertTrue(started.await(1, TimeUnit.SECONDS))
-
-        requestThreadCancellation(targetThread = worker)
-        Thread.sleep(1_200L)
-        assertTrue(interruptedCount.get() > 0)
-
-        keepRunning.set(false)
-        worker.interrupt()
-        worker.join(2_000L)
-        assertFalse(worker.isAlive)
-    }
 
     @Test
     fun execute_returnsSuccessForValidScript() = runTest {

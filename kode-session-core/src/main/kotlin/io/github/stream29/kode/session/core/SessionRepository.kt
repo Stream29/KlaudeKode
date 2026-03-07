@@ -2,7 +2,7 @@ package io.github.stream29.kode.session.core
 
 import io.github.stream29.kode.session.core.model.SessionMetadata
 import io.github.stream29.kode.session.core.model.SessionState
-import io.github.stream29.kode.session.core.model.TodoNode
+import io.github.stream29.kode.agent.model.TodoItem
 
 public interface RootSessionRepository {
     public suspend fun listSessions(): List<SessionMetadata>
@@ -21,9 +21,9 @@ public interface ScopedSessionRepository {
 }
 
 public interface ScopedAgentRepository {
-    public suspend fun readTodo(): List<TodoNode>?
+    public suspend fun readTodo(): List<TodoItem>
 
-    public suspend fun writeTodo(todos: List<TodoNode>)
+    public suspend fun writeTodo(todos: List<TodoItem>)
 }
 
 public interface SessionRepository {
@@ -38,9 +38,9 @@ public interface SessionRepository {
 
     public suspend fun removeSession(id: String)
 
-    public suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoNode>?
+    public suspend fun readAgentTodo(sessionId: String, agentId: String): List<TodoItem>
 
-    public suspend fun writeAgentTodo(sessionId: String, agentId: String, todos: List<TodoNode>)
+    public suspend fun writeAgentTodo(sessionId: String, agentId: String, todos: List<TodoItem>)
 }
 
 private class DelegatingRootSessionRepository(
@@ -91,14 +91,14 @@ private class DelegatingScopedAgentRepository(
     private val sessionId: String,
     private val agentId: String,
 ) : ScopedAgentRepository {
-    override suspend fun readTodo(): List<TodoNode>? {
+    override suspend fun readTodo(): List<TodoItem> {
         return repository.readAgentTodo(
             sessionId = sessionId,
             agentId = agentId,
         )
     }
 
-    override suspend fun writeTodo(todos: List<TodoNode>) {
+    override suspend fun writeTodo(todos: List<TodoItem>) {
         repository.writeAgentTodo(
             sessionId = sessionId,
             agentId = agentId,
