@@ -15,7 +15,7 @@ class SessionTodoPersistenceObserverTest {
     fun directAgentTodoMetadataMutationIsObservedAndPersisted() {
         runBlocking {
             val repository = FakeSessionRepository()
-            val sessionManager = SessionManager(repository = repository)
+            val sessionManager = SessionManager(dependencies = repository.toSessionManagerDependencies())
             val session = createConversationSession(sessionManager = sessionManager, title = "todo-observer")
             val runtime = assertNotNull(sessionManager.getSessionState(session.id))
             val persistCallsBefore = repository.persistSessionCalls
@@ -41,7 +41,7 @@ class SessionTodoPersistenceObserverTest {
     fun updateAgentTodoPersistsExactlyOnceWhenObserverIsEnabled() {
         runBlocking {
             val repository = FakeSessionRepository()
-            val sessionManager = SessionManager(repository = repository)
+            val sessionManager = SessionManager(dependencies = repository.toSessionManagerDependencies())
             val session = createConversationSession(sessionManager = sessionManager, title = "todo-managed-update")
             val persistCallsBefore = repository.persistSessionCalls
 
@@ -62,11 +62,5 @@ class SessionTodoPersistenceObserverTest {
     private suspend fun createConversationSession(
         sessionManager: SessionManager,
         title: String,
-    ) = sessionManager.createConversationSession(
-        title = title,
-        systemPrompt = "test",
-        preferredModel = null,
-        preferredModelId = "test-model",
-        workDir = null,
-    )
+    ) = sessionManager.createConversationSession(title = title, systemPrompt = "test", workDir = null)
 }

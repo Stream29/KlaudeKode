@@ -64,16 +64,14 @@ public class MainViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val config = configManager.load()
-                val preferredModelId = config.defaults.modelId
-                if (preferredModelId.isNullOrBlank()) {
+                val defaultModelId = config.defaults.modelId
+                if (defaultModelId.isNullOrBlank()) {
                     showToast("No default model configured")
                     return@launch
                 }
                 val session = sessionManager.createConversationSession(
                     title = "session-${System.currentTimeMillis() / 1000}",
                     systemPrompt = "",
-                    preferredModel = preferredModelId,
-                    preferredModelId = preferredModelId,
                     workDir = config.defaults.workDir,
                 )
                 switchToSession(session.id)

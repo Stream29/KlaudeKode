@@ -23,14 +23,8 @@ class ToolNameParityTest {
     @Test
     fun addAgentScriptMessageFailsFastForNonScriptToolKoogMessages() {
         runBlocking {
-            val sessionManager = SessionManager(repository = FakeSessionRepository())
-            val session = sessionManager.createConversationSession(
-                title = "session fail-fast",
-                systemPrompt = "test",
-                preferredModel = null,
-                preferredModelId = "test-model",
-                workDir = null,
-            )
+            val sessionManager = SessionManager(dependencies = FakeSessionRepository().toSessionManagerDependencies())
+            val session = sessionManager.createConversationSession(title = "session fail-fast", systemPrompt = "test", workDir = null)
 
             val error = assertFailsWith<IllegalStateException> {
                 sessionManager.addAgentScriptMessage(
@@ -63,7 +57,7 @@ class ToolNameParityTest {
 
     @Test
     fun subagentApisRemainDisabledWithStableErrorMessages() {
-        val sessionManager = SessionManager(repository = FakeSessionRepository())
+        val sessionManager = SessionManager(dependencies = FakeSessionRepository().toSessionManagerDependencies())
 
         val createError = assertFailsWith<IllegalStateException> {
             sessionManager.createSubAgent(

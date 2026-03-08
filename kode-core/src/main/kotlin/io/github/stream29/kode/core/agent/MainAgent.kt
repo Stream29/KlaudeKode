@@ -5,7 +5,6 @@ import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.core.port.RuntimeSideEffectPort
 import io.github.stream29.kode.core.port.SessionSideEffectPort
-import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.ui.core.AgentEventListener
@@ -17,7 +16,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 public class MainAgentImpl(
     promptExecutor: PromptExecutor,
     private val sessionManager: SessionManager,
-    sessionBridge: KoogSessionBridge,
     private val messageHandler: MessageHandler,
     eventListener: AgentEventListener?,
     logger: (String) -> Unit,
@@ -31,7 +29,6 @@ public class MainAgentImpl(
 ) : MainAgent {
     private val engine = buildEngine(
         promptExecutor = promptExecutor,
-        sessionBridge = sessionBridge,
         eventListener = eventListener,
         logger = logger,
     )
@@ -95,7 +92,6 @@ public class MainAgentImpl(
 
     private fun buildEngine(
         promptExecutor: PromptExecutor,
-        sessionBridge: KoogSessionBridge,
         eventListener: AgentEventListener?,
         logger: (String) -> Unit,
     ): ScriptOnlyAgentEngine {
@@ -103,7 +99,6 @@ public class MainAgentImpl(
             return ScriptOnlyAgentEngine(
                 promptExecutor = promptExecutor,
                 sessionManager = sessionManager,
-                sessionBridge = sessionBridge,
                 messageHandler = messageHandler,
                 eventListener = eventListener,
                 logger = logger,
@@ -115,7 +110,6 @@ public class MainAgentImpl(
         return ScriptOnlyAgentEngine(
             promptExecutor = promptExecutor,
             sessionManager = sessionManager,
-            sessionBridge = sessionBridge,
             messageHandler = messageHandler,
             eventListener = eventListener,
             logger = logger,

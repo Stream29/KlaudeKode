@@ -163,11 +163,6 @@ public data class SessionMetadataCsvRow(
 @Serializable
 public data class SessionConfig(
     /**
-     * Preferred LLM model for this session.
-     */
-    val preferredModel: String?,
-
-    /**
      * System prompt for this session.
      */
     val systemPrompt: String?,

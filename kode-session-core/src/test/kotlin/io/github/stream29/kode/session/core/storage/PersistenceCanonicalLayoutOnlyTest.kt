@@ -1,6 +1,7 @@
 package io.github.stream29.kode.session.core.storage
 
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.toSessionManagerDependencies
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import java.nio.file.Path
@@ -75,14 +76,8 @@ class PersistenceCanonicalLayoutOnlyTest {
 
     private suspend fun createSeedSession(tempDir: Path, title: String, input: String): String {
         val storage = FileSessionStorage(dataDir = tempDir.toFile())
-        val manager = SessionManager(repository = storage)
-        val session = manager.createConversationSession(
-            title = title,
-            systemPrompt = "test",
-            preferredModel = null,
-            preferredModelId = "test-model",
-            workDir = null,
-        )
+        val manager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+        val session = manager.createConversationSession(title = title, systemPrompt = "test", workDir = null)
         manager.prepareConversationContinuation(
             sessionId = session.id,
             input = input,

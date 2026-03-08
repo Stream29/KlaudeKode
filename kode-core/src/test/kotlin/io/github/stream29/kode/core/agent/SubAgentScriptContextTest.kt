@@ -1,10 +1,10 @@
 package io.github.stream29.kode.core.agent
 
 import ai.koog.agents.testing.tools.getMockExecutor
-import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.core.testsupport.FakeMessageHandler
 import io.github.stream29.kode.core.testsupport.FakeSessionRepository
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.toSessionManagerDependencies
 import io.github.stream29.kode.tools.scripting.KotlinScriptResult
 import io.github.stream29.kode.tools.scripting.evalInThreadCancellable
 import kotlinx.coroutines.runBlocking
@@ -98,8 +98,7 @@ class SubAgentScriptContextTest {
 
     @Test
     fun subAgentRequiresRoleIsolatedRuntimeFlags() {
-        val sessionManager = SessionManager(repository = FakeSessionRepository())
-        val sessionBridge = KoogSessionBridge(sessionManager = sessionManager)
+        val sessionManager = SessionManager(dependencies = FakeSessionRepository().toSessionManagerDependencies())
 
         val interactionError = assertFailsWith<IllegalStateException> {
             SubAgentImpl(
@@ -107,7 +106,6 @@ class SubAgentScriptContextTest {
                     mockLLMAnswer("noop").asDefaultResponse
                 },
                 sessionManager = sessionManager,
-                sessionBridge = sessionBridge,
                 messageHandler = FakeMessageHandler(),
                 eventListener = null,
                 logger = {},
@@ -126,7 +124,6 @@ class SubAgentScriptContextTest {
                     mockLLMAnswer("noop").asDefaultResponse
                 },
                 sessionManager = sessionManager,
-                sessionBridge = sessionBridge,
                 messageHandler = FakeMessageHandler(),
                 eventListener = null,
                 logger = {},

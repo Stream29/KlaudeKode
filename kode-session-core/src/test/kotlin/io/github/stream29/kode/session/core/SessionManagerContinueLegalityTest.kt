@@ -131,13 +131,7 @@ class SessionManagerContinueLegalityTest {
     fun prepareConversationContinuationRejectsTrailingPendingScript() {
         runBlocking {
             val sessionManager = createSessionManager()
-            val session = sessionManager.createConversationSession(
-                title = "continue legality",
-                systemPrompt = "test",
-                preferredModel = null,
-                preferredModelId = "test-model",
-                workDir = null,
-            )
+            val session = sessionManager.createConversationSession(title = "continue legality", systemPrompt = "test", workDir = null)
 
             sessionManager.addAgentScriptMessage(
                 sessionId = session.id,
@@ -288,18 +282,10 @@ class SessionManagerContinueLegalityTest {
     private suspend fun createConversationSession(
         sessionManager: SessionManager,
         title: String,
-    ) = sessionManager.createConversationSession(
-        title = title,
-        systemPrompt = "test",
-        preferredModel = null,
-        preferredModelId = "test-model",
-        workDir = null,
-    )
+    ) = sessionManager.createConversationSession(title = title, systemPrompt = "test", workDir = null)
 
     private fun createSessionManager(repository: FakeSessionRepository = FakeSessionRepository()): SessionManager {
-        return SessionManager(
-            repository = repository,
-        )
+        return SessionManager(dependencies = repository.toSessionManagerDependencies())
     }
 
     private suspend fun appendPendingScript(

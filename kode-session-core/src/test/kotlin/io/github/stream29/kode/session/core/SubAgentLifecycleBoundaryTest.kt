@@ -22,7 +22,7 @@ class SubAgentLifecycleBoundaryTest {
     fun completedSubAgentStaysTerminalAndDoesNotAcceptFurtherLifecycleUpdates() {
         runBlocking {
             val repository = FakeSessionRepository()
-            val sessionManager = SessionManager(repository = repository)
+            val sessionManager = SessionManager(dependencies = repository.toSessionManagerDependencies())
             val session = createConversationSession(
                 sessionManager = sessionManager,
                 title = "complete-subagent",
@@ -64,7 +64,7 @@ class SubAgentLifecycleBoundaryTest {
     fun killedSubAgentIsMissingForPollAwaitListAndSecondKill() {
         runBlocking {
             val repository = FakeSessionRepository()
-            val sessionManager = SessionManager(repository = repository)
+            val sessionManager = SessionManager(dependencies = repository.toSessionManagerDependencies())
             val session = createConversationSession(
                 sessionManager = sessionManager,
                 title = "kill-subagent",
@@ -103,13 +103,7 @@ class SubAgentLifecycleBoundaryTest {
     private suspend fun createConversationSession(
         sessionManager: SessionManager,
         title: String,
-    ) = sessionManager.createConversationSession(
-        title = title,
-        systemPrompt = "test",
-        preferredModel = null,
-        preferredModelId = "test-model",
-        workDir = null,
-    )
+    ) = sessionManager.createConversationSession(title = title, systemPrompt = "test", workDir = null)
 
     private suspend fun installRunningSubAgent(runtime: SessionState, subAgentId: String) {
         runtime.mutex.lock()

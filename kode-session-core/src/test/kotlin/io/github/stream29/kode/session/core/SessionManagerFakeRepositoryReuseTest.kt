@@ -12,16 +12,8 @@ class SessionManagerFakeRepositoryReuseTest {
     @Test
     fun prepareConversationContinuationPersistsTrailingUserMessageWithFakeRepository() {
         runBlocking {
-            val sessionManager = SessionManager(
-                repository = FakeSessionRepository(),
-            )
-            val session = sessionManager.createConversationSession(
-                title = "reuse fake repository",
-                systemPrompt = "test",
-                preferredModel = null,
-                preferredModelId = "test-model",
-                workDir = null,
-            )
+            val sessionManager = SessionManager(dependencies = FakeSessionRepository().toSessionManagerDependencies())
+            val session = sessionManager.createConversationSession(title = "reuse fake repository", systemPrompt = "test", workDir = null)
 
             val input = "hello from fake repository"
             sessionManager.prepareConversationContinuation(

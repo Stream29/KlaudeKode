@@ -125,6 +125,18 @@ plugin-name = { id = "plugin.id", version.ref = "kotlin" }
 - 2026-03-08：agent 域模型进一步从 `:session` 抽离到 `:agent`：`SessionMessage/AgentMessage/AgentScript/UserMessage`、`AgentState/AgentConfig/Agent/SubAgent` 与 `ToolNames` 迁入 `:agent`，`:session` 保留会话元数据、运行编排与持久化契约。
 - 2026-03-08：`kode-core` 中 `MainAgent/SubAgent` 收敛为“接口 + 实现”分离：`MainAgent`/`SubAgent` 为契约，`MainAgentImpl`/`SubAgentImpl` 为默认实现，避免接口缺位导致的实现泄漏。
 - 2026-03-08：彻底移除未实装的 `Preset`/`Hooks` 特性：删除 `AppConfig.preset` 与模板 preset 段、移除 app 层 preset UI/状态流、删去 provider preset 模型与注册表，以及 `HookManager`/tool hook 注入链路，运行时保持 script-only 主路径。
+- 2026-03-08：`SessionManager` 依赖反转落地：会话编排改为注入 `SessionRuntimeStore + SessionPersistencePort`，默认以 `SessionFactory + RepositorySessionPersistencePort` 组合，`SessionManager` 不再直接依赖 `SessionRepository`。
+- 2026-03-08：`SessionExecutionRuntime` 可测试性增强：引入 `MainAgentFactory`、`modelRuntimeResolver`、`promptExecutorFactory` 注入点，默认实现维持现有行为，测试可替换主 agent 组装与模型解析路径。
+- 2026-03-08：移除 `KoogSessionBridge` 中间层：`ScriptOnlyAgentEngine` 与 `SessionExecutionRuntime` 直接使用 `SessionManager` 完成消息投影与脚本交换持久化，bridge 语义（script-only 校验与 koog message 构造）下沉到 session side-effect 适配层。
+- 2026-03-08：`SessionExecutionRuntime` 职责继续收敛为编排：会话标题生成链路从 runtime 主类抽离到 `SessionTitleGenerator`（通过 `SessionTitleGenerationPort` 注入），运行态保留执行上下文组装与 agent 调度。
+- 2026-03-08：会话查询读路径收敛：新增 `SessionQueryPort`，统一 runtime/engine 的消息投影与会话存在性校验，避免在多个编排类重复直接访问 `SessionManager` 查询细节。
+- 2026-03-08：app 层 runtime 组装切换为 DI 工厂：`ChatViewModel` 不再直接 `new SessionExecutionRuntime`，改为注入 `SessionExecutionRuntimeFactory`（默认 `DefaultSessionExecutionRuntimeFactory` 由 Koin 提供），便于测试覆盖与依赖替换。
+- 2026-03-08：模型选择语义收敛为全局默认：移除 session 级 `preferredModel`/`preferred_model_id` 持久化字段与 `createConversationSession` 对应参数，运行时模型来源统一为 `config.defaults.modelId`。
+- 2026-03-08：`SessionExecutionRuntime` 继续收敛为编排层：执行上下文组装抽离为 `SessionExecutionContextFactory`（默认函数式工厂 `defaultSessionExecutionContextFactory`），runtime 通过工厂注入拼装 `MainAgent + ModelRuntime`，进一步降低主类职责并提升可替换测试 seam。
+- 2026-03-08：继续推进“无状态优先”：`SessionExecutionContextFactory` 默认实现由状态类改为函数式工厂 `defaultSessionExecutionContextFactory`，`SessionExecutionRuntime` 的会话作用域消息适配改为扩展函数返回匿名对象，减少显式状态持有类。
+- 2026-03-08：`SessionExecutionRuntime` 进一步去状态化：`sessionQueryPort`/执行上下文工厂/标题生成器从 `lazy` 字段改为按需函数构造，runtime 仅保留依赖引用与编排调用。
+- 2026-03-08：大文件治理落地到“无状态优先”实践：app/ui/config/test 的超长 Kotlin 文件按职责拆分为多文件（路由壳层、页面组合、渲染支持与测试支撑分离），默认优先顶层函数与扩展函数，避免新增状态持有类。
+- 2026-03-08：`SessionManager` 进一步收敛为“生命周期编排 + 锁/持久化副作用边界”：运行态业务规则（run/suspend/continue/rollback/subagent 状态判定、active 列表等）下沉到 `SessionState` 扩展（`SessionStateDomainExtensions`），并将持久化观察器协作者工厂化（`SessionPersistenceObserverCoordinatorFactory`）以便 Koin/测试覆盖替换。
 
 ## Critical Interaction Contract
 

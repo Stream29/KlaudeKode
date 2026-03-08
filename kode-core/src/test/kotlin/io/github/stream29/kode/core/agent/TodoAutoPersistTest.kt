@@ -5,9 +5,9 @@ import ai.koog.agents.testing.tools.getMockExecutor
 import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
-import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.core.testsupport.FakeMessageHandler
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.toSessionManagerDependencies
 import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.session.core.storage.FileSessionStorage
 import io.github.stream29.kode.agent.tool.ToolNames
@@ -32,14 +32,8 @@ class TodoAutoPersistTest {
             val tempDir = Files.createTempDirectory("todo-auto-persist-add-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val sessionManager = SessionManager(repository = storage)
-                val session = sessionManager.createConversationSession(
-                    title = "todo add auto persist",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val sessionManager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                val session = sessionManager.createConversationSession(title = "todo add auto persist", systemPrompt = "test", workDir = null)
 
                 runSingleScript(
                     sessionManager = sessionManager,
@@ -93,14 +87,8 @@ class TodoAutoPersistTest {
             val tempDir = Files.createTempDirectory("todo-auto-persist-update-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val sessionManager = SessionManager(repository = storage)
-                val session = sessionManager.createConversationSession(
-                    title = "todo update auto persist",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val sessionManager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                val session = sessionManager.createConversationSession(title = "todo update auto persist", systemPrompt = "test", workDir = null)
 
                 runSingleScript(
                     sessionManager = sessionManager,
@@ -173,14 +161,8 @@ class TodoAutoPersistTest {
             val tempDir = Files.createTempDirectory("todo-auto-persist-main-fallback-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val sessionManager = SessionManager(repository = storage)
-                val session = sessionManager.createConversationSession(
-                    title = "todo add fallback",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val sessionManager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                val session = sessionManager.createConversationSession(title = "todo add fallback", systemPrompt = "test", workDir = null)
 
                 runSingleScript(
                     sessionManager = sessionManager,
@@ -232,7 +214,6 @@ class TodoAutoPersistTest {
                 ) onCondition { true }
             },
             sessionManager = sessionManager,
-            sessionBridge = KoogSessionBridge(sessionManager = sessionManager),
             messageHandler = messageHandler,
             eventListener = null,
             logger = {},
@@ -301,7 +282,7 @@ class TodoAutoPersistTest {
 
     private fun reloadSessionManager(dataDir: Path): SessionManager {
         val storage = FileSessionStorage(dataDir = dataDir.toFile())
-        return SessionManager(repository = storage)
+        return SessionManager(dependencies = storage.toSessionManagerDependencies())
     }
 
     private class SafeStopAfterFirstInputMessageHandler : FakeMessageHandler() {

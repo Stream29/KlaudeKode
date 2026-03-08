@@ -7,16 +7,8 @@ import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.session.core.model.*
 import io.github.stream29.kode.session.core.storage.SessionFilter
 import io.github.stream29.kode.session.core.storage.querySessionSummaries
-import io.github.stream29.kode.agent.tool.ToolNames
-import kotlinx.collections.immutable.persistentListOf
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.datetime.toDeprecatedInstant
@@ -24,20 +16,19 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Clock
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
 
-@OptIn(ExperimentalUuidApi::class)
 public class SessionManager(
-    private val repository: SessionRepository,
+    private val dependencies: SessionManagerDependencies,
     private val clock: Clock = Clock.System,
 ) {
-    private val sessionFactory: SessionFactory = SessionFactory(repository)
+    private val runtimeStore: SessionRuntimeStore = dependencies.runtimeStore
+    private val persistencePort: SessionPersistencePort = dependencies.persistencePort
+    private val persistenceObserverCoordinator = dependencies.observerCoordinatorFactory.create(
+        persistencePort = persistencePort,
+        clock = clock,
+    )
     private val subAgentJobs: ConcurrentHashMap<String, ConcurrentHashMap<String, Job>> = ConcurrentHashMap()
     private val softStopRequestedSessions: MutableSet<String> = ConcurrentHashMap.newKeySet()
-    private val persistenceObserverScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val sessionPersistenceObserverJobs: ConcurrentHashMap<String, Job> = ConcurrentHashMap()
-    private val sessionLastPersistedDigests: ConcurrentHashMap<String, Int> = ConcurrentHashMap()
 
     public sealed interface SubAgentPollResult {
         public data class Pending(
@@ -68,7 +59,7 @@ public class SessionManager(
         tags: List<String>,
         configuration: SessionConfiguration,
     ): SessionSnapshot {
-        val sessionId = generateId()
+        val sessionId = generateSessionManagerId()
         val now = clock.now()
         val base = SessionSnapshot(
             id = sessionId,
@@ -93,7 +84,7 @@ public class SessionManager(
             canInteractWithUser = true,
         )
         persist(runtime)
-        sessionFactory.put(runtime)
+        runtimeStore.put(runtime)
         ensureSessionPersistenceObserver(sessionId = sessionId, runtime = runtime)
         return runtime.toSessionSnapshot()
     }
@@ -101,17 +92,14 @@ public class SessionManager(
     public suspend fun createConversationSession(
         title: String,
         systemPrompt: String,
-        preferredModel: String?,
-        preferredModelId: String,
         workDir: String?,
     ): SessionSnapshot {
         val configuration = SessionConfiguration(
-            preferredModel = preferredModel,
             systemPrompt = systemPrompt,
             workDir = workDir,
             maxIterations = null,
             temperature = null,
-            customValues = mapOf(SESSION_CONFIG_MODEL_ID_KEY to preferredModelId),
+            customValues = null,
         )
         return createSession(
             title = title,
@@ -134,28 +122,17 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            val currentOwner = runtime.runJob.value
-            if (
-                currentOwner != null &&
-                currentOwner != ownerJob &&
-                runtime.metadata.value.state == SessionRunState.Running
-            ) {
-                throw IllegalStateException("Session run is already owned by another active job")
-            }
-            val alreadyRunningByOwner =
-                currentOwner == ownerJob &&
-                        runtime.metadata.value.state == SessionRunState.Running &&
-                        runtime.agent.value.state.value == AgentState.Running
-            if (alreadyRunningByOwner) {
+            val changed = runtime.applyBeginRunMutation(
+                ownerJob = ownerJob,
+                now = clock.now(),
+            )
+            if (!changed) {
                 return
             }
-            runtime.runJob.value = ownerJob
-            runtime.metadata.value = runtime.metadata.value.copy(
-                state = SessionRunState.Running,
-                updatedAt = clock.now(),
+            clearSoftStopRequest(
+                sessionId = sessionId,
+                softStopRequestedSessions = softStopRequestedSessions,
             )
-            runtime.agent.value.state.value = AgentState.Running
-            clearSoftStopRequest(sessionId)
             persist(runtime)
         } finally {
             runtime.mutex.unlock()
@@ -178,25 +155,23 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            val targetState = computeSessionStateWhenMainSuspended(runtime)
-            val alreadySuspended =
-                runtime.runJob.value == null &&
-                        runtime.agent.value.state.value == AgentState.Suspended &&
-                        runtime.metadata.value.state == targetState
-            if (alreadySuspended) {
+            val mutation = runtime.applySuspendMainMutation(now = clock.now())
+            if (!mutation.changed) {
+                val targetState = mutation.targetState
                 if (targetState == SessionRunState.Suspended) {
-                    clearSoftStopRequest(sessionId)
+                    clearSoftStopRequest(
+                        sessionId = sessionId,
+                        softStopRequestedSessions = softStopRequestedSessions,
+                    )
                 }
                 return
             }
-            runtime.runJob.value = null
-            runtime.agent.value.state.value = AgentState.Suspended
-            runtime.metadata.value = runtime.metadata.value.copy(
-                state = targetState,
-                updatedAt = clock.now(),
-            )
+            val targetState = mutation.targetState
             if (targetState == SessionRunState.Suspended) {
-                clearSoftStopRequest(sessionId)
+                clearSoftStopRequest(
+                    sessionId = sessionId,
+                    softStopRequestedSessions = softStopRequestedSessions,
+                )
             }
             persist(runtime)
         } finally {
@@ -209,12 +184,22 @@ public class SessionManager(
         runtime.mutex.lock()
         try {
             val rolledBackPending = normalizeTrailingPendingScript(runtime.agent.value)
-            val sessionRunning = computeSessionState(runtime) == SessionRunState.Running
-            val softStopAlreadyRequested = isSoftStopRequested(sessionId)
+            val sessionRunning = runtime.computeSessionState() == SessionRunState.Running
+            val softStopAlreadyRequested = isSoftStopRequested(
+                sessionId = sessionId,
+                softStopRequestedSessions = softStopRequestedSessions,
+            )
 
             if (sessionRunning && !softStopAlreadyRequested) {
-                requestSoftStop(sessionId = sessionId, runtime = runtime)
-                markSoftStopRequested(sessionId)
+                requestSoftStop(
+                    sessionId = sessionId,
+                    runtime = runtime,
+                    subAgentJobs = subAgentJobs,
+                )
+                markSoftStopRequested(
+                    sessionId = sessionId,
+                    softStopRequestedSessions = softStopRequestedSessions,
+                )
                 if (rolledBackPending) {
                     updateMetadataAfterStopMutation(sessionId = sessionId, runtime = runtime)
                     persist(runtime)
@@ -223,10 +208,18 @@ public class SessionManager(
             }
 
             if (sessionRunning) {
-                forceStop(sessionId = sessionId, runtime = runtime)
+                forceStop(
+                    sessionId = sessionId,
+                    runtime = runtime,
+                    subAgentJobs = subAgentJobs,
+                    softStopRequestedSessions = softStopRequestedSessions,
+                )
             } else {
                 normalizeStoppedRuntime(runtime)
-                clearSoftStopRequest(sessionId)
+                clearSoftStopRequest(
+                    sessionId = sessionId,
+                    softStopRequestedSessions = softStopRequestedSessions,
+                )
             }
 
             updateMetadataAfterStopMutation(sessionId = sessionId, runtime = runtime)
@@ -245,12 +238,11 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            val targetAgent = resolveAgent(runtime, sessionId, agentId)
-            targetAgent.messages.value = targetAgent.messages.value.add(message)
-            runtime.metadata.value = runtime.metadata.value.copy(
-                updatedAt = clock.now(),
-                version = runtime.metadata.value.version + 1,
-                messageCount = runtime.agent.value.messages.value.size,
+            val targetAgent = runtime.resolveAgentForSession(sessionId = sessionId, agentId = agentId)
+            runtime.appendMessageMutation(
+                targetAgent = targetAgent,
+                message = message,
+                now = clock.now(),
             )
             persist(runtime)
             return runtime.toSessionSnapshot()
@@ -269,7 +261,7 @@ public class SessionManager(
             sessionId = sessionId,
             agentId = agentId,
             message = UserMessage(
-                id = generateId(),
+                id = generateSessionManagerId(),
                 content = content,
                 timestamp = now,
                 koogMessages = listOf(
@@ -291,40 +283,15 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            if (runtime.metadata.value.state != SessionRunState.Suspended) {
-                throw IllegalStateException("Session continuation requires a suspended session")
-            }
-            val targetAgent = resolveAgent(runtime, sessionId, agentId)
-            val pendingScript = targetAgent.trailingPendingScript()
-            if (pendingScript != null) {
-                throw IllegalStateException(
-                    "Script-only violation: pending script '${pendingScript.scriptId}' blocks continue; resolve pending-input state first"
-                )
-            }
-            if (input.isBlank()) {
+            val changed = runtime.applyContinuationInputMutation(
+                sessionId = sessionId,
+                agentId = agentId,
+                input = input,
+                now = clock.now(),
+            )
+            if (!changed) {
                 return
             }
-
-            val now = clock.now()
-            targetAgent.messages.value = targetAgent.messages.value.add(
-                UserMessage(
-                    id = generateId(),
-                    content = input,
-                    timestamp = now,
-                    koogMessages = listOf(
-                        Message.User(
-                            content = input,
-                            metaInfo = RequestMetaInfo(timestamp = now.toDeprecatedInstant()),
-                        )
-                    ),
-                    metadata = null,
-                )
-            )
-            runtime.metadata.value = runtime.metadata.value.copy(
-                updatedAt = now,
-                version = runtime.metadata.value.version + 1,
-                messageCount = runtime.agent.value.messages.value.size,
-            )
             persist(runtime)
         } finally {
             runtime.mutex.unlock()
@@ -348,7 +315,7 @@ public class SessionManager(
             sessionId = sessionId,
             agentId = agentId,
             message = AgentScript(
-                id = generateId(),
+                id = generateSessionManagerId(),
                 scriptId = scriptId,
                 status = status,
                 scriptReturnValue = scriptReturnValue,
@@ -370,46 +337,19 @@ public class SessionManager(
         val parent = requireRuntime(parentSessionId)
         parent.mutex.lock()
         try {
-            if (parent.metadata.value.state != SessionRunState.Suspended) {
-                throw IllegalStateException("Only suspended sessions can be forked")
-            }
-            val parentMessages = parent.agent.value.messages.value
-            val messages = if (atMessageId != null) {
-                val index = parentMessages.indexOfFirst { item -> item.id == atMessageId }
-                if (index < 0) {
-                    throw IllegalArgumentException("Message not found: $atMessageId")
-                }
-                parentMessages.take(index + 1)
-            } else {
-                parentMessages
-            }
-
             val now = clock.now()
-            val childId = generateId()
-            val child = SessionSnapshot(
-                id = childId,
-                title = newTitle ?: "${parent.metadata.value.title} (Fork)",
-                createdAt = now,
-                updatedAt = now,
-                messages = messages,
-                status = SessionStatus.ACTIVE,
+            val childId = generateSessionManagerId()
+            val child = parent.forkSessionMutation(
                 parentSessionId = parentSessionId,
-                forkedFromMessageId = atMessageId,
-                version = 1L,
-                configuration = parent.config.value,
-                tags = parent.metadata.value.tags,
-                childSessionIds = emptyList(),
-                runtimeState = SessionRunState.Suspended,
-            ).toSessionState()
-
-            parent.metadata.value = parent.metadata.value.copy(
-                childSessionIds = parent.metadata.value.childSessionIds + childId,
-                updatedAt = now,
+                atMessageId = atMessageId,
+                newTitle = newTitle,
+                childId = childId,
+                now = now,
             )
 
             persist(parent)
             persist(child)
-            sessionFactory.put(child)
+            runtimeStore.put(child)
             ensureSessionPersistenceObserver(sessionId = childId, runtime = child)
             return child.toSessionSnapshot()
         } finally {
@@ -421,28 +361,16 @@ public class SessionManager(
         val original = requireRuntime(sessionId)
         original.mutex.lock()
         try {
-            if (original.metadata.value.state != SessionRunState.Suspended) {
-                throw IllegalStateException("Only suspended sessions can be duplicated")
-            }
             val now = clock.now()
-            val duplicatedId = generateId()
-            val duplicated = SessionSnapshot(
-                id = duplicatedId,
-                title = newTitle ?: "${original.metadata.value.title} (Copy)",
-                createdAt = now,
-                updatedAt = now,
-                messages = original.agent.value.messages.value.map { message -> message.copyWithNewId(generateId()) },
-                status = SessionStatus.ACTIVE,
-                parentSessionId = null,
-                forkedFromMessageId = null,
-                version = 1L,
-                configuration = original.config.value,
-                tags = original.metadata.value.tags,
-                childSessionIds = emptyList(),
-                runtimeState = SessionRunState.Suspended,
-            ).toSessionState()
+            val duplicatedId = generateSessionManagerId()
+            val duplicated = original.duplicateSessionMutation(
+                newTitle = newTitle,
+                duplicatedId = duplicatedId,
+                now = now,
+                messageIdGenerator = ::generateSessionManagerId,
+            )
             persist(duplicated)
-            sessionFactory.put(duplicated)
+            runtimeStore.put(duplicated)
             ensureSessionPersistenceObserver(sessionId = duplicatedId, runtime = duplicated)
             return duplicated.toSessionSnapshot()
         } finally {
@@ -454,14 +382,11 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            runtime.metadata.value = runtime.metadata.value.copy(
-                status = SessionStatus.ARCHIVED,
-                state = SessionRunState.Suspended,
-                updatedAt = clock.now(),
+            runtime.archiveSessionMutation(now = clock.now())
+            clearSoftStopRequest(
+                sessionId = sessionId,
+                softStopRequestedSessions = softStopRequestedSessions,
             )
-            runtime.runJob.value = null
-            runtime.agent.value.state.value = AgentState.Suspended
-            clearSoftStopRequest(sessionId)
             persist(runtime)
             return runtime.toSessionSnapshot()
         } finally {
@@ -473,10 +398,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            runtime.metadata.value = runtime.metadata.value.copy(
-                status = SessionStatus.ACTIVE,
-                updatedAt = clock.now(),
-            )
+            runtime.restoreSessionMutation(now = clock.now())
             persist(runtime)
             return runtime.toSessionSnapshot()
         } finally {
@@ -490,23 +412,23 @@ public class SessionManager(
                 job.cancel("Session hard deleted")
             }
             cancelSessionPersistenceObserver(sessionId = sessionId, reason = "Session hard deleted")
-            clearSoftStopRequest(sessionId)
-            repository.removeSession(sessionId)
-            sessionFactory.evict(sessionId)
+            clearSoftStopRequest(
+                sessionId = sessionId,
+                softStopRequestedSessions = softStopRequestedSessions,
+            )
+            persistencePort.removeSession(sessionId)
+            runtimeStore.evict(sessionId)
             return
         }
 
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            runtime.metadata.value = runtime.metadata.value.copy(
-                status = SessionStatus.DELETED,
-                state = SessionRunState.Suspended,
-                updatedAt = clock.now(),
+            runtime.softDeleteSessionMutation(now = clock.now())
+            clearSoftStopRequest(
+                sessionId = sessionId,
+                softStopRequestedSessions = softStopRequestedSessions,
             )
-            runtime.agent.value.state.value = AgentState.Suspended
-            runtime.runJob.value = null
-            clearSoftStopRequest(sessionId)
             persist(runtime)
         } finally {
             runtime.mutex.unlock()
@@ -514,7 +436,7 @@ public class SessionManager(
     }
 
     public suspend fun listSessions(filter: SessionFilter?): List<SessionSummary> {
-        val metadata = repository.listSessions()
+        val metadata = persistencePort.listSessionMetadata()
         return querySessionSummaries(metadata, filter)
     }
 
@@ -539,7 +461,7 @@ public class SessionManager(
         val imported = json.decodeFromString<SessionSnapshot>(sourceFile.readText())
         val now = clock.now()
         val normalized = imported.copy(
-            id = generateId(),
+            id = generateSessionManagerId(),
             title = newTitle ?: imported.title,
             createdAt = now,
             updatedAt = now,
@@ -552,7 +474,7 @@ public class SessionManager(
         )
         val runtime = normalized.toSessionState()
         persist(runtime)
-        sessionFactory.put(runtime)
+        runtimeStore.put(runtime)
         return runtime.toSessionSnapshot()
     }
 
@@ -560,10 +482,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            runtime.metadata.value = runtime.metadata.value.copy(
-                title = newTitle,
-                updatedAt = clock.now(),
-            )
+            runtime.applyTitleMutation(newTitle = newTitle, now = clock.now())
             persist(runtime)
             return runtime.toSessionSnapshot()
         } finally {
@@ -578,14 +497,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            runtime.config.value = configuration
-            runtime.agent.value.config.value = runtime.agent.value.config.value.copy(
-                systemPrompt = configuration.systemPrompt,
-            )
-            runtime.metadata.value = runtime.metadata.value.copy(
-                updatedAt = clock.now(),
-                version = runtime.metadata.value.version + 1,
-            )
+            runtime.applyConfigurationMutation(configuration = configuration, now = clock.now())
             persist(runtime)
             return runtime.toSessionSnapshot()
         } finally {
@@ -597,19 +509,10 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            if (runtime.metadata.value.state != SessionRunState.Suspended) {
-                throw IllegalStateException("Session work directory can only be changed while suspended")
-            }
-
-            if (runtime.config.value.workDir == workDir) {
+            val changed = runtime.applyWorkDirMutation(workDir = workDir, now = clock.now())
+            if (!changed) {
                 return runtime.toSessionSnapshot()
             }
-
-            runtime.config.value = runtime.config.value.copy(workDir = workDir)
-            runtime.metadata.value = runtime.metadata.value.copy(
-                updatedAt = clock.now(),
-                version = runtime.metadata.value.version + 1,
-            )
             persist(runtime)
             return runtime.toSessionSnapshot()
         } finally {
@@ -621,10 +524,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            runtime.metadata.value = runtime.metadata.value.copy(
-                tags = (runtime.metadata.value.tags + tags).distinct(),
-                updatedAt = clock.now(),
-            )
+            runtime.addTagsMutation(tags = tags, now = clock.now())
             persist(runtime)
             return runtime.toSessionSnapshot()
         } finally {
@@ -636,10 +536,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            runtime.metadata.value = runtime.metadata.value.copy(
-                tags = runtime.metadata.value.tags - tags.toSet(),
-                updatedAt = clock.now(),
-            )
+            runtime.removeTagsMutation(tags = tags, now = clock.now())
             persist(runtime)
             return runtime.toSessionSnapshot()
         } finally {
@@ -651,12 +548,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            runtime.agent.value.messages.value = kotlinx.collections.immutable.persistentListOf()
-            runtime.metadata.value = runtime.metadata.value.copy(
-                updatedAt = clock.now(),
-                version = runtime.metadata.value.version + 1,
-                messageCount = 0,
-            )
+            runtime.clearMessagesMutation(now = clock.now())
             persist(runtime)
             return runtime.toSessionSnapshot()
         } finally {
@@ -668,7 +560,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         return try {
-            resolveAgent(runtime, sessionId, agentId).config.value
+            runtime.resolveAgentForSession(sessionId = sessionId, agentId = agentId).config.value
         } finally {
             runtime.mutex.unlock()
         }
@@ -678,7 +570,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         return try {
-            resolveAgent(runtime, sessionId, agentId).messages.value
+            runtime.resolveAgentForSession(sessionId = sessionId, agentId = agentId).messages.value
         } finally {
             runtime.mutex.unlock()
         }
@@ -691,7 +583,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            val agent = resolveAgent(runtime, sessionId, agentId)
+            val agent = runtime.resolveAgentForSession(sessionId = sessionId, agentId = agentId)
             val trailing = agent.trailingPendingScript() ?: return null
             return PendingScriptInfo(
                 messageId = trailing.id,
@@ -709,17 +601,14 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         try {
-            val agent = resolveAgent(runtime, sessionId, agentId)
-            if (agent.trailingPendingScript() == null) {
+            val changed = runtime.rollbackTrailingPendingScriptMutation(
+                sessionId = sessionId,
+                agentId = agentId,
+                now = clock.now(),
+            )
+            if (!changed) {
                 return false
             }
-
-            agent.messages.value = agent.messages.value.dropLast(1).toPersistentList()
-            runtime.runJob.value = null
-            if (isMainAgent(sessionId, agentId)) {
-                runtime.agent.value.state.value = AgentState.Suspended
-            }
-            updateMetadataAfterPendingScriptRollback(runtime)
             persist(runtime)
             return true
         } finally {
@@ -755,27 +644,29 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         return try {
-            val subAgent = runtime.subagents.value[agentId]
-            if (subAgent == null) {
+            val subAgent = runtime.findSubAgent(agentId)
+            if (subAgent == null || subAgent.result.isCompleted) {
                 false
             } else {
-                if (subAgent.result.isCompleted) {
-                    return false
-                }
-
                 cancelAndUnregisterSubAgentJob(
                     sessionId = sessionId,
                     agentId = agentId,
                     reason = "Subagent finished",
+                    subAgentJobs = subAgentJobs,
                 )
-                subAgent.result.complete(resultText)
-                subAgent.delegate.state.value = AgentState.Suspended
-                runtime.metadata.value = runtime.metadata.value.copy(
-                    state = computeSessionState(runtime),
-                    updatedAt = clock.now(),
-                    version = runtime.metadata.value.version + 1,
+                val changed = runtime.finishSubAgentMutation(
+                    agentId = agentId,
+                    resultText = resultText,
+                    now = clock.now(),
                 )
-                clearSoftStopRequestIfSuspended(sessionId = sessionId, state = runtime.metadata.value.state)
+                if (!changed) {
+                    return false
+                }
+                clearSoftStopRequestIfSuspended(
+                    sessionId = sessionId,
+                    state = runtime.metadata.value.state,
+                    softStopRequestedSessions = softStopRequestedSessions,
+                )
                 persist(runtime)
                 true
             }
@@ -788,27 +679,28 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         return try {
-            val subAgent = runtime.subagents.value[agentId]
-            if (subAgent == null) {
+            val subAgent = runtime.findSubAgent(agentId)
+            if (subAgent == null || subAgent.result.isCompleted) {
                 false
             } else {
-                if (subAgent.result.isCompleted) {
-                    return false
-                }
-
                 cancelAndUnregisterSubAgentJob(
                     sessionId = sessionId,
                     agentId = agentId,
                     reason = "Killed by parent agent",
+                    subAgentJobs = subAgentJobs,
                 )
-                subAgent.result.complete("Killed by parent agent")
-                runtime.subagents.value = runtime.subagents.value.remove(agentId)
-                runtime.metadata.value = runtime.metadata.value.copy(
-                    state = computeSessionState(runtime),
-                    updatedAt = clock.now(),
-                    version = runtime.metadata.value.version + 1,
+                val changed = runtime.killSubAgentMutation(
+                    agentId = agentId,
+                    now = clock.now(),
                 )
-                clearSoftStopRequestIfSuspended(sessionId = sessionId, state = runtime.metadata.value.state)
+                if (!changed) {
+                    return false
+                }
+                clearSoftStopRequestIfSuspended(
+                    sessionId = sessionId,
+                    state = runtime.metadata.value.state,
+                    softStopRequestedSessions = softStopRequestedSessions,
+                )
                 persist(runtime)
                 true
             }
@@ -821,12 +713,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         return try {
-            runtime.subagents.value.entries
-                .filter { (_, subAgent) ->
-                    subAgent.delegate.state.value == AgentState.Running && !subAgent.result.isCompleted
-                }
-                .map { (agentId, _) -> agentId }
-                .sorted()
+            runtime.listActiveSubAgentIds()
         } finally {
             runtime.mutex.unlock()
         }
@@ -836,18 +723,7 @@ public class SessionManager(
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         return try {
-            val activeIds = mutableListOf<String>()
-            val mainRunning =
-                runtime.agent.value.state.value == AgentState.Running && runtime.runJob.value != null
-            if (mainRunning) {
-                activeIds += mainAgentId(sessionId)
-            }
-            runtime.subagents.value.entries
-                .filter { (_, subAgent) ->
-                    subAgent.delegate.state.value == AgentState.Running && !subAgent.result.isCompleted
-                }
-                .mapTo(activeIds) { (agentId, _) -> agentId }
-            activeIds.sorted()
+            runtime.listActiveAgentIds(sessionId = sessionId)
         } finally {
             runtime.mutex.unlock()
         }
@@ -855,7 +731,7 @@ public class SessionManager(
 
     public suspend fun pollSubAgentResult(sessionId: String, agentId: String): SubAgentPollResult {
         val subAgent = loadSubAgent(sessionId = sessionId, agentId = agentId)
-            ?: return missingSubAgentPollResult()
+            ?: return missingSubAgentPollResult(error = SUBAGENT_NOT_FOUND_ERROR)
 
         if (!subAgent.result.isCompleted) {
             return pendingSubAgentPollResult()
@@ -875,7 +751,7 @@ public class SessionManager(
         timeoutSeconds: Int,
     ): SubAgentPollResult {
         val subAgent = loadSubAgent(sessionId = sessionId, agentId = agentId)
-            ?: return missingSubAgentPollResult()
+            ?: return missingSubAgentPollResult(error = SUBAGENT_NOT_FOUND_ERROR)
 
         return runCatching {
             withTimeout(timeoutSeconds * 1000L) {
@@ -912,184 +788,31 @@ public class SessionManager(
         subAgentJobs[sessionId]?.remove(agentId)
     }
 
-    private fun cancelAndUnregisterSubAgentJob(sessionId: String, agentId: String, reason: String) {
-        subAgentJobs[sessionId]?.remove(agentId)?.cancel(reason)
-    }
-
-    private fun resolveAgent(runtime: SessionState, sessionId: String, agentId: String?): Agent {
-        if (isMainAgent(sessionId, agentId)) {
-            return runtime.agent.value
-        }
-        val normalized = requireNotNull(agentId) { "agentId is required" }
-        return runtime.subagents.value[normalized]?.delegate
-            ?: throw IllegalArgumentException("Agent not found: $normalized")
-    }
-
-    private fun isMainAgent(sessionId: String, agentId: String?): Boolean {
-        if (agentId == null) {
-            return true
-        }
-        return agentId == mainAgentId(sessionId)
-    }
-
-    private fun mainAgentId(sessionId: String): String {
-        return "main-$sessionId"
-    }
-
-    private fun computeSessionState(runtime: SessionState): SessionRunState {
-        val mainRunning =
-            runtime.agent.value.state.value == AgentState.Running && runtime.runJob.value != null
-        if (mainRunning) {
-            return SessionRunState.Running
-        }
-        return computeSessionStateWhenMainSuspended(runtime)
-    }
-
-    private fun requestSoftStop(sessionId: String, runtime: SessionState) {
-        runtime.runJob.value?.cancel("Soft stop requested by user")
-        subAgentJobs[sessionId]?.values?.forEach { job ->
-            job.cancel("Soft stop requested by user")
-        }
-    }
-
-    private fun forceStop(sessionId: String, runtime: SessionState) {
-        runtime.runJob.value?.cancel("Stopped by user")
-        subAgentJobs[sessionId]?.values?.forEach { job ->
-            job.cancel("Stopped by user")
-        }
-        runtime.subagents.value.forEach { (_, subAgent) ->
-            subAgent.delegate.state.value = AgentState.Suspended
-            if (!subAgent.result.isCompleted) {
-                subAgent.result.complete("Cancelled by user")
-            }
-        }
-        runtime.runJob.value = null
-        runtime.agent.value.state.value = AgentState.Suspended
-        clearSoftStopRequest(sessionId)
-    }
-
-    private fun normalizeStoppedRuntime(runtime: SessionState) {
-        runtime.runJob.value = null
-        runtime.agent.value.state.value = AgentState.Suspended
-    }
-
     private fun updateMetadataAfterStopMutation(sessionId: String, runtime: SessionState) {
-        val targetState = computeSessionState(runtime)
-        runtime.metadata.value = runtime.metadata.value.copy(
+        val targetState = runtime.applyStopMetadataMutation(now = clock.now())
+        clearSoftStopRequestIfSuspended(
+            sessionId = sessionId,
             state = targetState,
-            updatedAt = clock.now(),
-            version = runtime.metadata.value.version + 1,
-            messageCount = runtime.agent.value.messages.value.size,
+            softStopRequestedSessions = softStopRequestedSessions,
         )
-        clearSoftStopRequestIfSuspended(sessionId = sessionId, state = targetState)
-    }
-
-    private fun markSoftStopRequested(sessionId: String) {
-        softStopRequestedSessions.add(sessionId)
-    }
-
-    private fun isSoftStopRequested(sessionId: String): Boolean {
-        return softStopRequestedSessions.contains(sessionId)
-    }
-
-    private fun clearSoftStopRequest(sessionId: String) {
-        softStopRequestedSessions.remove(sessionId)
-    }
-
-    private fun clearSoftStopRequestIfSuspended(sessionId: String, state: SessionRunState) {
-        if (state == SessionRunState.Suspended) {
-            clearSoftStopRequest(sessionId)
-        }
-    }
-
-    private fun computeSessionStateWhenMainSuspended(runtime: SessionState): SessionRunState {
-        val subRunning = runtime.subagents.value.any { (_, subAgent) ->
-            subAgent.delegate.state.value == AgentState.Running && !subAgent.result.isCompleted
-        }
-        return if (subRunning) {
-            SessionRunState.Running
-        } else {
-            SessionRunState.Suspended
-        }
     }
 
     private suspend fun loadSubAgent(sessionId: String, agentId: String): SubAgent? {
         val runtime = requireRuntime(sessionId)
         runtime.mutex.lock()
         return try {
-            runtime.subagents.value[agentId]
+            runtime.findSubAgent(agentId = agentId)
         } finally {
             runtime.mutex.unlock()
         }
     }
-
-    private fun updateMetadataAfterPendingScriptRollback(runtime: SessionState) {
-        runtime.metadata.value = runtime.metadata.value.copy(
-            state = computeSessionState(runtime),
-            updatedAt = clock.now(),
-            version = runtime.metadata.value.version + 1,
-            messageCount = runtime.agent.value.messages.value.size,
-        )
-    }
-
-    private fun normalizeTrailingPendingScript(agent: Agent): Boolean {
-        if (agent.trailingPendingScript() == null) {
-            return false
-        }
-        agent.messages.value = agent.messages.value.dropLast(1).toPersistentList()
-        return true
-    }
-
-    private fun missingSubAgentPollResult(): SubAgentPollResult {
-        return SubAgentPollResult.Missing()
-    }
-
-    private fun pendingSubAgentPollResult(error: String? = null): SubAgentPollResult {
-        return SubAgentPollResult.Pending(error = error)
-    }
-
-    private fun completedSubAgentPollResult(value: String): SubAgentPollResult {
-        return SubAgentPollResult.Completed(result = value)
-    }
-
-    private fun failedSubAgentPollResult(throwable: Throwable): SubAgentPollResult {
-        return SubAgentPollResult.Failed(error = throwable.message)
-    }
-
-    private fun assertScriptOnlyKoogMessages(koogMessages: List<Message>) {
-        if (koogMessages.isEmpty()) {
-            throw IllegalStateException("Script-only violation: AgentScript.koogMessages must not be empty")
-        }
-        val nonScriptTool = koogMessages
-            .filterIsInstance<Message.Tool>()
-            .firstOrNull { tool -> tool.tool != ToolNames.EXECUTE_KOTLIN_SCRIPT }
-        if (nonScriptTool != null) {
-            throw IllegalStateException(
-                "Script-only violation: tool '${nonScriptTool.tool}' is not allowed in AgentScript.koogMessages"
-            )
-        }
-    }
-
-    private fun SessionMessage.copyWithNewId(newId: String): SessionMessage {
-        return when (this) {
-            is UserMessage -> copy(id = newId)
-            is AgentScript -> copy(id = newId)
-        }
-    }
-
-    private fun Agent.trailingPendingScript(): AgentScript? {
-        return messages.value.trailingPendingInputScriptOrNull()
-    }
-
     private suspend fun persist(runtime: SessionState) {
-        val sessionId = runtime.metadata.value.id
-        repository.persistSession(sessionId, runtime)
-        sessionLastPersistedDigests[sessionId] = computePersistenceDigest(runtime)
+        persistenceObserverCoordinator.persist(runtime)
     }
 
     private suspend fun loadRuntime(sessionId: String): SessionState? {
         val runtime = runCatching {
-            sessionFactory.loadSession(sessionId)
+            runtimeStore.loadSession(sessionId)
         }.getOrNull()
         if (runtime != null) {
             ensureSessionPersistenceObserver(sessionId = sessionId, runtime = runtime)
@@ -1098,197 +821,31 @@ public class SessionManager(
     }
 
     private suspend fun requireRuntime(sessionId: String): SessionState {
-        val runtime = sessionFactory.loadSession(sessionId)
+        val runtime = runtimeStore.loadSession(sessionId)
         ensureSessionPersistenceObserver(sessionId = sessionId, runtime = runtime)
         return runtime
     }
 
     private fun ensureSessionPersistenceObserver(sessionId: String, runtime: SessionState) {
-        if (sessionPersistenceObserverJobs.containsKey(sessionId)) {
-            return
-        }
-        sessionLastPersistedDigests.putIfAbsent(sessionId, computePersistenceDigest(runtime))
-        val observerJob = persistenceObserverScope.launch {
-            data class SubAgentObserver(
-                val subAgent: SubAgent,
-                val jobs: List<Job>,
-            )
-
-            var mainAgentObservers: List<Job> = emptyList()
-            val observedSubAgents: MutableMap<String, SubAgentObserver> = linkedMapOf()
-
-            fun restartMainAgentObservers(agent: Agent) {
-                mainAgentObservers.forEach { job ->
-                    job.cancel("Main agent observer rewired")
-                }
-                mainAgentObservers = listOf(
-                    launch {
-                        agent.state.collect {
-                            maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                        }
-                    },
-                    launch {
-                        agent.config.collect {
-                            maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                        }
-                    },
-                    launch {
-                        agent.messages.collect {
-                            maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                        }
-                    },
-                    launch {
-                        agent.todoMetadataFlow().collect {
-                            maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                        }
-                    },
-                )
-            }
-
-            fun buildSubAgentObservers(subAgent: SubAgent): List<Job> {
-                return listOf(
-                    launch {
-                        subAgent.delegate.state.collect {
-                            maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                        }
-                    },
-                    launch {
-                        subAgent.delegate.config.collect {
-                            maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                        }
-                    },
-                    launch {
-                        subAgent.delegate.messages.collect {
-                            maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                        }
-                    },
-                    launch {
-                        subAgent.delegate.todoMetadataFlow().collect {
-                            maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                        }
-                    },
-                    launch {
-                        runCatching { subAgent.result.await() }
-                        maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                    },
-                )
-            }
-
-            fun reconcileSubAgentObservers(subagents: Map<String, SubAgent>) {
-                val removedIds = observedSubAgents.keys.filter { id -> id !in subagents.keys }
-                removedIds.forEach { id ->
-                    observedSubAgents.remove(id)?.jobs?.forEach { job ->
-                        job.cancel("Subagent observer removed")
-                    }
-                }
-
-                subagents.forEach { (id, subAgent) ->
-                    val existing = observedSubAgents[id]
-                    if (existing == null || existing.subAgent !== subAgent) {
-                        existing?.jobs?.forEach { job ->
-                            job.cancel("Subagent observer replaced")
-                        }
-                        observedSubAgents[id] = SubAgentObserver(
-                            subAgent = subAgent,
-                            jobs = buildSubAgentObservers(subAgent = subAgent),
-                        )
-                    }
-                }
-            }
-
-            launch {
-                runtime.metadata.collect {
-                    maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                }
-            }
-            launch {
-                runtime.config.collect {
-                    maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                }
-            }
-            launch {
-                runtime.agent.collect { agent ->
-                    restartMainAgentObservers(agent = agent)
-                    maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                }
-            }
-            launch {
-                runtime.subagents.collect { subagents ->
-                    reconcileSubAgentObservers(subagents = subagents)
-                    maybePersistObservedMutation(sessionId = sessionId, runtime = runtime)
-                }
-            }
-
-            awaitCancellation()
-        }
-        val previous = sessionPersistenceObserverJobs.putIfAbsent(sessionId, observerJob)
-        if (previous != null) {
-            observerJob.cancel("Session persistence observer already registered")
-        }
-    }
-
-    private suspend fun maybePersistObservedMutation(
-        sessionId: String,
-        runtime: SessionState,
-    ) {
-        runtime.mutex.lock()
-        try {
-            val currentDigest = computePersistenceDigest(runtime)
-            if (sessionLastPersistedDigests[sessionId] == currentDigest) {
-                return
-            }
-            val metadata = runtime.metadata.value
-            runtime.metadata.value = metadata.copy(
-                updatedAt = clock.now(),
-                version = metadata.version + 1,
-                messageCount = runtime.agent.value.messages.value.size,
-            )
-            persist(runtime)
-        } finally {
-            runtime.mutex.unlock()
-        }
-    }
-
-    private fun computePersistenceDigest(runtime: SessionState): Int {
-        var digest = 1
-        digest = 31 * digest + runtime.metadata.value.hashCode()
-        digest = 31 * digest + runtime.config.value.hashCode()
-
-        val mainAgent = runtime.agent.value
-        digest = 31 * digest + mainAgent.state.value.hashCode()
-        digest = 31 * digest + mainAgent.config.value.hashCode()
-        digest = 31 * digest + mainAgent.messages.value.hashCode()
-        digest = 31 * digest + mainAgent.readTodoFromMetadata().hashCode()
-
-        val subagents = runtime.subagents.value.entries.sortedBy { entry -> entry.key }
-        subagents.forEach { (id, subAgent) ->
-            digest = 31 * digest + id.hashCode()
-            digest = 31 * digest + subAgent.delegate.state.value.hashCode()
-            digest = 31 * digest + subAgent.delegate.config.value.hashCode()
-            digest = 31 * digest + subAgent.delegate.messages.value.hashCode()
-            digest = 31 * digest + subAgent.delegate.readTodoFromMetadata().hashCode()
-            digest = 31 * digest + subAgent.result.isCompleted.hashCode()
-        }
-        return digest
+        persistenceObserverCoordinator.ensureSessionPersistenceObserver(
+            sessionId = sessionId,
+            runtime = runtime,
+        )
     }
 
     private fun cancelSessionPersistenceObserver(sessionId: String, reason: String) {
-        sessionPersistenceObserverJobs.remove(sessionId)?.cancel(reason)
-        sessionLastPersistedDigests.remove(sessionId)
+        persistenceObserverCoordinator.cancelSessionPersistenceObserver(
+            sessionId = sessionId,
+            reason = reason,
+        )
     }
-
-    private fun generateId(): String {
-        return Uuid.random().toString()
-    }
-
-    private fun <E> List<E>.toPersistentList() = persistentListOf<E>().addAll(this)
 
     public suspend fun getAgentTodoStateFlow(
         sessionId: String,
         agentId: String
     ): MutableStateFlow<List<TodoItem>>? {
         val state = getSessionState(sessionId) ?: return null
-        return resolveAgent(state, sessionId, agentId).todoMetadataFlow()
+        return state.resolveAgentForSession(sessionId = sessionId, agentId = agentId).todoMetadataFlow()
     }
 
     public suspend fun getAgentTodo(
@@ -1296,7 +853,7 @@ public class SessionManager(
         agentId: String
     ): List<TodoItem> {
         val state = getSessionState(sessionId) ?: requireRuntime(sessionId)
-        val agent = resolveAgent(state, sessionId, agentId)
+        val agent = state.resolveAgentForSession(sessionId = sessionId, agentId = agentId)
         return agent.readTodoFromMetadata()
     }
 
@@ -1309,25 +866,22 @@ public class SessionManager(
 
         state.mutex.lock()
         try {
-            val agent = resolveAgent(state, sessionId, agentId)
-            if (agent.readTodoFromMetadata() == todos) {
-                return
-            }
-            if (!agent.writeTodoToMetadata(todos)) {
-                return
-            }
-            state.metadata.value = state.metadata.value.copy(
-                updatedAt = clock.now(),
-                version = state.metadata.value.version + 1,
+            val changed = state.updateAgentTodoMutation(
+                sessionId = sessionId,
+                agentId = agentId,
+                todos = todos,
+                now = clock.now(),
             )
+            if (!changed) {
+                return
+            }
             persist(state)
         } finally {
             state.mutex.unlock()
         }
     }
 
-    private companion object {
-        private const val SESSION_CONFIG_MODEL_ID_KEY: String = "preferred_model_id"
+private companion object {
         private const val SUBAGENT_NOT_FOUND_ERROR: String = "Subagent not found"
         private const val SUBAGENT_TIMEOUT_ERROR: String = "timeout"
     }

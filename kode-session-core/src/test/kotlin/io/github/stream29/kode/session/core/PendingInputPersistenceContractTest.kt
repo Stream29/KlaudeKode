@@ -22,7 +22,7 @@ class PendingInputPersistenceContractTest {
         runBlocking {
             val tempDir = Files.createTempDirectory("pending-input-restart-contract-test")
             try {
-                val manager = SessionManager(repository = FileSessionStorage(dataDir = tempDir.toFile()))
+                val manager = SessionManager(dependencies = FileSessionStorage(dataDir = tempDir.toFile()).toSessionManagerDependencies())
                 val session = createConversationSession(sessionManager = manager, title = "pending-input restart")
                 appendPendingScript(
                     sessionManager = manager,
@@ -36,7 +36,7 @@ class PendingInputPersistenceContractTest {
                 )
                 assertNotNull(pendingBeforeRestart)
 
-                val reloadedManager = SessionManager(repository = FileSessionStorage(dataDir = tempDir.toFile()))
+                val reloadedManager = SessionManager(dependencies = FileSessionStorage(dataDir = tempDir.toFile()).toSessionManagerDependencies())
                 val pendingAfterRestart = reloadedManager.getTrailingPendingScript(
                     sessionId = session.id,
                     agentId = null,
@@ -68,10 +68,10 @@ class PendingInputPersistenceContractTest {
         runBlocking {
             val tempDir = Files.createTempDirectory("suspended-no-pending-restart-contract-test")
             try {
-                val manager = SessionManager(repository = FileSessionStorage(dataDir = tempDir.toFile()))
+                val manager = SessionManager(dependencies = FileSessionStorage(dataDir = tempDir.toFile()).toSessionManagerDependencies())
                 val session = createConversationSession(sessionManager = manager, title = "no pending restart")
 
-                val reloadedManager = SessionManager(repository = FileSessionStorage(dataDir = tempDir.toFile()))
+                val reloadedManager = SessionManager(dependencies = FileSessionStorage(dataDir = tempDir.toFile()).toSessionManagerDependencies())
                 reloadedManager.prepareConversationContinuation(
                     sessionId = session.id,
                     input = "",
@@ -90,13 +90,7 @@ class PendingInputPersistenceContractTest {
     private suspend fun createConversationSession(
         sessionManager: SessionManager,
         title: String,
-    ) = sessionManager.createConversationSession(
-        title = title,
-        systemPrompt = "test",
-        preferredModel = null,
-        preferredModelId = "test-model",
-        workDir = null,
-    )
+    ) = sessionManager.createConversationSession(title = title, systemPrompt = "test", workDir = null)
 
     private suspend fun appendPendingScript(
         sessionManager: SessionManager,

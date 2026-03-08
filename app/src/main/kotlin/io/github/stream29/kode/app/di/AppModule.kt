@@ -4,9 +4,16 @@ import io.github.stream29.kode.app.viewmodel.MainViewModel
 import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.config.fs.FileSystemConfigFactory
 import io.github.stream29.kode.config.fs.FileSystemLocations
+import io.github.stream29.kode.core.agent.DefaultSessionExecutionRuntimeFactory
+import io.github.stream29.kode.core.agent.SessionExecutionModelCatalog
+import io.github.stream29.kode.core.agent.SessionExecutionModelCatalogPort
+import io.github.stream29.kode.core.agent.SessionExecutionRuntimeFactory
 import io.github.stream29.kode.oauth.core.*
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.SessionPersistenceObserverCoordinatorFactory
 import io.github.stream29.kode.session.core.SessionRepository
+import io.github.stream29.kode.session.core.DefaultSessionPersistenceObserverCoordinatorFactory
+import io.github.stream29.kode.session.core.toSessionManagerDependencies
 import io.github.stream29.kode.session.core.storage.FileSessionStorage
 import io.github.stream29.kode.session.core.storage.SessionStorage
 import kotlinx.coroutines.runBlocking
@@ -33,12 +40,37 @@ public val sessionModule: Module = module {
     single<SessionRepository> {
         get<FileSessionStorage>()
     }
+    single<SessionPersistenceObserverCoordinatorFactory> {
+        DefaultSessionPersistenceObserverCoordinatorFactory
+    }
     single {
-        SessionManager(repository = get())
+        SessionManager(
+            dependencies = get<SessionRepository>().toSessionManagerDependencies(
+                observerCoordinatorFactory = get(),
+            )
+        )
     }
 }
 
 public val coreModule: Module = module {
+    single<SessionExecutionModelCatalogPort> {
+        val configManager = get<ConfigManager>()
+        SessionExecutionModelCatalogPort {
+            val config = configManager.load()
+            SessionExecutionModelCatalog(
+                auths = config.auths,
+                models = config.models,
+            )
+        }
+    }
+
+    single<SessionExecutionRuntimeFactory> {
+        DefaultSessionExecutionRuntimeFactory(
+            sessionManager = get(),
+            modelCatalogPort = get(),
+        )
+    }
+
     single<OAuthAuthCodePkceClient> {
         DefaultOAuthAuthCodePkceClient()
     }
@@ -79,7 +111,7 @@ public val viewModelModule: Module = module {
             currentSessionIdFlow = mainViewModel.currentSessionIdFlow,
             activeModelIdFlow = mainViewModel.activeModelIdFlow,
             sessionManager = get(),
-            configManager = get(),
+            sessionExecutionRuntimeFactory = get(),
             onEventCallback = { event, sessionId -> mainViewModel.onEvent(event, sessionId) },
             onNotifyConfigChanged = { mainViewModel.onNotifyConfigChanged() },
         )

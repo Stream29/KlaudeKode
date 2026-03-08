@@ -90,17 +90,9 @@ class SessionRunOwnershipTest {
     private suspend fun createConversationSession(
         sessionManager: SessionManager,
         title: String,
-    ) = sessionManager.createConversationSession(
-        title = title,
-        systemPrompt = "test",
-        preferredModel = null,
-        preferredModelId = "test-model",
-        workDir = null,
-    )
+    ) = sessionManager.createConversationSession(title = title, systemPrompt = "test", workDir = null)
 
     private fun createSessionManager(repository: FakeSessionRepository = FakeSessionRepository()): SessionManager {
-        return SessionManager(
-            repository = repository,
-        )
+        return SessionManager(dependencies = repository.toSessionManagerDependencies())
     }
 }

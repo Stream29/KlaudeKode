@@ -1,6 +1,7 @@
 package io.github.stream29.kode.session.core.storage
 
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.toSessionManagerDependencies
 import io.github.stream29.kode.agent.model.UserMessage
 import kotlinx.coroutines.runBlocking
 import java.io.File
@@ -15,14 +16,8 @@ class FileSessionStorageFailFastTest {
             val tempDir = Files.createTempDirectory("file-session-storage-schema-file-ignored-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val manager = SessionManager(repository = storage)
-                val session = manager.createConversationSession(
-                    title = "obsolete marker ignored",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val manager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                val session = manager.createConversationSession(title = "obsolete marker ignored", systemPrompt = "test", workDir = null)
                 manager.prepareConversationContinuation(
                     sessionId = session.id,
                     input = "hello",
@@ -49,14 +44,8 @@ class FileSessionStorageFailFastTest {
             val tempDir = Files.createTempDirectory("file-session-storage-corrupt-metadata-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val manager = SessionManager(repository = storage)
-                manager.createConversationSession(
-                    title = "corrupt metadata",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val manager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                manager.createConversationSession(title = "corrupt metadata", systemPrompt = "test", workDir = null)
 
                 val metadataFile = tempDir.resolve("session-index.csv").toFile()
                 metadataFile.writeText("\"")
@@ -77,14 +66,8 @@ class FileSessionStorageFailFastTest {
             val tempDir = Files.createTempDirectory("file-session-storage-corrupt-message-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val manager = SessionManager(repository = storage)
-                val session = manager.createConversationSession(
-                    title = "corrupt message",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val manager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                val session = manager.createConversationSession(title = "corrupt message", systemPrompt = "test", workDir = null)
                 manager.prepareConversationContinuation(
                     sessionId = session.id,
                     input = "keep this message",
@@ -118,14 +101,8 @@ class FileSessionStorageFailFastTest {
             val tempDir = Files.createTempDirectory("file-session-storage-legacy-message-type-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val manager = SessionManager(repository = storage)
-                val session = manager.createConversationSession(
-                    title = "legacy message type",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val manager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                val session = manager.createConversationSession(title = "legacy message type", systemPrompt = "test", workDir = null)
                 manager.prepareConversationContinuation(
                     sessionId = session.id,
                     input = "seed",
@@ -173,14 +150,8 @@ class FileSessionStorageFailFastTest {
             val tempDir = Files.createTempDirectory("file-session-storage-agent-id-mismatch-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val manager = SessionManager(repository = storage)
-                val session = manager.createConversationSession(
-                    title = "agent id mismatch",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val manager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                val session = manager.createConversationSession(title = "agent id mismatch", systemPrompt = "test", workDir = null)
                 manager.prepareConversationContinuation(
                     sessionId = session.id,
                     input = "seed",
@@ -214,14 +185,8 @@ class FileSessionStorageFailFastTest {
             val tempDir = Files.createTempDirectory("file-session-storage-agent-kind-mismatch-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val manager = SessionManager(repository = storage)
-                val session = manager.createConversationSession(
-                    title = "agent kind mismatch",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val manager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                val session = manager.createConversationSession(title = "agent kind mismatch", systemPrompt = "test", workDir = null)
                 manager.prepareConversationContinuation(
                     sessionId = session.id,
                     input = "seed",
@@ -255,14 +220,8 @@ class FileSessionStorageFailFastTest {
             val tempDir = Files.createTempDirectory("file-session-storage-missing-canonical-todo-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val manager = SessionManager(repository = storage)
-                val session = manager.createConversationSession(
-                    title = "missing canonical todo",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val manager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                val session = manager.createConversationSession(title = "missing canonical todo", systemPrompt = "test", workDir = null)
                 manager.prepareConversationContinuation(
                     sessionId = session.id,
                     input = "seed",
@@ -296,14 +255,8 @@ class FileSessionStorageFailFastTest {
             val tempDir = Files.createTempDirectory("file-session-storage-normal-load-test")
             try {
                 val storage = FileSessionStorage(dataDir = tempDir.toFile())
-                val manager = SessionManager(repository = storage)
-                val session = manager.createConversationSession(
-                    title = "normal load",
-                    systemPrompt = "test",
-                    preferredModel = null,
-                    preferredModelId = "test-model",
-                    workDir = null,
-                )
+                val manager = SessionManager(dependencies = storage.toSessionManagerDependencies())
+                val session = manager.createConversationSession(title = "normal load", systemPrompt = "test", workDir = null)
                 val input = "persist and load user input"
                 manager.prepareConversationContinuation(
                     sessionId = session.id,

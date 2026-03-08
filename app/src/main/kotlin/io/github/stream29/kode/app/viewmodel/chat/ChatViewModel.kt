@@ -3,9 +3,8 @@ package io.github.stream29.kode.app.viewmodel.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.stream29.kode.app.viewmodel.StopMode
-import io.github.stream29.kode.config.api.*
-import io.github.stream29.kode.config.core.ConfigManager
 import io.github.stream29.kode.core.agent.SessionExecutionRuntime
+import io.github.stream29.kode.core.agent.SessionExecutionRuntimeFactory
 import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.agent.model.*
 import io.github.stream29.kode.session.core.SessionManager
@@ -23,7 +22,7 @@ public class ChatViewModel(
     public val currentSessionIdFlow: StateFlow<String?>,
     public val activeModelIdFlow: StateFlow<String?>,
     private val sessionManager: SessionManager,
-    private val configManager: ConfigManager,
+    private val sessionExecutionRuntimeFactory: SessionExecutionRuntimeFactory,
     private val onEventCallback: (AgentEvent, String?) -> Unit,
     private val onNotifyConfigChanged: () -> Unit,
 ) : ViewModel(), AgentEventListener {
@@ -258,14 +257,10 @@ public class ChatViewModel(
     }
 
     private suspend fun createExecutionRuntime(): SessionExecutionRuntime {
-        val config = configManager.load()
-        return SessionExecutionRuntime(
-            auths = config.auths,
-            models = config.models,
+        return sessionExecutionRuntimeFactory.create(
             messageHandler = createMessageHandler(),
             eventListener = this,
             logger = { msg -> onEvent(AgentEvent.MessageToUser(msg), boundSessionId ?: "") },
-            sessionManager = sessionManager,
         )
     }
 

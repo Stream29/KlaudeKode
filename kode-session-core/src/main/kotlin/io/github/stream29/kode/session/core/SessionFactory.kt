@@ -6,11 +6,11 @@ import java.util.concurrent.ConcurrentHashMap
 
 public class SessionFactory(
     private val repository: SessionRepository,
-) {
+) : SessionRuntimeStore {
     private val cache: ConcurrentHashMap<String, SessionState> = ConcurrentHashMap()
     private val inFlightLoads: ConcurrentHashMap<String, CompletableDeferred<SessionState>> = ConcurrentHashMap()
 
-    public suspend fun loadSession(id: String): SessionState {
+    override suspend fun loadSession(id: String): SessionState {
         cache[id]?.let { existing ->
             return existing
         }
@@ -39,11 +39,11 @@ public class SessionFactory(
         }
     }
 
-    public fun put(session: SessionState) {
+    override fun put(session: SessionState) {
         cache.putIfAbsent(session.metadata.value.id, session)
     }
 
-    public fun evict(id: String) {
+    override fun evict(id: String) {
         cache.remove(id)
     }
 }

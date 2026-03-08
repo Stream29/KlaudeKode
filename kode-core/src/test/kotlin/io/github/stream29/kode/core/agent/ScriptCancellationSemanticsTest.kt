@@ -7,10 +7,10 @@ import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
 import io.github.stream29.kode.core.port.RuntimeSideEffectPort
-import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.core.testsupport.FakeMessageHandler
 import io.github.stream29.kode.core.testsupport.FakeSessionRepository
 import io.github.stream29.kode.session.core.SessionManager
+import io.github.stream29.kode.session.core.toSessionManagerDependencies
 import io.github.stream29.kode.agent.model.AgentScript
 import io.github.stream29.kode.agent.model.AgentScriptStatus
 import io.github.stream29.kode.agent.tool.ToolNames
@@ -32,16 +32,8 @@ class ScriptCancellationSemanticsTest {
     @Test
     fun run_cancellationPersistsInterruptedScriptMessageAndKeepsKoogPayloadLegal() {
         runBlocking {
-            val sessionManager = SessionManager(
-                repository = FakeSessionRepository(),
-            )
-            val session = sessionManager.createConversationSession(
-                title = "script cancellation semantics",
-                systemPrompt = "test system prompt",
-                preferredModel = null,
-                preferredModelId = "test-model",
-                workDir = null,
-            )
+            val sessionManager = SessionManager(dependencies = FakeSessionRepository().toSessionManagerDependencies())
+            val session = sessionManager.createConversationSession(title = "script cancellation semantics", systemPrompt = "test system prompt", workDir = null)
             val runtimePort = RecordingRuntimeSideEffectPort()
             val engine = ScriptOnlyAgentEngine(
                 promptExecutor = getMockExecutor {
@@ -52,7 +44,6 @@ class ScriptCancellationSemanticsTest {
                     ) onCondition { true }
                 },
                 sessionManager = sessionManager,
-                sessionBridge = KoogSessionBridge(sessionManager = sessionManager),
                 messageHandler = FakeMessageHandler(),
                 eventListener = null,
                 logger = {},

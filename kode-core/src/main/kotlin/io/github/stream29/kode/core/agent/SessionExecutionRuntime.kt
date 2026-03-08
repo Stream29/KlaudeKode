@@ -1,36 +1,89 @@
 package io.github.stream29.kode.core.agent
 
-import ai.koog.agents.core.tools.ToolDescriptor
-import ai.koog.agents.core.tools.ToolParameterDescriptor
-import ai.koog.agents.core.tools.ToolParameterType
-import ai.koog.prompt.dsl.Prompt
-import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
+import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
-import ai.koog.prompt.message.Message
-import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.config.api.LlmAuthConfig
 import io.github.stream29.kode.config.api.LlmModelConfig
 import io.github.stream29.kode.core.port.RuntimeSideEffectPort
 import io.github.stream29.kode.core.port.SessionSideEffectPort
-import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.datetime.toDeprecatedClock
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
-import kotlin.time.Clock
+
+public data class SessionExecutionModelRuntime(
+    val model: LLModel,
+    val modelParams: LLMParams?,
+)
+
+public data class MainAgentFactoryDependencies(
+    val promptExecutorProvider: () -> PromptExecutor,
+    val sessionManager: SessionManager,
+    val messageHandler: MessageHandler,
+    val eventListener: AgentEventListener?,
+    val logger: (String) -> Unit,
+    val runtimeContext: AgentRuntimeContext,
+    val scriptContextFactory: (List<TodoItem>, MutableStateFlow<List<TodoItem>>?) -> AgentScriptContext,
+    val runtimeSideEffectPort: RuntimeSideEffectPort?,
+    val sessionSideEffectPort: SessionSideEffectPort?,
+)
+
+public fun interface MainAgentFactory {
+    public fun create(dependencies: MainAgentFactoryDependencies): MainAgent
+}
+
+public object DefaultMainAgentFactory : MainAgentFactory {
+    override fun create(dependencies: MainAgentFactoryDependencies): MainAgent {
+        return MainAgentImpl(
+            promptExecutor = dependencies.promptExecutorProvider(),
+            sessionManager = dependencies.sessionManager,
+            messageHandler = dependencies.messageHandler,
+            eventListener = dependencies.eventListener,
+            logger = dependencies.logger,
+            runtimeContext = dependencies.runtimeContext,
+            scriptContextFactory = dependencies.scriptContextFactory,
+            runtimeSideEffectPort = dependencies.runtimeSideEffectPort,
+            sessionSideEffectPort = dependencies.sessionSideEffectPort,
+        )
+    }
+}
 
 public class SessionExecutionRuntime(
-    private val auths: List<LlmAuthConfig>,
-    private val models: List<LlmModelConfig>,
+    private val modelCatalogPort: SessionExecutionModelCatalogPort,
     private val messageHandler: MessageHandler,
     private val eventListener: AgentEventListener?,
     private val logger: (String) -> Unit,
     public val sessionManager: SessionManager,
+    private val promptExecutorFactory: (List<LlmAuthConfig>) -> PromptExecutor = { resolvedAuths ->
+        LlmPromptExecutorFactory.create(resolvedAuths)
+    },
+    private val modelRuntimeResolver: (String, List<LlmModelConfig>, List<LlmAuthConfig>) -> SessionExecutionModelRuntime =
+        { modelId, configuredModels, configuredAuths ->
+            val resolved = ModelFactory.resolveModelRuntime(modelId, configuredModels, configuredAuths)
+            SessionExecutionModelRuntime(
+                model = resolved.model,
+                modelParams = resolved.params,
+            )
+        },
+    private val executionContextFactory: SessionExecutionContextFactory? = null,
+    private val sessionTitleGeneratorFactory:
+    (
+        SessionManager,
+        SessionExecutionModelCatalogPort,
+        (List<LlmAuthConfig>) -> PromptExecutor,
+        (String, List<LlmModelConfig>, List<LlmAuthConfig>) -> SessionExecutionModelRuntime,
+    ) -> SessionTitleGenerationPort =
+        { manager, catalogPort, executorFactory, runtimeResolver ->
+            SessionTitleGenerator(
+                sessionQueryPort = SessionManagerSessionQueryPort(manager),
+                modelCatalogPort = catalogPort,
+                promptExecutorFactory = executorFactory,
+                modelRuntimeResolver = runtimeResolver,
+            )
+        },
+    private val mainAgentFactory: MainAgentFactory = DefaultMainAgentFactory,
     private val scriptContextFactory: (List<TodoItem>, MutableStateFlow<List<TodoItem>>?) -> AgentScriptContext =
         { initialTodos, activeTodoFlow ->
             MainAgentScriptContext(initialTodos = initialTodos, activeTodoFlow = activeTodoFlow)
@@ -38,7 +91,7 @@ public class SessionExecutionRuntime(
     private val runtimeSideEffectPortFactory:
     ((MessageHandler, AgentEventListener?, (String) -> Unit) -> RuntimeSideEffectPort)? = null,
     private val sessionSideEffectPortFactory:
-    ((SessionManager, KoogSessionBridge) -> SessionSideEffectPort)? = null,
+    ((SessionManager) -> SessionSideEffectPort)? = null,
 ) {
     private val mainAgentScriptContextFactory: (List<TodoItem>, MutableStateFlow<List<TodoItem>>?) -> AgentScriptContext =
         { initialTodos, activeTodoFlow ->
@@ -59,27 +112,37 @@ public class SessionExecutionRuntime(
         }
     }
 
-    private data class SessionExecutionContext(
-        val agent: MainAgent,
-        val model: LLModel,
-        val modelParams: LLMParams?,
-    )
+    private fun sessionQueryPort(): SessionQueryPort {
+        return SessionManagerSessionQueryPort(sessionManager)
+    }
 
-    public val sessionBridge: KoogSessionBridge by lazy {
-        KoogSessionBridge(
-            sessionManager = sessionManager,
+    private fun resolvedExecutionContextFactory(): SessionExecutionContextFactory {
+        return executionContextFactory ?: defaultSessionExecutionContextFactory(
+            sessionQueryPort = sessionQueryPort(),
+            modelCatalogPort = modelCatalogPort,
+            promptExecutorFactory = promptExecutorFactory,
+            modelRuntimeResolver = modelRuntimeResolver,
+            mainAgentProvider = { sessionId, runtimeContext, promptExecutorProvider ->
+                createMainAgent(
+                    sessionId = sessionId,
+                    runtimeContext = runtimeContext,
+                    promptExecutorProvider = promptExecutorProvider,
+                )
+            },
         )
     }
 
-    public val promptExecutor: MultiLLMPromptExecutor by lazy {
-        LlmPromptExecutorFactory.create(auths)
+    private fun sessionTitleGenerator(): SessionTitleGenerationPort {
+        return sessionTitleGeneratorFactory(
+            sessionManager,
+            modelCatalogPort,
+            promptExecutorFactory,
+            modelRuntimeResolver,
+        )
     }
 
-    public val availableModels: List<LlmModelConfig>
-        get() = models
-
     public suspend fun runWithSession(sessionId: String, userInput: String, modelId: String): String {
-        val context = prepareExecutionContext(sessionId = sessionId, modelId = modelId)
+        val context = resolvedExecutionContextFactory().create(sessionId = sessionId, modelId = modelId)
         return context.agent.chat(
             sessionId = sessionId,
             userInput = userInput,
@@ -89,7 +152,7 @@ public class SessionExecutionRuntime(
     }
 
     public suspend fun continueSession(sessionId: String, modelId: String): String {
-        val context = prepareExecutionContext(sessionId = sessionId, modelId = modelId)
+        val context = resolvedExecutionContextFactory().create(sessionId = sessionId, modelId = modelId)
         return context.agent.run(
             sessionId = sessionId,
             model = context.model,
@@ -98,161 +161,84 @@ public class SessionExecutionRuntime(
     }
 
     public suspend fun generateSessionTitleFromConversation(sessionId: String, modelId: String): String? {
-        requireSessionState(sessionId)
-        val history = sessionBridge.prepareMessagesForAgent(sessionId = sessionId, agentId = null)
-        if (history.isEmpty()) {
-            return null
-        }
-
-        val model = createLLModel(modelId)
-        val nowMeta = RequestMetaInfo.create(Clock.System.toDeprecatedClock())
-        val messages = history + Message.User(SESSION_TITLE_USER_INSTRUCTION, nowMeta)
-        val prompt = Prompt(
-            messages = messages,
-            id = "session_title_${System.currentTimeMillis()}",
-            params = LLMParams(
-                toolChoice = LLMParams.ToolChoice.Named(SESSION_TITLE_TOOL_NAME),
-            ),
+        sessionQueryPort().requireSession(sessionId)
+        return sessionTitleGenerator().generate(
+            sessionId = sessionId,
+            modelId = modelId,
         )
-        val responses = promptExecutor.execute(prompt, model, listOf(sessionTitleToolDescriptor()))
-        val titleFromToolCall = responses
-            .filterIsInstance<Message.Tool.Call>()
-            .lastOrNull { call -> call.tool == SESSION_TITLE_TOOL_NAME }
-            ?.contentJsonResult
-            ?.getOrNull()
-            ?.get(SESSION_TITLE_TOOL_ARG)
-            ?.jsonPrimitive
-            ?.contentOrNull
-        return normalizeGeneratedTitle(titleFromToolCall.orEmpty())
     }
 
-    public fun getModelById(modelId: String): LlmModelConfig? {
-        return models.find { it.id == modelId }
+    public suspend fun getModelById(modelId: String): LlmModelConfig? {
+        val catalog = modelCatalogPort.load()
+        return catalog.models.find { it.id == modelId }
     }
 
-    public fun createLLModel(modelId: String): LLModel {
-        return ModelFactory.createModel(modelId, models, auths)
+    public suspend fun createLLModel(modelId: String): LLModel {
+        return resolveModelRuntime(modelId).model
     }
 
     private fun createMainAgent(
         sessionId: String,
         runtimeContext: AgentRuntimeContext,
+        promptExecutorProvider: () -> PromptExecutor,
     ): MainAgent {
         val scopedHandler = scopedMessageHandler(sessionId)
-        return MainAgentImpl(
-            promptExecutor = promptExecutor,
-            sessionManager = sessionManager,
-            sessionBridge = sessionBridge,
-            messageHandler = scopedHandler,
-            eventListener = eventListener,
-            logger = logger,
-            runtimeContext = runtimeContext,
-            scriptContextFactory = mainAgentScriptContextFactory,
-            runtimeSideEffectPort = runtimeSideEffectPortFactory?.invoke(
-                scopedHandler,
-                eventListener,
-                logger,
-            ),
-            sessionSideEffectPort = sessionSideEffectPortFactory?.invoke(sessionManager, sessionBridge),
-        )
-    }
-
-    private suspend fun prepareExecutionContext(sessionId: String, modelId: String): SessionExecutionContext {
-        requireSessionState(sessionId)
-        val modelRuntime = ModelFactory.resolveModelRuntime(modelId, models, auths)
-        val enforcedParams = ModelParamsFactory.enforceRequiredToolChoice(modelRuntime.params)
-        return SessionExecutionContext(
-            agent = createMainAgent(
-                sessionId = sessionId,
-                runtimeContext = AgentRuntimeContext(
-                    agentId = null,
-                    parentAgentId = null,
-                    canInteractWithUser = true,
-                    canCreateSubagents = false,
+        return mainAgentFactory.create(
+            MainAgentFactoryDependencies(
+                promptExecutorProvider = promptExecutorProvider,
+                sessionManager = sessionManager,
+                messageHandler = scopedHandler,
+                eventListener = eventListener,
+                logger = logger,
+                runtimeContext = runtimeContext,
+                scriptContextFactory = mainAgentScriptContextFactory,
+                runtimeSideEffectPort = runtimeSideEffectPortFactory?.invoke(
+                    scopedHandler,
+                    eventListener,
+                    logger,
                 ),
+                sessionSideEffectPort = sessionSideEffectPortFactory?.invoke(sessionManager),
             ),
-            model = modelRuntime.model,
-            modelParams = enforcedParams,
         )
     }
 
-    private suspend fun requireSessionState(sessionId: String) {
-        sessionManager.getSessionState(sessionId)
-            ?: throw IllegalArgumentException("Session not found: $sessionId")
+    private suspend fun resolveModelRuntime(modelId: String): SessionExecutionModelRuntime {
+        val catalog = modelCatalogPort.load()
+        return modelRuntimeResolver(modelId, catalog.models, catalog.auths)
     }
 
     private fun scopedMessageHandler(sessionId: String): MessageHandler {
-        return SessionScopedMessageHandler(
-            sessionId = sessionId,
-            delegate = messageHandler,
-        )
+        return messageHandler.scopedToSession(sessionId = sessionId)
     }
 
-    private fun normalizeGeneratedTitle(raw: String): String? {
-        val line = raw
-            .lineSequence()
-            .firstOrNull()
-            .orEmpty()
-            .trim()
-            .trim('"', '\'', '`')
-            .replace(Regex("^#+\\s*"), "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        if (line.isBlank()) {
-            return null
-        }
-        return if (line.length > 80) {
-            line.take(80).trimEnd()
-        } else {
-            line
-        }
-    }
+    private fun MessageHandler.scopedToSession(sessionId: String): MessageHandler {
+        val scopedSessionId = sessionId
+        return object : MessageHandler {
+            override fun addMessageToUser(message: String) {
+                this@scopedToSession.addMessageToUser(message, scopedSessionId)
+            }
 
-    private fun sessionTitleToolDescriptor(): ToolDescriptor {
-        return ToolDescriptor(
-            name = SESSION_TITLE_TOOL_NAME,
-            description = "Output the generated conversation title.",
-            requiredParameters = listOf(
-                ToolParameterDescriptor(
-                    name = SESSION_TITLE_TOOL_ARG,
-                    description = "Generated conversation title in plain text.",
-                    type = ToolParameterType.String,
-                ),
-            ),
-            optionalParameters = emptyList(),
-        )
-    }
+            override fun log(message: String) {
+                this@scopedToSession.log(message, scopedSessionId)
+            }
 
-    private class SessionScopedMessageHandler(
-        private val sessionId: String,
-        private val delegate: MessageHandler
-    ) : MessageHandler {
-        override fun addMessageToUser(message: String) {
-            delegate.addMessageToUser(message, sessionId)
-        }
+            override suspend fun requestInput(): String {
+                return this@scopedToSession.requestInput(scopedSessionId)
+            }
 
-        override fun log(message: String) {
-            delegate.log(message, sessionId)
-        }
+            override fun isSafeStopRequested(sessionId: String): Boolean {
+                val effectiveSessionId = if (sessionId == scopedSessionId) sessionId else scopedSessionId
+                return this@scopedToSession.isSafeStopRequested(effectiveSessionId)
+            }
 
-        override suspend fun requestInput(): String {
-            return delegate.requestInput(sessionId)
-        }
-
-        override fun isSafeStopRequested(sessionId: String): Boolean {
-            return delegate.isSafeStopRequested(this.sessionId)
-        }
-
-        override fun onSafeStopReached(sessionId: String) {
-            delegate.onSafeStopReached(this.sessionId)
+            override fun onSafeStopReached(sessionId: String) {
+                val effectiveSessionId = if (sessionId == scopedSessionId) sessionId else scopedSessionId
+                this@scopedToSession.onSafeStopReached(effectiveSessionId)
+            }
         }
     }
 
     public companion object {
         public val SYSTEM_PROMPT: String = MainAgent.DEFAULT_SYSTEM_PROMPT
-        private const val SESSION_TITLE_TOOL_NAME: String = "output_title"
-        private const val SESSION_TITLE_TOOL_ARG: String = "title"
-        private const val SESSION_TITLE_USER_INSTRUCTION: String =
-            "请为当前对话总结一个简洁标题。标题语言必须与对话主要语言保持一致。只需调用 output_title 工具返回标题。"
     }
 }

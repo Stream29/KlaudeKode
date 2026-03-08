@@ -1,6 +1,5 @@
 package io.github.stream29.kode.core.agent
 
-import ai.koog.prompt.executor.clients.openai.OpenAIResponsesParams
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
@@ -8,12 +7,9 @@ import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.params.LLMParams
 import io.github.stream29.kode.core.port.RuntimeSideEffectPort
 import io.github.stream29.kode.core.port.SessionSideEffectPort
-import io.github.stream29.kode.core.session.KoogSessionBridge
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.agent.model.TodoItem
 import io.github.stream29.kode.agent.tool.ToolNames
-import io.github.stream29.kode.tools.scripting.KotlinScriptTool
-import io.github.stream29.kode.ui.core.AgentEvent
 import io.github.stream29.kode.ui.core.AgentEventListener
 import io.github.stream29.kode.ui.core.MessageHandler
 import kotlinx.coroutines.CancellationException
@@ -26,13 +22,11 @@ import kotlinx.datetime.toDeprecatedClock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonObject
 import kotlin.time.Clock
 
 internal class ScriptOnlyAgentEngine(
     private val promptExecutor: PromptExecutor,
     private val sessionManager: SessionManager,
-    private val sessionBridge: KoogSessionBridge,
     private val messageHandler: MessageHandler,
     private val eventListener: AgentEventListener?,
     private val logger: (String) -> Unit,
@@ -48,11 +42,17 @@ internal class ScriptOnlyAgentEngine(
     ),
     private val sessionSideEffectPort: SessionSideEffectPort = SessionSideEffectAdapter(
         sessionManager = sessionManager,
-        sessionBridge = sessionBridge,
+        sessionQueryPort = SessionManagerSessionQueryPort(sessionManager),
     ),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val defaultScriptContext: AgentScriptContext = scriptContextFactory(emptyList(), null)
+    private val scriptToolExecutor = ScriptToolExecutor(
+        json = json,
+        sessionManager = sessionManager,
+        scriptContextFactory = scriptContextFactory,
+        resolveTodoAgentId = ::resolveTodoAgentId,
+    )
     private val scriptToolDescriptor = buildScriptTool(defaultScriptContext).descriptor
     private val defaultSystemPrompt: String = buildDefaultSystemPrompt(BASE_SYSTEM_PROMPT, defaultScriptContext.systemPromptInjection)
 
@@ -62,17 +62,6 @@ internal class ScriptOnlyAgentEngine(
         val toolName: String,
         val toolArgs: String,
         val toolCallId: String,
-        val parsedArgs: JsonElement,
-    )
-
-    private data class ToolExecutionOutcome(
-        val content: String,
-        val isError: Boolean,
-        val errorMessage: String?,
-        val awaitForUserInput: Boolean,
-        val todoChanged: Boolean,
-        val latestTodos: List<TodoItem>,
-        val outputList: List<String>,
     )
 
     suspend fun run(
@@ -108,43 +97,6 @@ internal class ScriptOnlyAgentEngine(
         val messages = sessionSideEffectPort.prepareMessagesForAgent(sessionId = sessionId, agentId = agentId)
         val systemPrompt = resolveSystemPrompt(sessionId, agentId)
         return systemPrompt to messages
-    }
-
-    private fun buildPrompt(
-        sessionId: String,
-        iteration: Int,
-        systemPrompt: String,
-        messages: List<Message>,
-        modelParams: LLMParams?,
-    ): ai.koog.prompt.dsl.Prompt {
-        val normalizedParams = withCodexInstructionParams(
-            params = ModelParamsFactory.enforceRequiredToolChoice(modelParams),
-            systemPrompt = systemPrompt,
-        )
-        val messagesForPrompt = buildList {
-            add(Message.System(systemPrompt, RequestMetaInfo.create(Clock.System.toDeprecatedClock())))
-            addAll(messages)
-        }
-        return ai.koog.prompt.dsl.Prompt(
-            id = "conversation_${sessionId}_$iteration",
-            messages = messagesForPrompt,
-            params = normalizedParams,
-        )
-    }
-
-    private fun withCodexInstructionParams(
-        params: LLMParams,
-        systemPrompt: String,
-    ): LLMParams {
-        if (params !is OpenAIResponsesParams) {
-            return params
-        }
-        val normalizedInstructions = systemPrompt.trim().ifBlank {
-            "You are a helpful assistant"
-        }
-        val mergedAdditionalProperties = (params.additionalProperties ?: emptyMap()) +
-                mapOf("instructions" to JsonPrimitive(normalizedInstructions))
-        return params.copy(additionalProperties = mergedAdditionalProperties)
     }
 
     private suspend fun resolveCurrentTodos(sessionId: String): List<TodoItem> {
@@ -292,7 +244,11 @@ internal class ScriptOnlyAgentEngine(
         )
 
         val execution = try {
-            executeScriptTool(sessionId = sessionId, toolArgs = finalArgs, initialTodos = initialTodos)
+            scriptToolExecutor.execute(
+                sessionId = sessionId,
+                toolArgs = finalArgs,
+                initialTodos = initialTodos,
+            )
         } catch (error: CancellationException) {
             val isContextActive = currentCoroutineContext()[Job]?.isActive == true
             if (!isContextActive) {
@@ -441,7 +397,6 @@ internal class ScriptOnlyAgentEngine(
             toolName = rawToolName,
             toolArgs = toolArgs,
             toolCallId = toolCall.id.orEmpty(),
-            parsedArgs = parseToolArgs(toolArgs),
         )
     }
 
@@ -483,94 +438,6 @@ internal class ScriptOnlyAgentEngine(
         )
     }
 
-    private suspend fun executeScriptTool(
-        sessionId: String,
-        toolArgs: String,
-        initialTodos: List<TodoItem>,
-    ): ToolExecutionOutcome {
-        val agentId = resolveTodoAgentId(sessionId = sessionId)
-        val activeFlow = sessionManager.getAgentTodoStateFlow(sessionId, agentId)
-        val scriptContext = scriptContextFactory(initialTodos, activeFlow)
-        val tool = buildScriptTool(scriptContext)
-        val todoStateFlow = scriptContext.todoStateFlow
-        val todoSnapshot = todoStateFlow.value.toList()
-
-        return try {
-            val argsJson = runCatching { json.parseToJsonElement(toolArgs).jsonObject }
-                .getOrElse { parseError ->
-                    val message = "Invalid tool args for '${ToolNames.EXECUTE_KOTLIN_SCRIPT}': ${parseError.message}"
-                    return ToolExecutionOutcome(
-                        content = message,
-                        isError = true,
-                        errorMessage = message,
-                        awaitForUserInput = false,
-                        todoChanged = false,
-                        latestTodos = initialTodos,
-                        outputList = scriptContext.consumeOutputList(),
-                    )
-                }
-            val args = runCatching { tool.decodeArgs(argsJson) }
-                .getOrElse { decodeError ->
-                    val message = "Invalid tool args for '${ToolNames.EXECUTE_KOTLIN_SCRIPT}': ${decodeError.message}"
-                    return ToolExecutionOutcome(
-                        content = message,
-                        isError = true,
-                        errorMessage = message,
-                        awaitForUserInput = false,
-                        todoChanged = false,
-                        latestTodos = initialTodos,
-                        outputList = scriptContext.consumeOutputList(),
-                    )
-                }
-            val result = tool.execute(args)
-            val currentTodos = todoStateFlow.value
-            val todoChanged = todoSnapshot != todoStateFlow.value
-
-            ToolExecutionOutcome(
-                content = tool.encodeResultToString(result),
-                isError = false,
-                errorMessage = null,
-                awaitForUserInput = scriptContext.consumeAwaitForUserInputSignal(),
-                todoChanged = todoChanged,
-                latestTodos = currentTodos,
-                outputList = scriptContext.consumeOutputList(),
-            )
-        } catch (error: CancellationException) {
-            val isContextActive = currentCoroutineContext()[Job]?.isActive == true
-            if (!isContextActive) {
-                throw error
-            }
-
-            val message = "Error executing tool ${ToolNames.EXECUTE_KOTLIN_SCRIPT}: ${error.message}"
-            val currentTodos = todoStateFlow.value
-            val todoChanged = todoSnapshot != todoStateFlow.value
-
-            ToolExecutionOutcome(
-                content = message,
-                isError = true,
-                errorMessage = message,
-                awaitForUserInput = false,
-                todoChanged = todoChanged,
-                latestTodos = currentTodos,
-                outputList = scriptContext.consumeOutputList(),
-            )
-        } catch (error: Exception) {
-            val message = "Error executing tool ${ToolNames.EXECUTE_KOTLIN_SCRIPT}: ${error.message}"
-            val currentTodos = todoStateFlow.value
-            val todoChanged = todoSnapshot != todoStateFlow.value
-
-            ToolExecutionOutcome(
-                content = message,
-                isError = true,
-                errorMessage = message,
-                awaitForUserInput = false,
-                todoChanged = todoChanged,
-                latestTodos = currentTodos,
-                outputList = scriptContext.consumeOutputList(),
-            )
-        }
-    }
-
     private fun parseToolArgs(toolArgs: String): JsonElement {
         return runCatching {
             json.parseToJsonElement(toolArgs)
@@ -584,122 +451,7 @@ internal class ScriptOnlyAgentEngine(
         return requireNotNull(job) { "ScriptOnlyAgentEngine requires coroutine Job context" }
     }
 
-    private fun buildScriptTool(scriptContext: AgentScriptContext): KotlinScriptTool {
-        return when (scriptContext) {
-            is MainAgentScriptContext -> KotlinScriptTool(scriptContext)
-            is SubAgentScriptContext -> KotlinScriptTool(scriptContext)
-            else -> error("Unsupported AgentScriptContext type: ${scriptContext::class.qualifiedName}")
-        }
-    }
-
     private class SafeStopSignal : RuntimeException()
-
-    private class RuntimeSideEffectAdapter(
-        private val messageHandler: MessageHandler,
-        private val eventListener: AgentEventListener?,
-        private val logger: (String) -> Unit,
-    ) : RuntimeSideEffectPort, RuntimeInputPort {
-        override fun isSafeStopRequested(sessionId: String): Boolean {
-            return messageHandler.isSafeStopRequested(sessionId)
-        }
-
-        override fun onSafeStopReached(sessionId: String) {
-            messageHandler.onSafeStopReached(sessionId)
-        }
-
-        override fun onToolCallStarting(sessionId: String, toolName: String, arguments: String) {
-            eventListener?.onEvent(
-                AgentEvent.ToolCallStarting(
-                    toolName = toolName,
-                    arguments = arguments,
-                ),
-                sessionId,
-            )
-        }
-
-        override fun onToolCallCompleted(sessionId: String, toolName: String, result: String) {
-            eventListener?.onEvent(
-                AgentEvent.ToolCallCompleted(
-                    toolName = toolName,
-                    result = result,
-                ),
-                sessionId,
-            )
-        }
-
-        override fun onToolCallFailed(sessionId: String, message: String) {
-            eventListener?.onEvent(
-                AgentEvent.Error(
-                    message = message,
-                    exception = null,
-                ),
-                sessionId,
-            )
-        }
-
-        override fun log(message: String) {
-            logger(message)
-        }
-
-        override suspend fun requestInput(sessionId: String): String {
-            return messageHandler.requestInput(sessionId)
-        }
-    }
-
-    private class SessionSideEffectAdapter(
-        private val sessionManager: SessionManager,
-        private val sessionBridge: KoogSessionBridge,
-    ) : SessionSideEffectPort, SessionRunLifecyclePort {
-        override suspend fun prepareMessagesForAgent(sessionId: String, agentId: String?): List<Message> {
-            return sessionBridge.prepareMessagesForAgent(sessionId = sessionId, agentId = agentId)
-        }
-
-        override suspend fun resolveSystemPrompt(sessionId: String, agentId: String?, fallback: String): String {
-            return sessionManager.getAgentConfig(sessionId = sessionId, agentId = agentId).systemPrompt ?: fallback
-        }
-
-        override suspend fun suspendForUserInput(sessionId: String) {
-            sessionManager.suspendForUserInput(sessionId)
-        }
-
-        override suspend fun saveToolExchange(
-            sessionId: String,
-            toolName: String,
-            toolCallId: String,
-            arguments: JsonElement,
-            result: JsonElement,
-            isError: Boolean,
-            errorMessage: String?,
-            outputList: List<String>,
-            awaitForUserInput: Boolean,
-            agentId: String?,
-        ) {
-            sessionBridge.saveToolExchange(
-                sessionId = sessionId,
-                toolName = toolName,
-                toolCallId = toolCallId,
-                arguments = arguments,
-                result = result,
-                isError = isError,
-                errorMessage = errorMessage,
-                outputList = outputList,
-                awaitForUserInput = awaitForUserInput,
-                agentId = agentId,
-            )
-        }
-
-        override suspend fun resumeRun(sessionId: String, job: Job) {
-            sessionManager.resumeRun(sessionId = sessionId, ownerJob = job)
-        }
-
-        override suspend fun addUserMessage(sessionId: String, content: String, agentId: String?) {
-            sessionManager.addUserMessage(
-                sessionId = sessionId,
-                content = content,
-                agentId = agentId,
-            )
-        }
-    }
 
     private interface RuntimeInputPort {
         suspend fun requestInput(sessionId: String): String

@@ -129,7 +129,6 @@ class SessionFactoryConcurrencyTest {
                 forkedFromMessageId = null,
                 version = 1L,
                 configuration = io.github.stream29.kode.session.core.model.SessionConfiguration(
-                    preferredModel = null,
                     systemPrompt = "test",
                     workDir = null,
                     maxIterations = null,
