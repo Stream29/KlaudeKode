@@ -30,9 +30,9 @@ import androidx.compose.ui.unit.dp
 import io.github.stream29.kode.app.util.parseKeyValueLines
 import io.github.stream29.kode.config.api.McpServerConfig
 import io.github.stream29.kode.config.api.McpTransportType
-import io.github.stream29.kode.ui.bridge.mcp.McpHealthStatus
-import io.github.stream29.kode.ui.bridge.mcp.McpTestResult
-import io.github.stream29.kode.ui.bridge.mcp.McpToolParameterSummary
+import io.github.stream29.kode.ui.core.mcp.McpHealthStatus
+import io.github.stream29.kode.ui.core.mcp.McpTestResult
+import io.github.stream29.kode.ui.core.mcp.McpToolParameterSummary
 
 @Composable
 internal fun McpToolsDialog(

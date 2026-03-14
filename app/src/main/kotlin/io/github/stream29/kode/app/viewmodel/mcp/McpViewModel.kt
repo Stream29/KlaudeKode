@@ -9,7 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.stream29.kode.config.api.*
 import io.github.stream29.kode.config.core.ConfigManager
-import io.github.stream29.kode.ui.bridge.mcp.*
+import io.github.stream29.kode.ui.core.mcp.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

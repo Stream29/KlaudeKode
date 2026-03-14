@@ -137,6 +137,8 @@ plugin-name = { id = "plugin.id", version.ref = "kotlin" }
 - 2026-03-08：`SessionExecutionRuntime` 进一步去状态化：`sessionQueryPort`/执行上下文工厂/标题生成器从 `lazy` 字段改为按需函数构造，runtime 仅保留依赖引用与编排调用。
 - 2026-03-08：大文件治理落地到“无状态优先”实践：app/ui/config/test 的超长 Kotlin 文件按职责拆分为多文件（路由壳层、页面组合、渲染支持与测试支撑分离），默认优先顶层函数与扩展函数，避免新增状态持有类。
 - 2026-03-08：`SessionManager` 进一步收敛为“生命周期编排 + 锁/持久化副作用边界”：运行态业务规则（run/suspend/continue/rollback/subagent 状态判定、active 列表等）下沉到 `SessionState` 扩展（`SessionStateDomainExtensions`），并将持久化观察器协作者工厂化（`SessionPersistenceObserverCoordinatorFactory`）以便 Koin/测试覆盖替换。
+- 2026-03-08：subagent 运行时编排从 `SessionManager` 抽离到 `SessionSubAgentCoordinator`（含 `SessionSubAgentCoordinatorFactory` DI seam）：`SessionState` 继续承载 subagent 领域状态变更，协调器承载 job 注册/取消与 poll/await 副作用，`SessionManager` 保留 API 门面与生命周期编排。
+- 2026-03-14：模块目录形状收敛：`config/*`、`ui/*`、`providers/*` 直接承载对应 leaf module；移除 `:ui:bridge`，其纯 UI model 下沉到 `:ui:core`；provider 子模块名去掉重复的 `provider-` 前缀，模块图仍以 `settings.gradle.kts` 为准。
 
 ## Critical Interaction Contract
 

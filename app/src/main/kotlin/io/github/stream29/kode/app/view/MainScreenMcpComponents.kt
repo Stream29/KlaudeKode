@@ -33,9 +33,9 @@ import androidx.compose.ui.unit.dp
 import io.github.stream29.kode.app.viewmodel.mcp.McpUiState
 import io.github.stream29.kode.app.viewmodel.mcp.McpViewModel
 import io.github.stream29.kode.config.api.supportsBrowserOAuth
-import io.github.stream29.kode.ui.bridge.mcp.McpHealthStatus
-import io.github.stream29.kode.ui.bridge.mcp.McpTestResult
-import io.github.stream29.kode.ui.bridge.mcp.McpTestStatus
+import io.github.stream29.kode.ui.core.mcp.McpHealthStatus
+import io.github.stream29.kode.ui.core.mcp.McpTestResult
+import io.github.stream29.kode.ui.core.mcp.McpTestStatus
 
 @Composable
 internal fun McpPage(viewModel: McpViewModel, ui: McpUiState) {

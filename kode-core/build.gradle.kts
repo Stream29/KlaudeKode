@@ -9,8 +9,8 @@ dependencies {
     implementation(projects.kodeOauthCore)
     implementation(projects.ui.core)
     implementation(projects.session)
-    implementation(projects.providers.providerApi)
-    implementation(projects.providers.providerBuiltin)
+    implementation(projects.providers.api)
+    implementation(projects.providers.builtin)
 
     implementation(libs.bundles.koog)
     implementation(libs.bundles.serialization)

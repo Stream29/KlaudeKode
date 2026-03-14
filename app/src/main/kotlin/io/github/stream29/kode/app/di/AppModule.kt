@@ -11,8 +11,10 @@ import io.github.stream29.kode.core.agent.SessionExecutionRuntimeFactory
 import io.github.stream29.kode.oauth.core.*
 import io.github.stream29.kode.session.core.SessionManager
 import io.github.stream29.kode.session.core.SessionPersistenceObserverCoordinatorFactory
+import io.github.stream29.kode.session.core.SessionSubAgentCoordinatorFactory
 import io.github.stream29.kode.session.core.SessionRepository
 import io.github.stream29.kode.session.core.DefaultSessionPersistenceObserverCoordinatorFactory
+import io.github.stream29.kode.session.core.DefaultSessionSubAgentCoordinatorFactory
 import io.github.stream29.kode.session.core.toSessionManagerDependencies
 import io.github.stream29.kode.session.core.storage.FileSessionStorage
 import io.github.stream29.kode.session.core.storage.SessionStorage
@@ -43,10 +45,14 @@ public val sessionModule: Module = module {
     single<SessionPersistenceObserverCoordinatorFactory> {
         DefaultSessionPersistenceObserverCoordinatorFactory
     }
+    single<SessionSubAgentCoordinatorFactory> {
+        DefaultSessionSubAgentCoordinatorFactory
+    }
     single {
         SessionManager(
             dependencies = get<SessionRepository>().toSessionManagerDependencies(
                 observerCoordinatorFactory = get(),
+                subAgentCoordinatorFactory = get(),
             )
         )
     }

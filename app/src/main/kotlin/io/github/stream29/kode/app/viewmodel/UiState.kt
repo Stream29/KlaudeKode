@@ -7,9 +7,9 @@ import io.github.stream29.kode.config.api.McpServerConfig
 import io.github.stream29.kode.agent.model.SessionMessage
 import io.github.stream29.kode.session.core.model.SessionSummary
 import io.github.stream29.kode.session.core.storage.SessionStatusFilter
-import io.github.stream29.kode.ui.bridge.auth.OAuthStatusUi
-import io.github.stream29.kode.ui.bridge.mcp.McpHealthResult
-import io.github.stream29.kode.ui.bridge.mcp.McpTestResult
+import io.github.stream29.kode.ui.core.auth.OAuthStatusUi
+import io.github.stream29.kode.ui.core.mcp.McpHealthResult
+import io.github.stream29.kode.ui.core.mcp.McpTestResult
 import io.github.stream29.kode.ui.core.todo.TodoUiState
 
 public data class SessionUiState(
